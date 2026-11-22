@@ -56,6 +56,8 @@ data class FocusPreferences(
     val reduceMotion: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val profile: UserProfile = UserProfile.GENERAL,
+    /** Saved IANA id for all wall-clock work; empty means follow the device. */
+    val timezoneId: String = "",
     /** Ids of the sections kept in the bottom bar, in display order. */
     val bottomTabs: List<String> = BottomTab.DEFAULT
 ) {
@@ -97,6 +99,7 @@ data class FocusPreferences(
                 reduceMotion = prefs.getBoolean("reduce_motion", false),
                 themeMode = ThemeMode.from(prefs.getString("theme_mode", "system")),
                 profile = UserProfile.from(prefs.getString("profile", "general")),
+                timezoneId = AppTimeZone.sanitize(prefs.getString(AppTimeZone.PREF_KEY, null)),
                 bottomTabs = BottomTab.normalize(
                     prefs.getString("bottom_tabs", null)
                         ?.split(",")
@@ -138,6 +141,7 @@ data class FocusPreferences(
                 .putBoolean("reduce_motion", value.reduceMotion)
                 .putString("theme_mode", value.themeMode.key)
                 .putString("profile", value.profile.key)
+                .putString(AppTimeZone.PREF_KEY, AppTimeZone.sanitize(value.timezoneId))
                 .putString("bottom_tabs", BottomTab.normalize(value.bottomTabs).joinToString(","))
                 .apply()
         }

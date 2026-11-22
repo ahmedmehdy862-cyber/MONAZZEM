@@ -7,9 +7,7 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
-import androidx.core.content.ContextCompat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -43,14 +41,17 @@ internal object ReminderEngine {
     const val ACTION_SNOOZE_HOUR = "com.focusstudy.poc.REMINDER_SNOOZE_HOUR"
     const val ACTION_SNOOZE_PRAYER = "com.focusstudy.poc.REMINDER_SNOOZE_PRAYER"
     const val ACTION_OPEN_START = "com.focusstudy.poc.REMINDER_OPEN_START"
+    const val ACTION_DISMISSED = "com.focusstudy.poc.REMINDER_DISMISSED"
     const val EXTRA_TASK_ID = "task_id"
     const val EXTRA_REMINDER_ID = "reminder_id"
     const val EXTRA_KIND = "reminder_kind"
 
     private const val CHANNEL_SUMMARY = "session_summary"
 
-    private const val MAX_ALARMS = 10
+    private const val MAX_ALARMS = 30
     private const val NOTIFICATION_BASE_ID = 7300
+    private const val DEFER_PREFIX = "deferred|"
+    private const val PERMISSION_RETRY_MS = 30 * 60 * 1000L
 
     fun channels(context: Context) {
         // Task and exam alerts use the new high-priority channels so they appear on screen.
@@ -112,26 +113,65 @@ internal object ReminderEngine {
     private fun scheduleAlarms(context: Context, db: StudyDb) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = System.currentTimeMillis()
-        val upcoming = db.pendingReminders(MAX_ALARMS * 3).filter { it.fireAt > now }.take(MAX_ALARMS)
+        val upcoming = db.pendingReminders(MAX_ALARMS * 4).filter { it.fireAt > now }.take(MAX_ALARMS)
         for (reminder in upcoming) {
-            val intent = Intent(context, ReminderReceiver::class.java)
-                .setAction(ACTION_FIRE)
-                .putExtra(EXTRA_REMINDER_ID, reminder.id)
-                .putExtra(EXTRA_TASK_ID, reminder.taskId)
-                .putExtra(EXTRA_KIND, reminder.kind)
-            val pending = PendingIntent.getBroadcast(
+            val decoded = decodeKind(reminder.kind)
+            scheduleFire(
                 context,
+                manager,
+                StoredReminder(reminder.id, reminder.taskId, reminder.kind, reminder.fireAt),
                 alarmRequestCode(reminder.id),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                decoded.sourceKind
             )
-            val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                runCatching { manager.canScheduleExactAlarms() }.getOrDefault(false)
-            runCatching {
-                if (exact) manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminder.fireAt, pending)
-                else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminder.fireAt, pending)
-            }
         }
+    }
+
+    private fun scheduleOne(context: Context, reminder: StoredReminder, request: Int) {
+        val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        scheduleFire(context, manager, reminder, request, decodeKind(reminder.kind).sourceKind)
+    }
+
+    private fun scheduleFire(
+        context: Context,
+        manager: AlarmManager,
+        reminder: StoredReminder,
+        request: Int,
+        sourceKind: String
+    ) {
+        val intent = Intent(context, ReminderReceiver::class.java)
+            .setAction(ACTION_FIRE)
+            .putExtra(EXTRA_REMINDER_ID, reminder.id)
+            .putExtra(EXTRA_TASK_ID, reminder.taskId)
+            .putExtra(EXTRA_KIND, reminder.kind)
+        val pending = PendingIntent.getBroadcast(
+            context,
+            request,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        NotificationMaintenance.schedule(
+            context = context,
+            manager = manager,
+            atMillis = reminder.fireAt,
+            pending = pending,
+            kind = sourceKind,
+            taskId = reminder.taskId.takeIf { it >= 0 }
+        )
+    }
+
+    internal fun encodeDeferred(sourceKind: String, reason: String): String =
+        "$DEFER_PREFIX$reason|$sourceKind"
+
+    internal data class DecodedReminder(val sourceKind: String, val deferred: Boolean, val deferReason: String = "")
+
+    internal fun decodeKind(encoded: String): DecodedReminder {
+        if (!encoded.startsWith(DEFER_PREFIX)) return DecodedReminder(encoded, false)
+        val parts = encoded.split("|", limit = 3)
+        return DecodedReminder(
+            sourceKind = parts.getOrElse(2) { parts.getOrNull(1).orEmpty() },
+            deferred = true,
+            deferReason = parts.getOrElse(1) { "" }
+        )
     }
 
     fun dispatch(context: Context, reminderId: Long, taskId: Long, kind: String) {
@@ -143,6 +183,9 @@ internal object ReminderEngine {
         // Alarms left behind by an older schedule must not fire a second time.
         if (reminderId > 0 && !db.reminderIsPending(reminderId)) return
 
+        val decoded = decodeKind(kind)
+        val effectiveKind = decoded.sourceKind
+
         if (taskId >= 0) {
             val task = db.task(taskId)
             if (task == null || task.isDone || task.status == TaskStatus.DONE || task.status == TaskStatus.CANCELLED) {
@@ -152,7 +195,8 @@ internal object ReminderEngine {
         }
 
         val now = System.currentTimeMillis()
-        val startOfDay = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val zone = AppTimeZone.zone(appContext)
+        val startOfDay = LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
         val session = db.activeSession()?.takeIf { it.endsAt > now }
         val subject = if (taskId >= 0) db.task(taskId)?.subjectId?.let { id -> db.subjects().firstOrNull { it.id == id } } else null
         val examAt = if (taskId < 0) db.subjects().firstOrNull { it.id == -taskId }?.nextExamAt else subject?.nextExamAt
@@ -160,10 +204,10 @@ internal object ReminderEngine {
 
         val input = PolicyInput(
             now = now,
-            kind = ReminderKind.entries.firstOrNull { it.key == kind } ?: ReminderKind.TASK_DUE,
+            kind = ReminderKind.entries.firstOrNull { it.key == effectiveKind } ?: ReminderKind.TASK_DUE,
             critical = NotificationPolicy.isCritical(dueAt, now) ||
                 NotificationPolicy.isExamCritical(examAt, now) ||
-                kind == ReminderKind.EXAM.key,
+                effectiveKind == ReminderKind.EXAM.key,
             // Task/exam reminders have their own switch; the general-messages switch only controls
             // the companion's morning/evening messages.
             enabled = prefs.smartRemindersEnabled,
@@ -177,52 +221,63 @@ internal object ReminderEngine {
             quietEnd = if (prefs.quietHoursEnabled) prefs.quietEndHour * 60 else null
         )
 
-        val decision = NotificationPolicy.decide(input)
+        val decision = NotificationPolicy.decide(input, zone)
 
         when (decision) {
             ReminderDecision.Send -> {
-                db.markReminderDone(reminderId)
-                deliver(appContext, db, prefs, taskId, kind, now)
+                // If posting is blocked (runtime permission or system-disabled), keep a persisted retry
+                // instead of consuming the reminder and losing it.
+                if (!AppNotifications.canPost(appContext)) {
+                    db.markReminderDone(reminderId, "permission_blocked")
+                    db.logNotification(effectiveKind, taskId.takeIf { it != 0L }, now, null, NotificationMaintenance.PERMISSION_DENIED)
+                    scheduleDeferred(appContext, db, taskId, effectiveKind, now + PERMISSION_RETRY_MS, "permission_retry")
+                    return
+                }
+                val delivered = deliver(appContext, db, prefs, taskId, effectiveKind, now)
+                db.markReminderDone(reminderId, if (delivered) "fired" else "failed_delivery")
+                if (!delivered) {
+                    // A transient failure (e.g. notifier exception) must not consume the reminder.
+                    scheduleDeferred(appContext, db, taskId, effectiveKind, now + PERMISSION_RETRY_MS, "retry")
+                }
             }
             is ReminderDecision.Defer -> {
                 db.markReminderDone(reminderId, "deferred")
-                val deferred = StoredReminder(-1, taskId, kind, decision.until)
-                scheduleOne(appContext, deferred, deferredAlarmRequestCode(taskId, decision.until))
-                db.logNotification(kind, taskId.takeIf { it >= 0 }, now, null, "deferred:${decision.reason.key()}")
+                scheduleDeferred(appContext, db, taskId, effectiveKind, decision.until, decision.reason.key())
+                db.logNotification(effectiveKind, taskId.takeIf { it != 0L }, now, null, "deferred:${decision.reason.key()}")
             }
             is ReminderDecision.Drop -> {
                 db.markReminderDone(reminderId, "dropped")
-                db.logNotification(kind, taskId.takeIf { it >= 0 }, now, null, "dropped:${decision.reason.key()}")
+                db.logNotification(effectiveKind, taskId.takeIf { it != 0L }, now, null, "dropped:${decision.reason.key()}")
             }
         }
     }
 
-    private fun scheduleOne(context: Context, reminder: StoredReminder, request: Int) {
-        val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, ReminderReceiver::class.java)
-            .setAction(ACTION_FIRE)
-            .putExtra(EXTRA_REMINDER_ID, reminder.id)
-            .putExtra(EXTRA_TASK_ID, reminder.taskId)
-            .putExtra(EXTRA_KIND, reminder.kind)
-        val pending = PendingIntent.getBroadcast(
-            context,
-            request,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            runCatching { manager.canScheduleExactAlarms() }.getOrDefault(false)
-        runCatching {
-            if (exact) manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminder.fireAt, pending)
-            else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminder.fireAt, pending)
+    private fun scheduleDeferred(
+        context: Context,
+        db: StudyDb,
+        taskId: Long,
+        sourceKind: String,
+        until: Long,
+        reason: String
+    ) {
+        db.clearDeferrals(taskId, sourceKind)
+        val encoded = encodeDeferred(sourceKind, reason)
+        val id = db.insertReminder(taskId, encoded, until)
+        if (id > 0) {
+            scheduleOne(context, StoredReminder(id, taskId, encoded, until), alarmRequestCode(id))
         }
     }
 
-    private fun deliver(context: Context, db: StudyDb, prefs: FocusPreferences, taskId: Long, kind: String, now: Long) {
-
-        if (!notificationsAllowed(context)) return
-        val task = db.task(taskId)
-        val subject = task?.subjectId?.let { id -> db.subjects().firstOrNull { it.id == id } }
+    private fun deliver(
+        context: Context,
+        db: StudyDb,
+        prefs: FocusPreferences,
+        taskId: Long,
+        kind: String,
+        now: Long
+    ): Boolean {
+        if (!AppNotifications.canPost(context)) return false
+        val task = if (taskId >= 0) db.task(taskId) else null
         val examSubject = if (taskId < 0) db.subjects().firstOrNull { it.id == -taskId } else null
         val persona = Persona.from(prefs.companionStyle)
         val tone = ToneResolver.resolve(ToneState(userTone = prefs.tonePreference))
@@ -234,7 +289,7 @@ internal object ReminderEngine {
                     mapOf("subject" to examSubject.name, "days" to daysText(days))
                 )
             }
-            task == null -> return
+            task == null -> return false
             task.dueAt != null && task.dueAt < now - DAY -> Voice.say(
                 VoiceScene.TASK_OVERDUE, persona, tone, mapOf("task" to task.title)
             )
@@ -248,7 +303,7 @@ internal object ReminderEngine {
         }
         val title = examSubject?.let { "امتحان ${it.name}" }
             ?: task?.let { "مهمة: ${it.title}" }
-            ?: "مُمنظِّم"
+            ?: "مُنظِّم"
         val alert = if (examSubject != null) AppNotifications.EXAM else AppNotifications.TASK
         val notificationId = NOTIFICATION_BASE_ID + (if (taskId >= 0) taskId else -taskId).toInt()
         val builder = AppNotifications.builder(
@@ -256,7 +311,8 @@ internal object ReminderEngine {
             channel = alert,
             title = title,
             message = body,
-            contentIntent = openIntent(context, taskId)
+            contentIntent = openIntent(context, taskId),
+            deleteIntent = dismissIntent(context, taskId, kind)
         )
 
         if (taskId >= 0) {
@@ -265,8 +321,10 @@ internal object ReminderEngine {
             builder.addAction(0, "ابدأ تركيز", actionIntent(context, ACTION_OPEN_START, taskId, 3))
         }
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(notificationId, builder.build())
-        db.logNotification(kind, taskId.takeIf { it >= 0 }, now, now, "")
+        return runCatching {
+            manager.notify(notificationId, builder.build())
+            db.logNotification(kind, taskId.takeIf { it != 0L }, now, now, "")
+        }.isSuccess
     }
 
     private fun deferCount(task: StudyTask): Int = when {
@@ -325,6 +383,20 @@ internal object ReminderEngine {
         )
     }
 
+    /** A swipe is an explicit ignore, not a blank delivery row. */
+    private fun dismissIntent(context: Context, taskId: Long, kind: String): PendingIntent {
+        val intent = Intent(context, ReminderActionReceiver::class.java)
+            .setAction(ACTION_DISMISSED)
+            .putExtra(EXTRA_TASK_ID, taskId)
+            .putExtra(EXTRA_KIND, kind)
+        return PendingIntent.getBroadcast(
+            context,
+            requestCode(taskId + 4_000),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     /**
      * Unique per stored reminder, not per task/kind. A task can have a lead reminder, a due reminder
      * and an overdue reminder at the same time; sharing a request code used to silently replace the
@@ -337,10 +409,6 @@ internal object ReminderEngine {
         700_000 + Math.floorMod(taskId * 131 + fireAt, 200_000L).toInt()
 
     private fun requestCode(id: Long): Int = Math.floorMod(id, 100_000L).toInt() + 21_000
-
-    private fun notificationsAllowed(context: Context): Boolean =
-        Build.VERSION.SDK_INT < 33 ||
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     private fun daysText(days: Int): String = when (days) {
         0 -> "اليوم"
@@ -371,19 +439,29 @@ class ReminderReceiver : BroadcastReceiver() {
 class ReminderActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val taskId = intent?.getLongExtra(ReminderEngine.EXTRA_TASK_ID, -1) ?: return
-        if (taskId < 0) return
         val pending = goAsync()
         val action = intent.action
-        if (action == ReminderEngine.ACTION_OPEN_START) {
-            val open = Intent(context, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(ReminderEngine.EXTRA_TASK_ID, taskId)
-            context.startActivity(open)
+        try {
+            if (action == ReminderEngine.ACTION_DISMISSED) {
+                val kind = intent.getStringExtra(ReminderEngine.EXTRA_KIND).orEmpty()
+                StudyDb.get(context.applicationContext).markIgnored(
+                    kind = kind,
+                    taskId = taskId.takeIf { it != 0L }
+                )
+                return
+            }
+            if (taskId < 0) return
+            if (action == ReminderEngine.ACTION_OPEN_START) {
+                val open = Intent(context, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(ReminderEngine.EXTRA_TASK_ID, taskId)
+                context.startActivity(open)
+                return
+            }
+            ReminderEngine.handleAction(context, action, taskId)
+        } finally {
             pending.finish()
-            return
         }
-        ReminderEngine.handleAction(context, action, taskId)
-        pending.finish()
     }
 }
 
@@ -391,6 +469,11 @@ class ReminderActionReceiver : BroadcastReceiver() {
 internal fun sessionEndsAt(context: Context): Long? =
     StudyDb.get(context).activeSession()?.endsAt
 
-internal fun examCountdownDays(examAt: Long?, now: Long = System.currentTimeMillis()): Int? =
-    examAt?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
-        .toEpochDay().minus(LocalDate.now().toEpochDay()).toInt() }
+internal fun examCountdownDays(
+    examAt: Long?,
+    now: Long = System.currentTimeMillis(),
+    zone: ZoneId = ZoneId.systemDefault()
+): Int? = examAt?.let {
+    Instant.ofEpochMilli(it).atZone(zone).toLocalDate().toEpochDay()
+        .minus(LocalDate.now(zone).toEpochDay()).toInt()
+}

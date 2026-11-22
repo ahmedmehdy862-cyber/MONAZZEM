@@ -1,9 +1,7 @@
 package com.focusstudy.poc
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Column
@@ -25,19 +23,22 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * One place for everything that can interrupt the person.
@@ -53,18 +54,42 @@ internal fun NotificationCenterScreen(
     onRequestNotifications: () -> Unit
 ) {
     val context = LocalContext.current
-    var allowed by remember { mutableStateOf(notificationsGranted(context)) }
+    var allowed by remember { mutableStateOf(AppNotifications.canPost(context)) }
+    var exactAlarms by remember { mutableStateOf(NotificationMaintenance.canScheduleExact(context)) }
+    var diagnostics by remember { mutableStateOf(emptyList<NotificationRecord>()) }
     var sent by remember { mutableStateOf(false) }
+
     // The permission dialog is async: re-check when the activity resumes instead of immediately
-    // after the request click, which used to leave the card stuck on "denied".
+    // after the request click, which used to leave the card stuck on "denied". A later grant of
+    // exact alarms is handled the same way, then every local alarm is rebuilt.
     val lifecycleOwner = LocalLifecycleOwner.current
-    val refreshPermission = rememberUpdatedState { allowed = notificationsGranted(context) }
+    val previousPermissionState = remember { mutableStateOf(allowed to exactAlarms) }
+    val refreshPermission = rememberUpdatedState {
+        val nowAllowed = AppNotifications.canPost(context)
+        val nowExact = NotificationMaintenance.canScheduleExact(context)
+        val previous = previousPermissionState.value
+        allowed = nowAllowed
+        exactAlarms = nowExact
+        previousPermissionState.value = nowAllowed to nowExact
+        if (nowAllowed != previous.first || nowExact != previous.second) {
+            NotificationMaintenance.rescheduleAll(context)
+        }
+    }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refreshPermission.value()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(Unit) {
+        diagnostics = withContext(Dispatchers.IO) {
+            runCatching {
+                StudyDb.get(context.applicationContext)
+                    .notificationDiagnosticsSince(System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L)
+                    .take(6)
+            }.getOrDefault(emptyList())
+        }
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -75,7 +100,7 @@ internal fun NotificationCenterScreen(
         }
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            StatusCard(allowed, onAllow = onRequestNotifications)
+            StatusCard(allowed, exactAlarms, onAllow = onRequestNotifications)
             Spacer(Modifier.height(12.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
@@ -118,8 +143,10 @@ internal fun NotificationCenterScreen(
                 sent = true
             }
             Spacer(Modifier.height(12.dp))
+            DiagnosticCard(diagnostics)
+            Spacer(Modifier.height(12.dp))
             Text(
-                "إن أرسلت إشعارًا ولم يظهر: الإذن ممنوع، أو الهاتف في وضع عدم الإزعاج، أو أُوقفت إشعارات التطبيق من إعدادات النظام.",
+                "إن أرسلت إشعارًا ولم يظهر: الإذن ممنوع، أو المنبّهات الدقيقة موقوفة من النظام، أو الهاتف في وضع عدم الإزعاج، أو أُوقفت إشعارات التطبيق من إعدادات النظام.",
                 style = MaterialTheme.typography.bodySmall,
                 color = FocusColors.TextMuted
             )
@@ -129,7 +156,7 @@ internal fun NotificationCenterScreen(
 }
 
 @Composable
-private fun StatusCard(allowed: Boolean, onAllow: () -> Unit) {
+private fun StatusCard(allowed: Boolean, exactAlarms: Boolean, onAllow: () -> Unit) {
     val context = LocalContext.current
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
@@ -161,6 +188,19 @@ private fun StatusCard(allowed: Boolean, onAllow: () -> Unit) {
                         )
                     }
                 }) { Text("إعدادات النظام") }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (exactAlarms) "المنبّهات الدقيقة مسموحة ✓" else "المنبّهات الدقيقة ممنوعة — قد تتأخر بعض التذكيرات",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (exactAlarms) FocusColors.Blue else FocusColors.TextSecondary
+                )
+                if (!exactAlarms) {
+                    TextButton(onClick = { NotificationMaintenance.openExactAlarmSettings(context) }) {
+                        Text("اسمح بالمنبّهات الدقيقة")
+                    }
+                }
             }
         }
     }
@@ -194,6 +234,36 @@ private fun TestCard(sent: Boolean, allowed: Boolean, onSend: () -> Unit) {
     }
 }
 
-private fun notificationsGranted(context: Context): Boolean =
-    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+@Composable
+private fun DiagnosticCard(events: List<NotificationRecord>) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("سجل تشخيصي محلي", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            if (events.isEmpty()) {
+                Text("لا توجد ملاحظات في آخر ٧ أيام.", style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
+                return@Column
+            }
+            events.forEach { event ->
+                Text(
+                    "• ${diagnosticLabel(event.action)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FocusColors.TextSecondary
+                )
+            }
+        }
+    }
+}
+
+private fun diagnosticLabel(action: String): String = when {
+    action.startsWith("deferred:") -> "تأجيل آمن: ${action.removePrefix("deferred:")}"
+    action == NotificationMaintenance.EXACT_ALARM_DENIED -> "المنبّهات الدقيقة غير مسموحة؛ استُخدم بديل غير دقيق."
+    action == NotificationMaintenance.EXACT_ALARM_FAILED -> "فشل منبّه دقيق؛ استُخدم بديل غير دقيق."
+    action == NotificationMaintenance.INEXACT_ALARM_FAILED -> "تعذّر جدولة منبّه بديل."
+    action == NotificationMaintenance.PERMISSION_DENIED -> "وصل تذكير والإذن ممنوع؛ أُجّل retry محلي."
+    action.startsWith(NotificationMaintenance.RESCHEDULE_FAILED) -> "تعذّت إعادة جدولة: ${action.substringAfter(':')}"
+    else -> action
+}

@@ -36,15 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** A group of destinations, organised by what the person is trying to do. */
-internal data class SectionGroup(val title: String, val ids: List<String>)
-
-internal val SectionGroups = listOf(
-    SectionGroup("التخطيط", listOf("today", "tasks", "calendar", "notes", "planner", "task_types")),
-    SectionGroup("التطوّر", listOf("goals", "skills", "subjects", "analytics")),
-    SectionGroup("الفريق والنظام", listOf("notifications", "messages", "updates", "prayer_times", "settings", "support"))
-)
-
 /**
  * The floating dock that replaced the full-width navigation bar.
  *
@@ -134,10 +125,11 @@ private fun DockItem(
 }
 
 /**
- * Every destination in one sheet, each row with a pin.
+ * The dock sheet: the shared directory plus the pin controls that belong to the dock.
  *
- * Pinning writes the same preference the bar editor used, so the dock never has two sources of
- * truth; the five-slot cap is explained instead of silently refusing.
+ * Rows come from [NavigationCatalog], the same source «المزيد» reads, so the two directory entry
+ * points can never drift into showing different sections. Pinning still writes the same preference
+ * the bar editor used, and the five-slot cap is explained instead of silently refusing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -147,10 +139,9 @@ internal fun SectionsSheet(
     onSelect: (String) -> Unit,
     onTogglePin: (String) -> Unit
 ) {
-    var query by remember { mutableStateOf("") }
     val current = remember(pinned) { BottomTab.normalize(pinned) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = FocusColors.Surface) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).verticalScroll(rememberScrollState())) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("كل الأقسام", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = FocusColors.TextPrimary)
                 Spacer(Modifier.weight(1f))
@@ -161,54 +152,77 @@ internal fun SectionsSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = FocusColors.TextSecondary
             )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                label = { Text("ابحث عن قسم") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(6.dp))
-            SectionGroups.forEach { group ->
-                val rows = group.ids.mapNotNull { BottomTab.from(it) }
-                    .filter { query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) }
-                if (rows.isNotEmpty()) {
-                    Text(
-                        group.title,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = FocusColors.TextMuted,
-                        modifier = Modifier.padding(top = 14.dp, bottom = 6.dp)
-                    )
-                    rows.forEach { tab ->
-                        SectionRow(
-                            tab = tab,
-                            pinned = tab.id in current,
-                            canPin = BottomTab.canAdd(current) || tab.id in current,
-                            onOpen = { onSelect(tab.id) },
-                            onToggle = { onTogglePin(tab.id) }
-                        )
-                    }
-                }
-            }
-            if (!BottomTab.canAdd(current)) {
-                Text(
-                    "الشريط ممتلئ بخمسة أقسام — انزع التثبيت عن واحد لإضافة غيره.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FocusColors.TextMuted,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-            Spacer(Modifier.height(24.dp))
+            SectionsDirectory(pinned = current, onOpen = onSelect, onTogglePin = onTogglePin)
         }
     }
 }
 
+/**
+ * The one directory rendering shared by the dock sheet and the «المزيد» screen.
+ *
+ * [pinned] enables the pin controls; pass null for a plain navigation list. Search, grouping and
+ * ordering are identical in both places, so «المزيد» is no longer a second hard-coded directory.
+ */
+@Composable
+internal fun SectionsDirectory(
+    pinned: List<String>? = null,
+    onOpen: (String) -> Unit,
+    onTogglePin: (String) -> Unit = {}
+) {
+    var query by remember { mutableStateOf("") }
+    val current = remember(pinned) { pinned?.let(BottomTab::normalize).orEmpty() }
+    val pinnableIds = remember { NavigationCatalog.pinnableEntries().map { it.id }.toSet() }
+    val canPinMore = pinned != null && BottomTab.canAdd(current)
+
+    Spacer(Modifier.height(14.dp))
+    OutlinedTextField(
+        value = query,
+        onValueChange = { query = it },
+        singleLine = true,
+        label = { Text("ابحث عن قسم") },
+        modifier = Modifier.fillMaxWidth()
+    )
+    SectionShelf.entries.forEach { shelf ->
+        val rows = NavigationCatalog.entries
+            .filter { it.shelf == shelf }
+            .filter { query.isBlank() || it.title.contains(query.trim(), ignoreCase = true) }
+        if (rows.isNotEmpty()) {
+            Text(
+                shelf.title,
+                style = MaterialTheme.typography.labelLarge,
+                color = FocusColors.TextMuted,
+                modifier = Modifier.padding(top = 16.dp, bottom = 2.dp)
+            )
+            Text(shelf.subtitle, style = MaterialTheme.typography.labelSmall, color = FocusColors.TextSecondary)
+            rows.forEach { entry ->
+                SectionRow(
+                    entry = entry,
+                    pinned = pinned != null && entry.id in current,
+                    canPin = pinned != null && entry.id in pinnableIds && (entry.id in current || canPinMore),
+                    showPin = pinned != null,
+                    onOpen = { onOpen(entry.id) },
+                    onToggle = { onTogglePin(entry.id) }
+                )
+            }
+        }
+    }
+    if (pinned != null && !BottomTab.canAdd(current)) {
+        Text(
+            "الشريط ممتلئ بخمسة أقسام — انزع التثبيت عن واحد لإضافة غيره.",
+            style = MaterialTheme.typography.bodySmall,
+            color = FocusColors.TextMuted,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+    }
+    Spacer(Modifier.height(24.dp))
+}
+
 @Composable
 private fun SectionRow(
-    tab: BottomTab,
+    entry: SectionEntry,
     pinned: Boolean,
     canPin: Boolean,
+    showPin: Boolean,
     onOpen: () -> Unit,
     onToggle: () -> Unit
 ) {
@@ -223,18 +237,23 @@ private fun SectionRow(
         Box(
             Modifier.width(34.dp).height(34.dp).clip(RoundedCornerShape(12.dp)).background(FocusColors.SurfaceHigh),
             contentAlignment = Alignment.Center
-        ) { Text(tab.mark, color = FocusColors.Blue) }
+        ) { Text(entry.mark, color = FocusColors.Blue) }
         Spacer(Modifier.width(12.dp))
-        Text(tab.label, style = MaterialTheme.typography.bodyLarge, color = FocusColors.TextPrimary, modifier = Modifier.weight(1f))
-        TextButton(onClick = onToggle, enabled = canPin) {
-            Text(
-                when {
-                    pinned -> "مثبّت ✓"
-                    canPin -> "تثبيت"
-                    else -> "ممتلئ"
-                },
-                color = if (pinned) FocusColors.Blue else FocusColors.TextMuted
-            )
+        Column(Modifier.weight(1f)) {
+            Text(entry.title, style = MaterialTheme.typography.bodyLarge, color = FocusColors.TextPrimary)
+            Text(entry.description, style = MaterialTheme.typography.labelSmall, color = FocusColors.TextMuted)
+        }
+        if (showPin) {
+            TextButton(onClick = onToggle, enabled = canPin) {
+                Text(
+                    when {
+                        pinned -> "مثبّت ✓"
+                        canPin -> "تثبيت"
+                        else -> "ممتلئ"
+                    },
+                    color = if (pinned) FocusColors.Blue else FocusColors.TextMuted
+                )
+            }
         }
     }
 }

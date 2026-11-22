@@ -1,0 +1,13 @@
+{
+  "id": "focus-study-store",
+  "name": "متجر مُنظِّم",
+  "packageName": "com.focusstudy.store",
+  "versionCode": 1,
+  "versionName": "0.1.0",
+  "storeUrl": "https://qubixstore.vercel.app/focus-study-updates",
+  "apkUrl": "https://update-site-sigma.vercel.app/downloads/focus-store-0.1.0.apk",
+  "description": "تطبيق متجر مُنظِّم على هاتفك: يعرض تطبيقاتنا المثبّتة وحالة تحديثها من نفس مصدر تحديثات الموقع.",
+  "releasePageUrl": "https://update-site-sigma.vercel.app/#download",
+  "releaseNotes": "أول إصدار: عرض تطبيقات مُنظِّم المعروفة على الهاتف، ومعرفة هل عليها تحديث أم لا، وفتح صفحة المتجر أو ملف التحديث.",
+  "publishedAt": "2026-11-22T00:00:00+02:00"
+}

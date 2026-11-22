@@ -287,7 +287,13 @@ class MainActivity : ComponentActivity() {
 
         ActivityResultContracts.RequestPermission()
 
-    ) { }
+    ) { granted ->
+        if (granted) {
+            NotificationMaintenance.rescheduleAll(applicationContext)
+        } else {
+            NotificationMaintenance.log(this, NotificationMaintenance.PERMISSION_DENIED)
+        }
+    }
 
     override fun onNewIntent(intent: Intent) {
 
@@ -351,12 +357,16 @@ class MainActivity : ComponentActivity() {
                         onPreferencesChanged = { updated ->
                             FocusPreferences.save(this@MainActivity, updated)
                             val profileChanged = updated.profile != preferences.value.profile
+                            val timezoneChanged = updated.timezoneId != preferences.value.timezoneId
                             preferences.value = updated
                             if (profileChanged) {
                                 CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                                     runCatching { ProfilePresets.seed(applicationContext, updated.profile) }
                                 }
                             }
+                            // A different IANA zone changes every future wall-clock alarm: rebuild
+                            // all local schedules once so no prayer, dhikr or task reminder is lost.
+                            if (timezoneChanged) NotificationMaintenance.rescheduleAll(applicationContext)
                         },
 
                         onStartSession = ::startFocusSession,
@@ -699,22 +709,12 @@ private fun AppRoot(
                     onBack = { returnToPreviousTab() },
                     onStartTask = { taskId -> setupTaskId = taskId }
                 )
-                "more" -> MoreSectionsScreen(
-                    onPlanner = { openSecondary("planner") },
-                    onAnalytics = { openSecondary("analytics") },
-                    onSettings = { openSecondary("settings") },
-                    onSupport = { openSecondary("support") },
-                    onUpdates = { openSecondary("updates") },
-                    onPrayerTimes = { openSecondary("prayer_times") },
-                    onTaskTypes = { openSecondary("task_types") },
-                    onSkills = { openSecondary("skills") },
-                    onNotes = { openSecondary("notes") },
-                    onMessages = { openSecondary("messages") },
-                    onGoals = { openSecondary("goals") },
-                    onBottomBar = { openSecondary("bottom_bar") },
-                    onNotifications = { openSecondary("notifications") }
+                "more" -> MoreSectionsScreen(onOpen = { openSecondary(it) })
+                "prayer_times" -> PrayerTimesScreen(
+                    onBack = { returnToPreviousTab() },
+                    timezoneId = preferences.timezoneId,
+                    onTimeZoneChanged = { id -> onPreferencesChanged(preferences.copy(timezoneId = id)) }
                 )
-                "prayer_times" -> PrayerTimesScreen(onBack = { returnToPreviousTab() })
                 "updates" -> AppUpdatesScreen(onBack = { returnToPreviousTab() })
                 "settings" -> PersonalizationScreen(
                     current = preferences,
@@ -729,6 +729,7 @@ private fun AppRoot(
                     onSave = { packages -> onPreferencesChanged(preferences.copy(permanentBlockedPackages = packages)) }
                 )
                 "support" -> SupportScreen(onBack = { returnToPreviousTab() })
+                "sync" -> SyncAccountScreen(onBack = { returnToPreviousTab() })
                 "planner" -> StudyPlannerScreen(
                     dailyGoal = preferences.dailyGoalMinutes,
                     onBack = { returnToPreviousTab() },
@@ -882,7 +883,8 @@ private fun TasksScreen(
             now = System.currentTimeMillis(),
             subjectNames = subjectNames,
             examBySubject = examBySubject,
-            prayerAtMillis = prayerTick
+            prayerAtMillis = prayerTick,
+            zone = AppTimeZone.zone(context)
         )
     }
 
@@ -916,7 +918,7 @@ private fun TasksScreen(
                 compareByDescending<StudyTask> { it.priority.level }
                     .thenBy { it.dueAt ?: Long.MAX_VALUE }
             )
-            TaskListSort.SMART -> SmartOrder.sort(matchingTasks, System.currentTimeMillis(), examBySubject)
+            TaskListSort.SMART -> SmartOrder.sort(matchingTasks, System.currentTimeMillis(), examBySubject, AppTimeZone.zone(context))
             TaskListSort.NEWEST -> matchingTasks.sortedByDescending { it.createdAt }
             TaskListSort.TITLE -> matchingTasks.sortedBy { it.title.lowercase(Locale.getDefault()) }
         }
@@ -1215,9 +1217,9 @@ private fun TasksScreen(
 
             subjects = subjectState.subjects,
             types = typeState.types,
-            onAdd = { title, minutes, category, priority, dueAtString, recurrence, notes, subjectId, typeId ->
+            onAdd = { draft ->
 
-                viewModel.add(title, minutes, category, priority, parseDueDateMillis(dueAtString), subjectId, notes.orEmpty(), recurrence, typeId) { showAddDialog = false }
+                viewModel.add(draft.title, draft.minutes, draft.category, draft.priority, parseDueDateMillis(draft.dueAt), draft.subjectId, draft.notes.orEmpty(), draft.recurrence, draft.typeId) { showAddDialog = false }
 
 
 
@@ -1394,21 +1396,7 @@ private fun DashboardEmptyStep(onAddTask: () -> Unit) {
 }
 
 @Composable
-private fun MoreSectionsScreen(
-    onPlanner: () -> Unit,
-    onAnalytics: () -> Unit,
-    onSettings: () -> Unit,
-    onSupport: () -> Unit,
-    onUpdates: () -> Unit,
-    onPrayerTimes: () -> Unit,
-    onTaskTypes: () -> Unit,
-    onSkills: () -> Unit,
-    onNotes: () -> Unit,
-    onMessages: () -> Unit,
-    onGoals: () -> Unit,
-    onBottomBar: () -> Unit,
-    onNotifications: () -> Unit
-) {
+private fun MoreSectionsScreen(onOpen: (String) -> Unit) {
     Column(
         Modifier
             .fillMaxSize()
@@ -1418,83 +1406,8 @@ private fun MoreSectionsScreen(
         Text("المزيد", style = MaterialTheme.typography.headlineSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text("أدواتك مجمّعة في أربع مجموعات بدل قائمة طويلة.", style = MaterialTheme.typography.bodyMedium, color = FocusColors.TextSecondary)
-        Spacer(Modifier.height(14.dp))
-
-        MoreGroup(
-            "التخطيط والتقدّم",
-            "كيف يتحوّل يومك إلى خطة، وكيف تقيس ما أنجزته",
-            listOf(
-                MoreItem("الخطة الأسبوعية", "حوّل مهامك إلى جلسات قابلة للتنفيذ.", "↗", onPlanner),
-                MoreItem("أنواع المهام", "أضف أنواعك المخصّصة، وأعد ترتيبها أو أرشفها.", "◈", onTaskTypes),
-                MoreItem("نوتة", "ملاحظاتك الخاصة — محفوظة على جهازك فقط.", "✎", onNotes),
-                MoreItem("إحصاءاتي", "راجع وقت التركيز والمهام المنجزة.", "◔", onAnalytics)
-            )
-        )
-        MoreGroup(
-            "أهدافي وتطويري",
-            "الصورة الكبيرة والمهارات التي تبنيها",
-            listOf(
-                MoreItem("أهدافي", "أهداف بمقياس ومهلة، ومهام ومهارات مرتبطة بها.", "◎", onGoals),
-                MoreItem("مهاراتي", "سجّل المهارات التي تطوّرها ودقائق تدريبك.", "✦", onSkills)
-            )
-        )
-        MoreGroup(
-            "التخصيص والتنبيهات",
-            "شكل التطبيق وما يذكّرك به",
-            listOf(
-                MoreItem("تخصيص التجربة", "اسمك وهدفك اليومي والمظهر والملف.", "⚙", onSettings),
-                MoreItem("الإشعارات", "ما يصلك ومتى، واختبار فوري لها.", "🔔", onNotifications),
-                MoreItem("الشريط السفلي", "اختر أقسام الشريط السفلي ورتّبها.", "▥", onBottomBar),
-                MoreItem("مواقيت الصلاة", "احسب المواقيت حسب موقعك واضبط تذكيرها.", "☾", onPrayerTimes)
-            )
-        )
-        MoreGroup(
-            "الفريق والتحديثات",
-            "ما يصل منّا، وما يصل للتطبيق",
-            listOf(
-                MoreItem("رسائل الفريق", "إعلانات ومستجدّات بدون تحديث التطبيق.", "✉", onMessages),
-                MoreItem("تحديثات التطبيق", "افحص الإصدارات الجديدة واقرأ سجل التغييرات.", "↻", onUpdates),
-                MoreItem("الدعم الفني", "تواصل معنا إذا احتجت إلى مساعدة.", "?", onSupport)
-            )
-        )
-        Spacer(Modifier.height(20.dp))
-    }
-}
-
-private data class MoreItem(val title: String, val description: String, val mark: String, val onClick: () -> Unit)
-
-/** One theme per card: the card header names the theme, the rows inside stay one tap away. */
-@Composable
-private fun MoreGroup(title: String, subtitle: String, items: List<MoreItem>) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(22.dp)
-    ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold)
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = FocusColors.TextMuted)
-            Spacer(Modifier.height(6.dp))
-            items.forEachIndexed { index, item ->
-                if (index > 0) {
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(FocusColors.Outline.copy(alpha = 0.5f)))
-                }
-                Row(
-                    Modifier.fillMaxWidth().clickable(onClick = item.onClick).padding(vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(FocusColors.SurfaceHigh), contentAlignment = Alignment.Center) {
-                        Text(item.mark, style = MaterialTheme.typography.titleSmall, color = FocusColors.onTint(FocusColors.Blue), fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(item.title, style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
-                        Text(item.description, style = MaterialTheme.typography.labelSmall, color = FocusColors.TextSecondary)
-                    }
-                    Text("‹", style = MaterialTheme.typography.titleLarge, color = FocusColors.TextMuted)
-                }
-            }
-        }
+        // The rows come from the same catalog as the dock sheet; no second hard-coded directory.
+        SectionsDirectory(onOpen = onOpen)
     }
 }
 
@@ -2024,7 +1937,7 @@ private fun EditTaskDialog(
                     singleLine = true,
                     label = { Text("المدة المتوقعة بالدقائق (1–720)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = minutesInput.toIntOrNull() !in 1..720,
+                    isError = minutesInput.isNotEmpty() && minutesInput.toIntOrNull() !in TaskDraft.MIN_MINUTES..TaskDraft.MAX_MINUTES,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
@@ -3795,7 +3708,7 @@ private fun AddTaskDialog(
     onDismiss: () -> Unit,
     subjects: List<StudySubject>,
     types: List<TaskType>,
-    onAdd: (String, Int, TaskCategory, TaskPriority, String?, Recurrence, String?, Long?, String?) -> Unit
+    onAdd: (TaskDraft) -> Unit
 ) {
 
     var title by rememberSaveable { mutableStateOf("") }
@@ -3849,6 +3762,15 @@ private fun AddTaskDialog(
 
                 )
 
+                if (!expanded && title.isNotBlank()) {
+                    Text(
+                        "اكتب الاسم واضغط إضافة — الخيارات الباقية اختيارية.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = FocusColors.TextMuted
+                    )
+                    Spacer(Modifier.height(6.dp))
+                }
+
                 Spacer(Modifier.height(6.dp))
                 QuickCaptureHint(
                     title = title,
@@ -3885,7 +3807,7 @@ private fun AddTaskDialog(
                     singleLine = true,
                     label = { Text("المدة المتوقعة بالدقائق (1–720)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = minutesInput.toIntOrNull() !in 1..720,
+                    isError = minutesInput.isNotEmpty() && minutesInput.toIntOrNull() !in TaskDraft.MIN_MINUTES..TaskDraft.MAX_MINUTES,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
@@ -4108,9 +4030,22 @@ private fun AddTaskDialog(
 
             TextButton(
 
-                onClick = { if (title.isNotBlank()) onAdd(title.trim(), minutesInput.toIntOrNull() ?: 30, category, priority, dueAtString, recurrence, notes, subjectId, typeId) },
+                onClick = {
+                    val draft = TaskDraft(
+                        title = title.trim(),
+                        minutes = TaskDraft.minutesFrom(minutesInput),
+                        category = category,
+                        priority = priority,
+                        dueAt = dueAtString,
+                        recurrence = recurrence,
+                        notes = notes,
+                        subjectId = subjectId,
+                        typeId = typeId
+                    )
+                    if (draft.isValid()) onAdd(draft)
+                },
 
-                enabled = title.isNotBlank() && minutesInput.toIntOrNull() in 1..720
+                enabled = TaskDraft.canAdd(title, minutesInput)
 
             ) { Text("إضافة") }
 

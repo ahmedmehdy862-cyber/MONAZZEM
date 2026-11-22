@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -102,6 +103,7 @@ private fun PrayerAlertScreen(
     onOpenApp: () -> Unit,
     onSettings: () -> Unit
 ) {
+    val context = LocalContext.current
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -149,7 +151,7 @@ private fun PrayerAlertScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = PrayerCalculator.format(atMillis),
+                    text = PrayerCalculator.format(context, atMillis),
                     style = MaterialTheme.typography.titleLarge,
                     color = FocusColors.onTint(FocusColors.Teal)
                 )

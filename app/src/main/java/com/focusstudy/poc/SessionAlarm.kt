@@ -5,7 +5,6 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 
 /**
  * Wakes the app at the session end time so a locked session still releases its apps even if the
@@ -25,21 +24,13 @@ object SessionAlarm {
 
     fun schedule(context: Context, atMillis: Long) {
         val manager = context.getSystemService(AlarmManager::class.java) ?: return
-        val pendingIntent = pending(context)
-        val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            runCatching { manager.canScheduleExactAlarms() }.getOrDefault(false)
-        val scheduled = if (exact) {
-            runCatching {
-                manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent)
-            }
-        } else {
-            runCatching { manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent) }
-        }
-        if (exact && scheduled.isFailure) {
-            // Some OEMs refuse exact alarms even when canScheduleExactAlarms() returns true.
-            // An inexact alarm is better than a session that never releases its apps.
-            runCatching { manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent) }
-        }
+        NotificationMaintenance.schedule(
+            context = context,
+            manager = manager,
+            atMillis = atMillis,
+            pending = pending(context),
+            kind = "session_end"
+        )
     }
 
     fun cancel(context: Context) {

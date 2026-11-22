@@ -16,6 +16,8 @@ import com.batoulapps.adhan.Coordinates
 import com.batoulapps.adhan.PrayerTimes
 import com.batoulapps.adhan.data.DateComponents
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -26,13 +28,29 @@ internal data class PrayerMoment(val name: String, val atMillis: Long)
 
 internal object PrayerPrefs {
     private const val FILE = "prayer_preferences"
+    // Phase 4 adds full-precision string copies. The old Float keys stay for backward compatibility.
+    private const val LATITUDE_TEXT = "latitude_text"
+    private const val LONGITUDE_TEXT = "longitude_text"
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-    fun latitude(context: Context) = prefs(context).getFloat("latitude", Float.NaN).toDouble()
-    fun longitude(context: Context) = prefs(context).getFloat("longitude", Float.NaN).toDouble()
+
+    private fun coordinate(context: Context, textKey: String, floatKey: String, range: ClosedFloatingPointRange<Double>): Double {
+        val prefs = prefs(context)
+        return prefs.getString(textKey, null)?.toDoubleOrNull()
+            ?.takeIf { it.isFinite() && it in range }
+            ?: prefs.getFloat(floatKey, Float.NaN).toDouble()
+    }
+
+    fun latitude(context: Context) = coordinate(context, LATITUDE_TEXT, "latitude", -90.0..90.0)
+    fun longitude(context: Context) = coordinate(context, LONGITUDE_TEXT, "longitude", -180.0..180.0)
     fun method(context: Context) = prefs(context).getString("method", "EGYPTIAN") ?: "EGYPTIAN"
     fun enabled(context: Context) = prefs(context).getBoolean("enabled", false)
     fun saveLocation(context: Context, lat: Double, lon: Double) {
-        prefs(context).edit().putFloat("latitude", lat.toFloat()).putFloat("longitude", lon.toFloat()).apply()
+        prefs(context).edit()
+            .putString(LATITUDE_TEXT, lat.toString())
+            .putString(LONGITUDE_TEXT, lon.toString())
+            .putFloat("latitude", lat.toFloat())
+            .putFloat("longitude", lon.toFloat())
+            .apply()
     }
     fun saveMethod(context: Context, method: String) { prefs(context).edit().putString("method", method).apply() }
     fun setEnabled(context: Context, enabled: Boolean) { prefs(context).edit().putBoolean("enabled", enabled).apply() }
@@ -50,8 +68,10 @@ internal object PrayerCalculator {
         val lat = PrayerPrefs.latitude(context)
         val lon = PrayerPrefs.longitude(context)
         require(lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0)
-        val cal = java.util.Calendar.getInstance().apply { time = date }
-        val components = DateComponents(cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH) + 1, cal.get(java.util.Calendar.DAY_OF_MONTH))
+        // Adhan treats DateComponents as a calendar date in UTC, so the date we hand it must be the
+        // local date in the user's selected zone — not the device zone.
+        val localDate = Instant.ofEpochMilli(date.time).atZone(AppTimeZone.zone(context)).toLocalDate()
+        val components = DateComponents(localDate.year, localDate.monthValue, localDate.dayOfMonth)
         val prayers = PrayerTimes(Coordinates(lat, lon), components, parameters(PrayerPrefs.method(context)))
         return listOf(
             PrayerMoment("الفجر", prayers.fajr.time), PrayerMoment("الظهر", prayers.dhuhr.time),
@@ -63,13 +83,17 @@ internal object PrayerCalculator {
     fun next(context: Context, now: Long = System.currentTimeMillis()): PrayerMoment? {
         val upcomingToday = today(context).firstOrNull { it.atMillis > now }
         if (upcomingToday != null) return upcomingToday
-        val tomorrow = java.util.Calendar.getInstance().apply { timeInMillis = now; add(java.util.Calendar.DAY_OF_YEAR, 1) }.time
-        return today(context, tomorrow).firstOrNull()
+        // plusDays on a ZonedDateTime keeps the local date correct across DST transitions.
+        val tomorrow = Instant.ofEpochMilli(now).atZone(AppTimeZone.zone(context)).plusDays(1)
+        return today(context, Date(tomorrow.toInstant().toEpochMilli())).firstOrNull()
     }
 
-    fun format(millis: Long): String = SimpleDateFormat("h:mm a", Locale("ar")).apply {
-        timeZone = TimeZone.getDefault()
-    }.format(Date(millis))
+    fun format(millis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        SimpleDateFormat("h:mm a", Locale("ar")).apply {
+            timeZone = TimeZone.getTimeZone(zone.id)
+        }.format(Date(millis))
+
+    fun format(context: Context, millis: Long): String = format(millis, AppTimeZone.zone(context))
 }
 
 internal object PrayerReminderScheduler {
@@ -88,7 +112,7 @@ internal object PrayerReminderScheduler {
         val next = runCatching { PrayerCalculator.next(context) }.getOrNull() ?: run { manager.cancel(pending); return }
         baseIntent.putExtra(EXTRA_PRAYER, next.name)
         val updatedPending = PendingIntent.getBroadcast(context, REQUEST, baseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        setAlarm(manager, next.atMillis, updatedPending)
+        setAlarm(context, manager, next.atMillis, updatedPending)
     }
 
     /** A one-off reminder from the full-screen alert; the normal daily schedule is untouched. */
@@ -101,7 +125,7 @@ internal object PrayerReminderScheduler {
             context, SNOOZE_REQUEST, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        setAlarm(manager, System.currentTimeMillis() + FIVE_MINUTES, pending)
+        setAlarm(context, manager, System.currentTimeMillis() + FIVE_MINUTES, pending)
     }
 
     fun notifyTest(context: Context) {
@@ -150,11 +174,8 @@ internal object PrayerReminderScheduler {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    private fun setAlarm(manager: AlarmManager, atMillis: Long, pending: PendingIntent) {
-        val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            runCatching { manager.canScheduleExactAlarms() }.getOrDefault(false)
-        if (exact) manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pending)
-        else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pending)
+    private fun setAlarm(context: Context, manager: AlarmManager, atMillis: Long, pending: PendingIntent) {
+        NotificationMaintenance.schedule(context, manager, atMillis, pending, kind = "prayer")
     }
 }
 

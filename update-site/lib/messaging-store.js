@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { userCode } = require("./user-code");
@@ -6,6 +7,7 @@ const MESSAGES_PATH = "focus-study/team-messages.json";
 const INBOX_PATH = "focus-study/support-inbox.json";
 const USERS_PATH = "focus-study/users.json";
 const SOUNDS_PATH = "focus-study/notification-sounds.json";
+const DELIVERIES_PATH = "focus-study/message-deliveries.json";
 const LOCAL_DIR = path.join(__dirname, "..", ".data");
 // Broadcast messages are public; the support inbox, user registry and sound choices are
 // read/written only through the server-side @vercel/blob client with BLOB_READ_WRITE_TOKEN.
@@ -13,11 +15,14 @@ const MESSAGES_ACCESS = "public";
 const INBOX_ACCESS = "private";
 const USERS_ACCESS = "private";
 const SOUNDS_ACCESS = "private";
+const DELIVERIES_ACCESS = "private";
 const MAX_USERS = 1000;
+const MAX_DELIVERIES = 500;
 
 const SOUND_CATEGORIES = ["prayer", "task", "exam", "team", "update", "daily", "dhikr"];
 const SOUND_CHOICES = ["default", "chime", "adhan", "system", "silent"];
 const DEFAULT_SOUNDS = Object.fromEntries(SOUND_CATEGORIES.map((key) => [key, "default"]));
+const PROFILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Keeps only known notification types and known sound ids, so a bad payload cannot change behaviour. */
 function normalizeSounds(input) {
@@ -159,16 +164,80 @@ async function writeNotificationSounds(input) {
   return { sounds, updatedAt };
 }
 
-/** Upsert by anonymous install id, keeping the original first-seen timestamp. */
+async function readDeliveryEvents() {
+  const record = await readJson(DELIVERIES_PATH, { events: [] }, DELIVERIES_ACCESS, true);
+  return Array.isArray(record.events) ? record.events : [];
+}
+
+/** Stable dedupe key: one publish per message, one receipt per message and recipient. */
+function deliveryKey(event) {
+  const messageId = String(event.messageId || "").trim();
+  if (!messageId) return "";
+  if (event.event === "delivered") return `delivered:${messageId}:${String(event.recipient || "")}`;
+  return `published:${messageId}`;
+}
+
+/**
+ * Append-only audit trail in the existing private Blob store. No new Vercel function is needed.
+ * Retried receipts are ignored, so an offline app reporting the same message twice leaves one row.
+ */
+async function appendDeliveryEvents(events) {
+  const existing = await readDeliveryEvents();
+  const seen = new Set(existing.map(deliveryKey));
+  const added = [];
+  for (const event of events) {
+    const key = deliveryKey(event);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    added.push({
+      ...event,
+      key,
+      id: `d-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      at: new Date().toISOString(),
+    });
+  }
+  if (!added.length) return existing;
+  const next = [...added, ...existing].slice(0, MAX_DELIVERIES);
+  await writeJson(DELIVERIES_PATH, { events: next }, DELIVERIES_ACCESS);
+  return next;
+}
+
+function normalizeProfileId(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return PROFILE_ID_PATTERN.test(clean) ? clean : "";
+}
+
+/** Server-issued, unique across the registry. The client can only suggest an id we do not know yet. */
+function issueProfileId(users) {
+  const taken = new Set(users.map((item) => normalizeProfileId(item.profileId)).filter(Boolean));
+  let candidate = crypto.randomUUID();
+  while (taken.has(candidate)) candidate = crypto.randomUUID();
+  return candidate;
+}
+
+/**
+ * Upsert by anonymous install id, keeping the original first-seen timestamp and profile id.
+ *
+ * Existing registry rows get a profile id on their next registration, so no Blob migration or
+ * destructive rewrite is needed. A client-supplied id is adopted only when this install has none
+ * and nobody else already uses it; otherwise the server keeps or issues its own value.
+ */
 async function upsertUser(entry) {
   const users = await readUsers();
   const now = new Date().toISOString();
   const existing = users.find((item) => item.id === entry.id);
+  const suggested = normalizeProfileId(entry.profileId);
+  const takenByOther = Boolean(suggested) && users.some((item) =>
+    item.id !== entry.id && normalizeProfileId(item.profileId) === suggested
+  );
+  const profileId = normalizeProfileId(existing && existing.profileId)
+    || (suggested && !takenByOther ? suggested : issueProfileId(users));
+  const record = { ...entry, profileId };
   const next = existing
     ? users.map((item) => item.id === entry.id
-      ? { ...item, ...entry, code: userCode(entry.id), lastSeen: now, updatedAt: now }
+      ? { ...item, ...record, code: userCode(entry.id), lastSeen: now, updatedAt: now }
       : item)
-    : [{ ...entry, code: userCode(entry.id), firstSeen: now, lastSeen: now, updatedAt: now }, ...users]
+    : [{ ...record, code: userCode(entry.id), firstSeen: now, lastSeen: now, updatedAt: now }, ...users]
       .slice(0, MAX_USERS);
   await writeJson(USERS_PATH, { users: next }, USERS_ACCESS);
   return next;
@@ -177,5 +246,6 @@ async function upsertUser(entry) {
 module.exports = {
   readMessages, appendMessage, removeMessage, readInbox, appendSupport, markSupport,
   readUsers, upsertUser, readNotificationSounds, writeNotificationSounds,
-  normalizeSounds, SOUND_CATEGORIES, SOUND_CHOICES, DEFAULT_SOUNDS,
+  readDeliveryEvents, appendDeliveryEvents,
+  normalizeSounds, normalizeProfileId, SOUND_CATEGORIES, SOUND_CHOICES, DEFAULT_SOUNDS,
 };

@@ -29,6 +29,7 @@
     .pill{display:inline-block;padding:2px 9px;border-radius:999px;background:#16b8a61c;color:#9ce8dc;font-size:12px}
     .sound-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin-top:10px}
     .sound-grid label{display:block;font-size:14px;font-weight:600}
+    .hidden{display:none!important}
     .sound-grid select{margin-top:4px}
     @media(max-width:640px){.wrap{width:calc(100% - 20px);padding-top:14px}.card{padding:13px}.row > *{width:100%}.sound-grid{grid-template-columns:1fr}}
   </style>
@@ -53,14 +54,21 @@
   <div id="panel" hidden>
     <div id="panel-status" class="meta" hidden></div>
     <div class="card">
-      <strong>بث رسالة فورية لكل المستخدمين</strong>
-      <p class="meta">تظهر داخل التطبيق عند أول فتح بعد النشر — بدون تحديث من المتجر.</p>
+      <strong>نشر رسالة فورية</strong>
+      <p class="meta">تظهر داخل التطبيق عند أول فتح بعد النشر — بدون تحديث من المتجر. اختر نوع المستلم صراحةً حتى لا تتحوّل رسالة خاصة إلى بثّ عام.</p>
       <input id="title" maxlength="90" placeholder="عنوان الرسالة">
       <textarea id="body" rows="3" maxlength="900" placeholder="نص الرسالة"></textarea>
       <div class="row">
-        <label class="meta" for="audience">لمن؟</label>
+        <label class="meta" for="mode">نوع المستلم</label>
+        <select id="mode" style="max-width:220px">
+          <option value="broadcast">الجميع</option>
+          <option value="audience">فئة أو إصدار</option>
+          <option value="person">مستخدم واحد</option>
+        </select>
+      </div>
+      <div class="row hidden" id="audience-row">
+        <label class="meta" for="audience">الفئة</label>
         <select id="audience">
-          <option value="">كل المستخدمين</option>
           <option value="student">الطلاب</option>
           <option value="graduate">الخريجون</option>
           <option value="professional">الموظفون</option>
@@ -70,10 +78,10 @@
         <label class="meta" for="min-version">من إصدار</label>
         <input id="min-version" type="number" min="0" max="1000000" value="0" style="max-width:130px">
       </div>
-      <div class="row">
-        <label class="meta" for="target-user">لجهاز بعينه — اكتب رمزه</label>
+      <div class="row hidden" id="person-row">
+        <label class="meta" for="target-user">رمز المستخدم</label>
         <input id="target-user" maxlength="64" placeholder="مثال: AB12-CD34 — اضغط «مراسلة» في جدول المستخدمين">
-        <div class="meta">الرسالة الموجّهة تصل إلى هذا التثبيت فقط؛ يُتجاهل معها «لمن؟» و«من إصدار»، ويُحلَّل الرمز إلى معرّف الجهاز داخل الخادم.</div>
+        <div class="meta" style="flex-basis:100%">يُحلَّل الرمز داخل الخادم إلى معرّف الملف الشخصي؛ لا يُخزَّن الرمز كمفتاح تسليم، ولا تُطبَّق فلاتر الفئة والإصدار على هذه الرسالة.</div>
       </div>
       <div class="row"><button id="send">نشر الرسالة</button><span id="send-status" class="meta"></span></div>
     </div>
@@ -113,6 +121,15 @@
       <div id="messages"></div>
     </div>
 
+    <div class="card" id="deliveries-card">
+      <div class="row" style="justify-content:space-between"><strong>سجل الإرسال والاستلام</strong><span id="delivery-count" class="meta"></span></div>
+      <p class="meta">سجل خاص بالخادم: لحظة النشر، ثم إيصال من التطبيق عند استلام الرسالة فعليًا. الإيصالات المكررة لا تُضاف مرتين. المعرّفات مجهولة ولا تتضمن محتوى الملاحظات.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>الوقت</th><th>الحدث</th><th>الرسالة</th><th>النوع</th><th>المستلم</th></tr></thead>
+        <tbody id="deliveries"></tbody>
+      </table></div>
+    </div>
+
     <div class="card">
       <div class="row" style="justify-content:space-between"><strong>صندوق الدعم</strong><span id="open-count" class="meta"></span></div>
       <div id="inbox"></div>
@@ -129,6 +146,8 @@
     return clean.length === 8 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean;
   };
   const profileLabels = { student: "طالب", graduate: "خريج", professional: "موظف", retired: "متقاعد", general: "عام" };
+  const modeLabels = { broadcast: "الجميع", audience: "فئة أو إصدار", person: "مستخدم واحد" };
+  const eventLabels = { published: "نشر", delivered: "استلام" };
   const soundLabels = {
     prayer: "الأذان", task: "المهام", exam: "الامتحانات", team: "رسائل الفريق",
     update: "التحديثات", daily: "التشجيع", dhikr: "الأذكار"
@@ -139,7 +158,15 @@
   ];
   let users = [];
 
+  function updateModeFields() {
+    const mode = document.getElementById("mode").value;
+    document.getElementById("audience-row").classList.toggle("hidden", mode !== "audience");
+    document.getElementById("person-row").classList.toggle("hidden", mode !== "person");
+  }
+
   function fillTarget(value) {
+    document.getElementById("mode").value = "person";
+    updateModeFields();
     const field = document.getElementById("target-user");
     field.value = value;
     field.focus();
@@ -189,12 +216,39 @@
   function renderMessages(messages) {
     const box = document.getElementById("messages");
     if (!messages.length) { box.innerHTML = '<p class="meta">لا رسائل منشورة.</p>'; return; }
-    box.innerHTML = messages.map((item) => `
+    box.innerHTML = messages.map((item) => {
+      const isPerson = item.targetMode === "person"
+        || (!item.targetMode && Boolean(item.targetCode || item.targetUserId || item.targetProfileId));
+      const mode = modeLabels[item.targetMode] || (isPerson ? "قديم — مستخدم واحد" : "قديم — عام");
+      const detail = isPerson
+        ? `للمستخدم ${esc(item.targetCode || "—")}`
+        : item.targetMode === "audience"
+          ? `${item.audienceProfile ? esc(profileLabels[item.audienceProfile] || item.audienceProfile) : "كل الفئات"}${item.minVersionCode ? " · من إصدار " + Number(item.minVersionCode) : ""}`
+          : "كل المستخدمين";
+      return `
       <div class="item">
         <div><strong>${esc(item.title)}</strong><div class="meta">${esc(item.body)}</div>
-        <div class="meta">${when(item.at)}${item.audienceProfile ? " · " + esc(item.audienceProfile) : " · للجميع"}${item.minVersionCode ? " · من إصدار " + Number(item.minVersionCode) : ""}${item.targetCode ? " · للرمز " + esc(item.targetCode) : item.targetUserId ? " · لجهاز " + esc(item.targetUserId) : ""}</div></div>
+        <div class="meta">${when(item.at)} · ${mode} · ${detail}</div></div>
         <button class="ghost" data-delete="${esc(item.id)}">حذف</button>
-      </div>`).join("");
+      </div>`;
+    }).join("");
+  }
+
+  function renderDeliveries(events) {
+    const box = document.getElementById("deliveries");
+    document.getElementById("delivery-count").textContent = `${events.length} حدث`;
+    if (!events.length) {
+      box.innerHTML = '<tr><td colspan="5" class="meta">لا أحداث بعد.</td></tr>';
+      return;
+    }
+    box.innerHTML = events.map((event) => `
+      <tr>
+        <td class="meta">${when(event.at)}</td>
+        <td><span class="pill">${esc(eventLabels[event.event] || event.event)}</span></td>
+        <td>${esc(event.messageTitle || event.messageId || "—")}</td>
+        <td>${esc(modeLabels[event.targetMode] || event.targetMode || "—")}</td>
+        <td class="code">${esc(event.recipient || "—")}</td>
+      </tr>`).join("");
   }
 
   function renderInbox(items) {
@@ -218,7 +272,8 @@
         api("/api/admin/messages"),
         api("/api/admin/messages?view=inbox"),
         api("/api/admin/messages?view=users"),
-        api("/api/admin/messages?view=sounds")
+        api("/api/admin/messages?view=sounds"),
+        api("/api/admin/messages?view=deliveries")
       ]);
     } catch {
       status.hidden = false;
@@ -227,7 +282,7 @@
       document.getElementById("panel").hidden = false;
       return;
     }
-    const [messages, inbox, people, soundConfig] = responses;
+    const [messages, inbox, people, soundConfig, deliveryLog] = responses;
     if (responses.some((response) => response.status === 401)) {
       document.getElementById("login-card").hidden = false;
       document.getElementById("panel").hidden = true;
@@ -244,6 +299,7 @@
     if (people.ok) users = (await bodyOf(people)).users || [];
     renderUsers();
     if (soundConfig.ok) renderSounds((await bodyOf(soundConfig)).sounds || {});
+    if (deliveryLog.ok) renderDeliveries((await bodyOf(deliveryLog)).events || []);
   }
 
   // Delegation is registered once so repeated refreshes never stack listeners.
@@ -263,6 +319,7 @@
   });
 
   document.getElementById("user-search").addEventListener("input", renderUsers);
+  document.getElementById("mode").addEventListener("change", updateModeFields);
   document.getElementById("refresh-users").addEventListener("click", load);
   document.getElementById("refresh-sounds").addEventListener("click", load);
 
@@ -280,33 +337,53 @@
     const body = document.getElementById("body").value.trim();
     const status = document.getElementById("send-status");
     if (title.length < 3 || body.length < 3) { status.textContent = "اكتب عنوانًا ونصًا واضحًا."; return; }
+    const targetMode = document.getElementById("mode").value;
     const audienceProfile = document.getElementById("audience").value;
     const minVersionCode = Number(document.getElementById("min-version").value || 0);
     const targetRef = document.getElementById("target-user").value.trim();
-    const res = await api("/api/admin/messages", { method: "POST", body: JSON.stringify({ title, body, audienceProfile, minVersionCode, targetRef }) });
+    if (targetMode === "person" && !targetRef) { status.textContent = "اختر رمز المستخدم من الجدول أولًا."; return; }
+    if (targetMode === "audience" && !audienceProfile && !minVersionCode) {
+      status.textContent = "اختر فئة أو اكتب إصدارًا أدنى."; return;
+    }
+    const res = await api("/api/admin/messages", {
+      method: "POST",
+      body: JSON.stringify({ title, body, targetMode, audienceProfile, minVersionCode, targetRef })
+    });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
-      status.textContent = detail.error === "target_user_not_found"
-        ? "الرمز غير مسجّل. اختر رمزًا من جدول المستخدمين."
-        : detail.error === "invalid_target_user" ? "الرمز غير صالح." : "تعذر النشر.";
+      const errors = {
+        target_user_not_found: "الرمز غير مسجّل. اختر رمزًا من جدول المستخدمين.",
+        target_profile_not_ready: "هذا المستخدم لم يحصل بعد على معرّف الملف الشخصي؛ سيظهر بعد فتح التطبيق مرة واحدة.",
+        invalid_target_mode: "نوع المستلم غير صالح.",
+        mode_field_conflict: "لا يمكن الجمع بين «الجميع» والفلاتر أو مستخدم محدد.",
+        audience_required: "اختر فئة أو إصدارًا.",
+        target_required: "اختر رمز المستخدم.",
+        invalid_target_user: "الرمز غير صالح."
+      };
+      status.textContent = errors[detail.error] || "تعذر النشر.";
       return;
     }
-    status.textContent = "نُشرت الرسالة.";
+    const detail = await res.json().catch(() => ({}));
+    status.textContent = detail.logWarning ? "نُشرت الرسالة، لكن تعذّر كتابة سجل الإرسال." : "نُشرت الرسالة.";
     document.getElementById("title").value = "";
     document.getElementById("body").value = "";
-    // Never keep a previous target/filter: the next broadcast must not silently stay personal.
+    // Never keep a previous target/filter: the next message must not silently stay personal.
+    document.getElementById("mode").value = "broadcast";
     document.getElementById("target-user").value = "";
-    document.getElementById("audience").value = "";
+    document.getElementById("audience").value = "student";
     document.getElementById("min-version").value = "0";
+    updateModeFields();
     load();
   });
 
   document.getElementById("refresh").addEventListener("click", load);
   setupSoundSelects();
+  updateModeFields();
   load().then(() => {
     const view = new URLSearchParams(location.search).get("view");
     if (view === "users") document.getElementById("users-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (view === "sounds") document.getElementById("sounds-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (view === "deliveries") document.getElementById("deliveries-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 </script>
 </body>

@@ -165,7 +165,8 @@ internal object AppNotifications {
         message: String,
         contentIntent: PendingIntent,
         fullScreenIntent: PendingIntent? = null,
-        largeIcon: Bitmap? = null
+        largeIcon: Bitmap? = null,
+        deleteIntent: PendingIntent? = null
     ): NotificationCompat.Builder {
         // Reading the cached choice here as well as in ensure() means a receiver firing while the
         // app is closed still uses the latest sound the admin published before the device went offline.
@@ -193,6 +194,9 @@ internal object AppNotifications {
         return notification.apply {
             if (fullScreenIntent != null) setFullScreenIntent(fullScreenIntent, true)
             if (largeIcon != null) setLargeIcon(largeIcon)
+            // A swipe is the only real "ignored" signal. Without this, blank actions were mistaken
+            // for ignores and the adaptive policy silenced non-critical reminders after three sends.
+            if (deleteIntent != null) setDeleteIntent(deleteIntent)
         }
     }
 }

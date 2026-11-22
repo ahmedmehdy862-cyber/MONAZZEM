@@ -50,6 +50,18 @@
     .notes{color:var(--muted);margin:8px 0 0;white-space:pre-line}
     .meta{color:#7E93A8;font-size:12px;margin-top:8px}
     .status{min-height:26px;color:var(--muted);font-size:13px;margin-top:13px}
+    .history{display:grid;gap:12px}
+    .history-item{border:1px solid #ffffff12;border-radius:20px;background:#ffffff06;padding:18px 20px}
+    .history-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .history-version{font-weight:800;font-size:17px}
+    .history-date{color:#7E93A8;font-size:12px}
+    .history-notes{color:var(--muted);font-size:14px;margin:8px 0 0;white-space:pre-line}
+    .history-link{color:var(--mint);font-size:13px;text-decoration:none;border-bottom:1px solid currentColor}
+    .history-empty{color:var(--muted);font-size:14px}
+    .app-name{font-weight:800;font-size:16px}
+    .app-version{color:#7E93A8;font-size:12px}
+    .app-desc{color:var(--muted);font-size:14px;margin:8px 0 0;white-space:pre-line}
+    .app-links{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px}
     .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;counter-reset:step}
     .step{position:relative;padding:20px 58px 20px 18px;border-radius:20px;background:#ffffff07;border:1px solid #ffffff10;color:var(--muted);font-size:14px}
     .step:before{counter-increment:step;content:counter(step);position:absolute;right:17px;top:19px;width:27px;height:27px;border-radius:10px;display:grid;place-items:center;background:#487ff52c;color:#9FE9DF;font-weight:800}
@@ -75,6 +87,7 @@
           <div class="actions">
             <a id="hero-store" class="button primary" href="#download" aria-disabled="true">رابط المتجر غير مربوط</a>
             <a class="button secondary" href="#how-to">طريقة التثبيت</a>
+            <a class="button secondary" href="/app/">تطبيق الويب</a>
           </div>
           <div id="status" class="status" role="status" aria-live="polite"></div>
         </div>
@@ -110,6 +123,12 @@
           <a id="store-button" class="button primary" href="#download" aria-disabled="true">رابط المتجر غير مربوط</a>
       </section>
 
+      <h2 class="section-title">سجل الإصدارات</h2>
+      <section id="history" class="history" aria-live="polite" aria-label="سجل الإصدارات السابقة"></section>
+
+      <h2 class="section-title">تطبيقات مُنظِّم على الهاتف</h2>
+      <section id="apps" class="history" aria-live="polite" aria-label="تطبيقات مُنظِّم المتاحة للتنزيل"></section>
+
       <h2 class="section-title">التحديث من المتجر</h2>
       <section id="how-to" class="steps">
         <div class="step">اضغط «فتح صفحة المتجر» للانتقال إلى صفحة مُنظِّم الرسمية.</div>
@@ -123,6 +142,101 @@
     const heroStore = document.getElementById('hero-store');
     const storeButton = document.getElementById('store-button');
     const status = document.getElementById('status');
+    const historyBox = document.getElementById('history');
+    const appsBox = document.getElementById('apps');
+    function renderApps(apps) {
+      appsBox.textContent = '';
+      if (!Array.isArray(apps) || apps.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'history-empty';
+        empty.textContent = 'تطبيقات مُنظِّم ستظهر هنا.';
+        appsBox.appendChild(empty);
+        return;
+      }
+      for (const app of apps) {
+        const item = document.createElement('article');
+        item.className = 'history-item';
+        const head = document.createElement('div');
+        head.className = 'history-head';
+        const name = document.createElement('span');
+        name.className = 'app-name';
+        name.textContent = app.name || '';
+        const version = document.createElement('span');
+        version.className = 'app-version';
+        version.textContent = `${app.versionName || ''} · ${app.versionCode || ''}`;
+        head.appendChild(name);
+        head.appendChild(version);
+        const desc = document.createElement('p');
+        desc.className = 'app-desc';
+        desc.textContent = app.description || app.releaseNotes || '';
+        item.appendChild(head);
+        item.appendChild(desc);
+        const links = document.createElement('div');
+        links.className = 'app-links';
+        for (const [field, label] of [['storeUrl', 'صفحة المتجر ↗'], ['apkUrl', 'تنزيل APK ↗']]) {
+          const url = app[field];
+          if (!url || !/^https:\/\//i.test(url)) continue;
+          const link = document.createElement('a');
+          link.className = 'history-link';
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = label;
+          links.appendChild(link);
+        }
+        item.appendChild(links);
+        appsBox.appendChild(item);
+      }
+    }
+    function renderHistory(entries, storeUrl) {
+      historyBox.textContent = '';
+      if (!Array.isArray(entries) || entries.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'history-empty';
+        empty.textContent = 'سجل الإصدارات سيظهر هنا بدءًا من هذا الإصدار.';
+        historyBox.appendChild(empty);
+        return;
+      }
+      for (const entry of entries) {
+        const item = document.createElement('article');
+        item.className = 'history-item';
+        const head = document.createElement('div');
+        head.className = 'history-head';
+        const version = document.createElement('span');
+        version.className = 'history-version';
+        version.textContent = `مُنظِّم ${entry.versionName || ''}`;
+        const code = document.createElement('span');
+        code.className = 'version';
+        code.textContent = `الإصدار ${entry.versionCode || ''}`;
+        head.appendChild(version);
+        head.appendChild(code);
+        if (entry.publishedAt) {
+          const parsed = new Date(entry.publishedAt);
+          if (!Number.isNaN(parsed.getTime())) {
+            const date = document.createElement('span');
+            date.className = 'history-date';
+            date.textContent = new Intl.DateTimeFormat('ar', { dateStyle: 'medium' }).format(parsed);
+            head.appendChild(date);
+          }
+        }
+        const notes = document.createElement('p');
+        notes.className = 'history-notes';
+        notes.textContent = entry.releaseNotes || 'تحسينات وإصلاحات.';
+        item.appendChild(head);
+        item.appendChild(notes);
+        const url = entry.storeUrl || storeUrl;
+        if (url && /^https:\/\//i.test(url)) {
+          const link = document.createElement('a');
+          link.className = 'history-link';
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = 'فتح صفحة المتجر ↗';
+          item.appendChild(link);
+        }
+        historyBox.appendChild(item);
+      }
+    }
     function setStore(url) {
       for (const button of [heroStore, storeButton]) {
         button.href = url;
@@ -150,12 +264,16 @@
           storeButton.textContent = 'المتجر غير مربوط';
           status.textContent = 'سيتم تفعيل التحديث من المتجر بعد إضافة رابطه في لوحة الإدارة.';
         }
+        renderHistory(release.history, release.storeUrl);
+        renderApps(release.apps);
       })
       .catch(() => {
         document.getElementById('version-name').textContent = 'بيانات الإصدار غير متاحة الآن';
         document.getElementById('release-notes').textContent = 'تحقق من اتصال الإنترنت وحاول مرة أخرى بعد قليل.';
         storeButton.textContent = 'صفحة المتجر غير متاحة';
         status.textContent = 'تعذر الاتصال بمصدر التحديثات.';
+        renderHistory([], '');
+        renderApps([]);
       });
   </script>
   <script>

@@ -1,6 +1,7 @@
 const { put } = require("@vercel/blob");
 const { isAdmin, originIsSame, parseBody, json } = require("../../lib/admin-auth");
 const { RELEASE_PATH, readLatestRelease } = require("../../lib/release-store");
+const { recordRelease } = require("../../lib/release-history");
 
 module.exports = async function saveStoreLink(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
@@ -30,6 +31,8 @@ module.exports = async function saveStoreLink(req, res) {
       contentType: "application/json; charset=utf-8",
       cacheControlMaxAge: 60
     });
+    // A store-link change must not rewrite the original publish date in the history row.
+    await recordRelease({ ...release, publishedAt: "" });
     return json(res, 200, { ok: true, storeUrl });
   } catch (error) {
     console.error("Store URL update failed", error?.message || "unknown error");

@@ -30,6 +30,8 @@ data class SessionRow(
 class StudyDb private constructor(context: Context) :
     SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
 
+    private val appContext: Context = context.applicationContext
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -805,12 +807,15 @@ class StudyDb private constructor(context: Context) :
 
     // ------------------------------------------------------------- reminders
 
-    /** Replaces every pending reminder of a task with the freshly computed schedule. */
+    /**
+     * Replaces the computed schedule of a task but keeps persisted deferrals. A deferral lives in
+     * the same table with an encoded kind, so it survives a task refresh, reboot and force-stop.
+     */
     fun replaceReminders(taskId: Long, schedule: List<Pair<String, Long>>) {
         val db = writableDatabase
         db.beginTransaction()
         try {
-            db.delete("reminders", "task_id = ?", arrayOf(taskId.toString()))
+            db.delete("reminders", "task_id = ? AND kind NOT LIKE 'deferred|%'", arrayOf(taskId.toString()))
             val now = System.currentTimeMillis()
             for ((kind, fireAt) in schedule) {
                 db.execSQL(
@@ -822,6 +827,27 @@ class StudyDb private constructor(context: Context) :
         } finally {
             db.endTransaction()
         }
+    }
+
+    /** Inserts one persisted deferral/retry and returns its row id for a unique alarm code. */
+    fun insertReminder(taskId: Long, encodedKind: String, fireAt: Long): Long {
+        val values = ContentValues().apply {
+            put("task_id", taskId)
+            put("kind", encodedKind)
+            put("fire_at", fireAt)
+            put("state", "pending")
+            put("created_at", System.currentTimeMillis())
+        }
+        return writableDatabase.insert("reminders", null, values)
+    }
+
+    /** Replaces only the old deferral of the same reminder kind, leaving other deferrals alone. */
+    fun clearDeferrals(taskId: Long, sourceKind: String) {
+        writableDatabase.delete(
+            "reminders",
+            "task_id = ? AND kind LIKE ?",
+            arrayOf(taskId.toString(), "deferred|%|$sourceKind")
+        )
     }
 
     fun pendingReminders(limit: Int = 64): List<StoredReminder> {
@@ -875,19 +901,52 @@ class StudyDb private constructor(context: Context) :
             null
         ).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
 
-    /** Consecutive ignored notifications, newest first; any interaction resets the streak. */
+    /**
+     * Consecutive ignored notifications, newest first. A blank action means "delivered, no answer
+     * recorded" and must never be treated as an ignore — that false streak used to silence the app.
+     */
     fun ignoredStreak(): Int {
-        var streak = 0
+        val actions = ArrayList<String>()
         readableDatabase.rawQuery(
             "SELECT action FROM notification_log WHERE delivered_at IS NOT NULL ORDER BY delivered_at DESC LIMIT 12",
             null
         ).use { cursor ->
+            while (cursor.moveToNext()) actions += cursor.getString(0).orEmpty()
+        }
+        return NotificationPolicy.ignoredStreakFrom(actions)
+    }
+
+    /** Marks the most recent delivered row of a kind as explicitly ignored by the person. */
+    fun markIgnored(kind: String, taskId: Long?, at: Long = System.currentTimeMillis()) {
+        writableDatabase.execSQL(
+            """
+            UPDATE notification_log SET action = ? WHERE id = (
+              SELECT id FROM notification_log
+              WHERE kind = ? AND task_id IS ? AND delivered_at IS NOT NULL
+              ORDER BY delivered_at DESC LIMIT 1
+            )
+            """.trimIndent(),
+            arrayOf<Any?>(ACTION_IGNORED, kind, taskId)
+        )
+    }
+
+    /** Local-only diagnostic rows; delivered notifications stay out of this list. */
+    fun notificationDiagnosticsSince(from: Long): List<NotificationRecord> {
+        val rows = ArrayList<NotificationRecord>()
+        readableDatabase.rawQuery(
+            "SELECT kind, scheduled_at, delivered_at, action FROM notification_log WHERE delivered_at IS NULL AND scheduled_at >= ? ORDER BY scheduled_at DESC LIMIT 20",
+            arrayOf(from.toString())
+        ).use { cursor ->
             while (cursor.moveToNext()) {
-                val action = cursor.getString(0).orEmpty()
-                if (action.isBlank() || action == ACTION_IGNORED) streak++ else break
+                rows += NotificationRecord(
+                    kind = cursor.getString(0),
+                    scheduledAt = cursor.getLong(1),
+                    deliveredAt = cursor.nullableLong(2),
+                    action = cursor.getString(3).orEmpty()
+                )
             }
         }
-        return streak
+        return rows
     }
 
     fun notificationsSince(from: Long): List<NotificationRecord> {
@@ -1274,7 +1333,7 @@ class StudyDb private constructor(context: Context) :
 
     private fun createNextRecurringTask(db: SQLiteDatabase, original: StudyTask) {
         if (original.recurrence == Recurrence.NONE) return
-        val zone = java.time.ZoneId.systemDefault()
+        val zone = AppTimeZone.zone(appContext)
         // The engine keeps the original clock time and skips occurrences already past.
         val nextDueAt = RecurrenceEngine.next(
             dueAt = original.dueAt,

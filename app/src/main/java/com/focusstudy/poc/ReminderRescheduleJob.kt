@@ -22,9 +22,7 @@ class ReminderRescheduleJob : JobService() {
         val app = applicationContext
         executor.execute {
             try {
-                runCatching { ReminderEngine.channels(app) }
-                runCatching { ReminderEngine.refresh(app) }
-                runCatching { PrayerReminderScheduler.schedule(app) }
+                NotificationMaintenance.rescheduleAll(app)
                 Log.i(TAG, "reminders rescheduled by job ${params?.jobId}")
             } finally {
                 jobFinished(params, false)

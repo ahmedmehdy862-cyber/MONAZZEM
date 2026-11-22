@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a1020">
+  <meta name="description" content="مُنظِّم — مساحة عملك للمهام والمواد وأنواع المهام، مع مزامنة اختيارية وخاصة.">
+  <link rel="icon" type="image/svg+xml" href="/brand.svg">
+  <title>مُنظِّم — تطبيق الويب</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090e1a;--panel:#111a2c;--panel2:#16223a;--line:#293854;--ink:#F7F8FA;--muted:#9FB2C6;--mint:#5FE0CE;--blue:#65a0ff;--radius:20px}
+    html[data-theme="light"]{color-scheme:light;--bg:#f2f6fb;--panel:#fff;--panel2:#eaf1f8;--line:#d7e2ee;--ink:#101f30;--muted:#4c6479}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 8% 0%,#172d54 0,transparent 38%),radial-gradient(ellipse at 96% 92%,#321d61 0,transparent 32%),var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;line-height:1.65}
+    html[data-theme="light"] body{background:radial-gradient(ellipse at 8% 0%,#dff3f0 0,transparent 38%),radial-gradient(ellipse at 96% 92%,#e8eefc 0,transparent 32%),var(--bg)}
+    .wrap{width:min(1240px,calc(100% - 32px));margin:0 auto}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 0;flex-wrap:wrap}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px}
+    .logo{width:38px;height:38px;border-radius:13px;overflow:hidden;box-shadow:0 10px 26px #4382ff30}
+    .logo img{width:100%;height:100%;display:block}
+    .head-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .linklike,.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:7px 13px;font:inherit;font-size:13px;text-decoration:none;cursor:pointer}
+    main{padding:14px 0 70px}
+    .layout{display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:18px;align-items:start}
+    .card{border:1px solid var(--line);background:linear-gradient(150deg,var(--panel),var(--panel2));border-radius:var(--radius);padding:20px}
+    h2{margin:0 0 4px;font-size:19px}
+    .hint{color:var(--muted);font-size:13px;margin:0 0 16px}
+    .stack{display:grid;gap:10px}
+    label{display:grid;gap:5px;font-size:13px;color:var(--muted)}
+    input,select{width:100%;min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;padding:8px 12px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .buttonrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+    button.main{background:linear-gradient(110deg,#3983ff,#7654e8);color:#fff;border:0;border-radius:12px;min-height:42px;padding:0 16px;font:inherit;font-weight:700;cursor:pointer}
+    button.soft{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:12px;min-height:42px;padding:0 14px;font:inherit;cursor:pointer}
+    button:disabled{opacity:.55;cursor:not-allowed}
+    .status{min-height:22px;margin-top:12px;font-size:13px;color:var(--mint)}
+    .status[data-kind="error"]{color:#ff9b9b}
+    .sections{display:grid;gap:18px}
+    .section-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    .list{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+    .list li{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:13px;padding:9px 13px;background:var(--panel)}
+    .list .title{font-weight:600;overflow-wrap:anywhere}
+    .list .meta{color:var(--muted);font-size:12px}
+    .empty{color:var(--muted);font-size:13px;margin:12px 0 0}
+    .form{display:grid;gap:9px;margin-top:14px}
+    .privacy{margin-top:22px;color:var(--muted);font-size:12px;text-align:center}
+    @media(max-width:860px){.layout{grid-template-columns:1fr}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand"><span class="logo"><img src="/brand.svg" alt=""></span><span>مُنظِّم</span></div>
+      <div class="head-actions">
+        <a class="linklike" href="/">صفحة التحديثات</a>
+        <a class="linklike" href="/privacy.html">الخصوصية</a>
+        <button class="ghost" id="theme-toggle" type="button">🌗 المظهر</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="layout">
+        <section class="card" aria-labelledby="account-title">
+          <h2 id="account-title">حساب المزامنة</h2>
+          <p class="hint">اختياري. بياناتك تبقى على هذا الجهاز حتى تطلب سحبها أو دفعها.</p>
+          <div class="stack">
+            <label>معرّف الحساب
+              <input id="profile-id" type="text" autocomplete="off" spellcheck="false" dir="ltr" placeholder="profile-id" maxlength="80">
+            </label>
+            <label>كلمة مرور المزامنة
+              <input id="passphrase" type="password" autocomplete="new-password" placeholder="١٠ أحرف على الأقل" maxlength="200">
+            </label>
+            <div class="buttonrow">
+              <button class="main" id="register" type="button">تفعيل المزامنة</button>
+              <button class="soft" id="pull" type="button">سحب</button>
+              <button class="soft" id="push" type="button">دفع</button>
+            </div>
+          </div>
+          <div id="account-status" class="status" role="status" aria-live="polite"></div>
+          <p class="hint" style="margin-top:14px">لا تُزامَن النوتة ولا ملاحظات المهام ولا معرّفات الجهاز. تُحفظ كلمة المرور على الخادم كتجزئة scrypt، ولا تُحفظ هنا.</p>
+        </section>
+
+        <div class="sections">
+          <section class="card" aria-labelledby="tasks-title">
+            <div class="section-head"><h2 id="tasks-title">مهامي</h2><span class="meta" id="tasks-count"></span></div>
+            <p class="hint">أضف مهمة بالاسم فقط؛ الباقي اختياري.</p>
+            <form class="form" id="task-form">
+              <label>اسم المهمة<input name="title" type="text" maxlength="200" required placeholder="مثال: مراجعة محاضرة ٣"></label>
+              <div class="row">
+                <label>الدقائق<input name="minutes" type="number" min="1" max="720" value="30"></label>
+                <label>التصنيف<select name="category">
+                  <option value="study">دراسة</option><option value="university">جامعة</option>
+                  <option value="personal">شخصي</option><option value="work">عمل</option>
+                  <option value="habits">عادات</option><option value="other">أخرى</option>
+                </select></label>
+              </div>
+              <button class="main" type="submit">إضافة المهمة</button>
+            </form>
+            <ul class="list" id="tasks-list"></ul>
+          </section>
+
+          <section class="card" aria-labelledby="subjects-title">
+            <div class="section-head"><h2 id="subjects-title">موادي</h2><span class="meta" id="subjects-count"></span></div>
+            <form class="form" id="subjects-form">
+              <label>اسم المادة<input name="name" type="text" maxlength="200" required placeholder="مثال: رياضيات"></label>
+              <button class="main" type="submit">إضافة المادة</button>
+            </form>
+            <ul class="list" id="subjects-list"></ul>
+          </section>
+
+          <section class="card" aria-labelledby="types-title">
+            <div class="section-head"><h2 id="types-title">أنواع المهام</h2><span class="meta" id="types-count"></span></div>
+            <form class="form" id="types-form">
+              <label>اسم النوع<input name="name" type="text" maxlength="200" required placeholder="مثال: واجب"></label>
+              <button class="main" type="submit">إضافة النوع</button>
+            </form>
+            <ul class="list" id="types-list"></ul>
+          </section>
+        </div>
+      </div>
+      <p class="privacy">مُنظِّم · تُحفظ هذه البيانات محليًا في هذا المتصفح، وتُرسل فقط عند طلب المزامنة.</p>
+    </main>
+  </div>
+  <script src="./data.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

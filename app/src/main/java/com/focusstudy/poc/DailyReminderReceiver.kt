@@ -265,21 +265,9 @@ class FocusBootReceiver : BroadcastReceiver() {
         val result = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                runCatching { StudyNotificationScheduler.update(app, FocusPreferences.load(app)) }
-                    .onFailure { Log.w(TAG, "daily reminder reschedule failed", it) }
-                runCatching { ReminderEngine.channels(app) }
-                    .onFailure { Log.w(TAG, "channels failed", it) }
-                runCatching { ReminderEngine.refresh(app) }
-                    .onFailure { Log.w(TAG, "reminder refresh failed", it) }
-                runCatching { PrayerReminderScheduler.schedule(app) }
-                    .onFailure { Log.w(TAG, "prayer schedule failed", it) }
-                runCatching { DhikrReminderScheduler.schedule(app) }
-                    .onFailure { Log.w(TAG, "dhikr schedule failed", it) }
-                runCatching { AppUpdateManager.schedule(app) }
+                NotificationMaintenance.rescheduleAll(app)
                 runCatching { ReminderRescheduleJob.schedule(app) }
-                    .onFailure { Log.w(TAG, "update check failed", it) }
-                runCatching { SessionEngine.refresh(app) }
-                    .onFailure { Log.w(TAG, "session recovery failed", it) }
+                    .onFailure { Log.w(TAG, "reschedule job failed", it) }
                 Log.i(TAG, "rescheduled after $action")
             } finally {
                 result.finish()

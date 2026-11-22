@@ -53,6 +53,7 @@ internal fun FirstLaunchSetupScreen(
     var evening by rememberSaveable { mutableStateOf(current.eveningMessageEnabled) }
     var morningHour by rememberSaveable { mutableStateOf(current.morningMessageHour) }
     var eveningHour by rememberSaveable { mutableStateOf(current.eveningMessageHour) }
+    var timezoneId by rememberSaveable { mutableStateOf(current.timezoneId.ifBlank { AppTimeZone.deviceId() }) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
         Text("مُنظِّم", style = MaterialTheme.typography.labelLarge, color = FocusColors.onTint(FocusColors.Blue))
@@ -105,6 +106,11 @@ internal fun FirstLaunchSetupScreen(
                         Slider(value = goal, onValueChange = { goal = it }, valueRange = 30f..360f, steps = 10)
                     }
                 }
+                item {
+                    SetupCard("منطقتك الزمنية", "تُستخدم لضبط مواقيت الصلاة والأذكار وتجنّب تأثر المواعيد بالسفر أو التوقيت الصيفي. يمكنك تغييرها لاحقًا.") {
+                        TimeZonePicker(timezoneId, onSelected = { timezoneId = it })
+                    }
+                }
             } else {
                 item {
                     SetupCard("تذكيرات المهام", "متابعة أساسية لا يمكن إيقافها من إعدادات التطبيق.") {
@@ -147,6 +153,7 @@ internal fun FirstLaunchSetupScreen(
                             morningMessageHour = morningHour,
                             eveningMessageHour = eveningHour,
                             profile = profile,
+                            timezoneId = AppTimeZone.sanitize(timezoneId),
                             onboardingCompleted = true
                         )
                         onComplete(updated)

@@ -5,8 +5,9 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.Date
 
 internal const val ACTION_DHIKR_REMINDER = "com.focusstudy.poc.DHIKR_REMINDER"
@@ -50,6 +51,7 @@ internal object DhikrReminderScheduler {
 
     fun moments(context: Context, now: Long = System.currentTimeMillis()): List<DhikrMoment> {
         val hasLocation = PrayerPrefs.latitude(context).isFinite() && PrayerPrefs.longitude(context).isFinite()
+        val zone = AppTimeZone.zone(context)
         val bases = if (hasLocation) {
             runCatching {
                 val prayers = PrayerCalculator.today(context, Date(now))
@@ -68,8 +70,8 @@ internal object DhikrReminderScheduler {
                 MIDDAY -> 12 to 30
                 EVENING -> 18 to 0
                 else -> 21 to 30
-            })
-            val at = if (base > now) base else nextDay(base)
+            }, zone)
+            val at = if (base > now) base else nextDay(base, zone)
             DhikrMoment(key, copy.first, copy.second, at)
         }.sortedBy { it.atMillis }
     }
@@ -77,20 +79,19 @@ internal object DhikrReminderScheduler {
     private fun after(prayers: List<PrayerMoment>, name: String, minutes: Int): Long? =
         prayers.firstOrNull { it.name == name }?.atMillis?.plus(minutes * 60_000L)
 
-    private fun fixed(now: Long, hourAndMinute: Pair<Int, Int>): Long =
-        Calendar.getInstance().apply {
-            timeInMillis = now
-            set(Calendar.HOUR_OF_DAY, hourAndMinute.first)
-            set(Calendar.MINUTE, hourAndMinute.second)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+    /** Fixed fallback times are wall-clock times in the selected zone, including across DST. */
+    internal fun fixed(now: Long, hourAndMinute: Pair<Int, Int>, zone: ZoneId): Long =
+        LocalDateTime.ofInstant(Instant.ofEpochMilli(now), zone)
+            .withHour(hourAndMinute.first)
+            .withMinute(hourAndMinute.second)
+            .withSecond(0)
+            .withNano(0)
+            .atZone(zone)
+            .toInstant()
+            .toEpochMilli()
 
-    private fun nextDay(atMillis: Long): Long =
-        Calendar.getInstance().apply {
-            timeInMillis = atMillis
-            add(Calendar.DAY_OF_YEAR, 1)
-        }.timeInMillis
+    internal fun nextDay(atMillis: Long, zone: ZoneId): Long =
+        Instant.ofEpochMilli(atMillis).atZone(zone).plusDays(1).toInstant().toEpochMilli()
 
     fun schedule(context: Context) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -109,10 +110,13 @@ internal object DhikrReminderScheduler {
             context, REQUEST, base,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            runCatching { manager.canScheduleExactAlarms() }.getOrDefault(false)
-        if (exact) manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.atMillis, pending)
-        else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.atMillis, pending)
+        NotificationMaintenance.schedule(
+            context = context,
+            manager = manager,
+            atMillis = next.atMillis,
+            pending = pending,
+            kind = "dhikr"
+        )
     }
 
     fun notifyTest(context: Context) {

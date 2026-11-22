@@ -130,6 +130,17 @@ class NotificationPolicyTest {
     }
 
     @Test
+    fun `blank delivery actions are not ignored streaks`() {
+        assertEquals(0, NotificationPolicy.ignoredStreakFrom(listOf("", "", "")))
+    }
+
+    @Test
+    fun `only consecutive swipes count as ignored`() {
+        assertEquals(2, NotificationPolicy.ignoredStreakFrom(listOf(ACTION_IGNORED, ACTION_IGNORED, "")))
+        assertEquals(1, NotificationPolicy.ignoredStreakFrom(listOf(ACTION_IGNORED, "done", ACTION_IGNORED)))
+    }
+
+    @Test
     fun `two ignored notifications still send`() {
         assertEquals(ReminderDecision.Send, NotificationPolicy.decide(input(ignoredStreak = 2)))
     }

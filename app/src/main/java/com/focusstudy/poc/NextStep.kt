@@ -21,11 +21,11 @@ internal object NextStepPlanner {
         now: Long,
         subjectNames: Map<Long, String> = emptyMap(),
         examBySubject: Map<Long, Long?> = emptyMap(),
-        prayerAtMillis: Long? = null
+        prayerAtMillis: Long? = null,
+        zone: ZoneId = ZoneId.systemDefault()
     ): NextStep? {
         val open = tasks.filter { !it.isDone && it.status != TaskStatus.DONE && it.status != TaskStatus.CANCELLED }
         if (open.isEmpty()) return null
-        val zone = ZoneId.systemDefault()
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         val best = open.maxWithOrNull(
             compareBy<StudyTask> { score(it, now, examBySubject, zone, today) }
@@ -109,10 +109,14 @@ internal object NextStepPlanner {
 
 /** Urgency ranking behind the "الأذكى" task sort; the four older sorts stay untouched. */
 internal object SmartOrder {
-    fun sort(tasks: List<StudyTask>, now: Long, examBySubject: Map<Long, Long?>): List<StudyTask> =
-        tasks.sortedWith(
-            compareByDescending<StudyTask> { NextStepPlanner.score(it, now, examBySubject) }
-                .thenBy { it.dueAt ?: Long.MAX_VALUE }
-                .thenByDescending { it.priority.level }
-        )
+    fun sort(
+        tasks: List<StudyTask>,
+        now: Long,
+        examBySubject: Map<Long, Long?>,
+        zone: ZoneId = ZoneId.systemDefault()
+    ): List<StudyTask> = tasks.sortedWith(
+        compareByDescending<StudyTask> { NextStepPlanner.score(it, now, examBySubject, zone) }
+            .thenBy { it.dueAt ?: Long.MAX_VALUE }
+            .thenByDescending { it.priority.level }
+    )
 }

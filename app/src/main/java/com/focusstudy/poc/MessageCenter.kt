@@ -56,19 +56,45 @@ object TeamMessages {
     private const val PREFS = "focus_team_messages"
     private const val CACHE = "cache"
     private const val DISMISSED = "dismissed"
+    private const val REPORTED = "delivery_reported"
 
     suspend fun fetch(context: Context): List<TeamMessage> = withContext(Dispatchers.IO) {
         val profile = FocusPreferences.load(context).profile.key
-        val query = "?profile=$profile&version=${versionCode(context)}&uid=${UserIdentity.id(context)}"
-        val remote = runCatching { request("$BASE/api/messages$query", "GET", null) }.getOrNull()
-        if (!remote.isNullOrBlank()) {
+        val pid = UserIdentity.profileId(context)
+        val query = "?profile=$profile&version=${versionCode(context)}&uid=${UserIdentity.id(context)}" +
+            if (pid.isBlank()) "" else "&pid=$pid"
+        val fresh = runCatching { request("$BASE/api/messages$query", "GET", null) }
+            .getOrNull()?.takeIf { it.isNotBlank() }
+        if (fresh != null) {
             // The same response carries broadcast messages and the admin's sound choices. Cache the
             // whole thing so a receiver can use the latest sound even with no network connection.
-            prefs(context).edit().putString(CACHE, remote).apply()
-            NotificationSounds.cache(context, remote)
+            prefs(context).edit().putString(CACHE, fresh).apply()
+            NotificationSounds.cache(context, fresh)
+            reportDelivered(context, parseMessages(fresh))
         }
-        val raw = if (!remote.isNullOrBlank()) remote else prefs(context).getString(CACHE, "").orEmpty()
+        val raw = fresh ?: prefs(context).getString(CACHE, "").orEmpty()
         parseMessages(raw)
+    }
+
+    /**
+     * One-way receipt for messages actually received by this install. The local set prevents a
+     * second report on another screen; the server deduplicates by message and recipient as well.
+     * Offline failures leave the ids pending, so the next successful fetch retries them.
+     */
+    private fun reportDelivered(context: Context, messages: List<TeamMessage>) {
+        val ids = messages.map { it.id }.filter { it.isNotBlank() }
+        if (ids.isEmpty()) return
+        val store = prefs(context)
+        val reported = store.getStringSet(REPORTED, emptySet()).orEmpty().toMutableSet()
+        val pending = ids.filterNot { it in reported }
+        if (pending.isEmpty()) return
+        val payload = JSONObject()
+            .put("action", "delivered")
+            .put("uid", UserIdentity.id(context))
+            .put("pid", UserIdentity.profileId(context))
+            .put("ids", JSONArray(pending))
+        runCatching { request("$BASE/api/messages", "POST", payload.toString()) }
+            .onSuccess { store.edit().putStringSet(REPORTED, reported + pending).apply() }
     }
 
     fun cached(context: Context): List<TeamMessage> =
@@ -307,17 +333,16 @@ internal object TeamNotifier {
 }
 
 /**
- * The short code a person can read out to the team.
+ * Read-only short code for the dashboard's user list.
  *
- * It is derived from the install id, so the team addresses one message to it from the dashboard
- * without ever asking for a device id, and nobody has to create an account.
+ * It is derived from the install id, but the server resolves it to the profile id before storing a
+ * message. The person never has to copy, dictate or send it — the registration handshake already
+ * introduced this install to the team, and no device id or push token is shown here.
  */
 @Composable
 private fun MessageCodeCard() {
     val context = LocalContext.current
     val code = remember(context) { UserIdentity.code(context) }
-    val clipboard = remember(context) { context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager }
-    var copied by remember { mutableStateOf(false) }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh),
@@ -326,28 +351,14 @@ private fun MessageCodeCard() {
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text("رمزك للرسائل الخاصة", style = MaterialTheme.typography.labelMedium, color = FocusColors.Blue)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    code,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = FocusColors.TextPrimary,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = {
-                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("رمز مُنظِّم", code))
-                    copied = true
-                }) { Text(if (copied) "نُسخ ✓" else "نسخ") }
-                TextButton(onClick = {
-                    val share = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, "رمز مستخدمي في تطبيق مُنظِّم: $code")
-                    }
-                    context.startActivity(Intent.createChooser(share, "إرسال الرمز"))
-                }) { Text("إرسال") }
-            }
             Text(
-                "يظهر اسمك ورمزك تلقائيًا في لوحة الفريق عند أول فتح، ويمكنك إعطاء الرمز ليصلك رد خاص — لا نطلب بريدك ولا رقم هاتفك.",
+                code,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = FocusColors.TextPrimary
+            )
+            Text(
+                "يظهر اسمك ورمزك تلقائيًا في لوحة الفريق عند أول فتح. لا نطلب منك نسخ الرمز ولا إرساله، ولا نطلب بريدك أو رقم هاتفك.",
                 style = MaterialTheme.typography.bodySmall,
                 color = FocusColors.TextSecondary
             )

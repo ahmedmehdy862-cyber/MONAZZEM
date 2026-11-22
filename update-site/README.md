@@ -13,7 +13,7 @@ Local `assembleRelease` builds fail unless `~/.focusstudy/keystore.properties` a
 
 ## Shared release source and automation
 
-`/api/latest` is the canonical MONAZZEM record. It feeds the Android update checker and the QUBIXStore `/api/latest` proxy. QUBIXStore's MONAZZEM card, description, version, and download link are rendered from this live response instead of local hard-coded metadata.
+`/api/latest` is the canonical MONAZZEM record. It feeds the Android update checker and the QUBIXStore `/api/latest` proxy. QUBIXStore's MONAZZEM card, description, version, and download link are rendered from this live response instead of local hard-coded metadata. The same response also carries a `history` array (newest first, one row per `versionCode`, capped at 30). Every successful publish or store-link update appends or refreshes that row in the public `focus-study/release-history.json` Blob record; `release-history.json` ships the current release as the seed so the page shows a history from this point forward. A history read failure never hides the current release. The same response also carries an `apps` array: the MONAZZEM record plus `com.focusstudy.store` (the phone store app). Both apps come from this deployment and the same Blob backend; the shipped `store-app-release.json` is the seed and an optional public `focus-study/store-app.json` Blob record can raise its version. The website renders both cards; the phone app compares each `packageName`/`versionCode` with the packages installed on the device. No new Vercel function is needed: the catalog is an additive field on `/api/latest`. The store app APK is served from `/downloads/focus-store-0.1.0.apk`.
 
 For automatic publication, deploy this project with `FOCUS_RELEASE_SYNC_TOKEN` set to a long random secret and `BLOB_READ_WRITE_TOKEN` configured. Add the same token as GitHub repository secret `FOCUS_RELEASE_SYNC_TOKEN`, along with the Android signing secrets described in `../.github/workflows/focus-study-release.yml`. Push a tag in the form `focus-vX.Y.Z` matching `versionName` in `app/build.gradle.kts`. The workflow:
 
@@ -45,6 +45,7 @@ After every deployment, check the live feed and the admin page:
 
 ```powershell
 curl.exe -fsS https://update-site-sigma.vercel.app/api/latest
+curl.exe -fsS https://update-site-sigma.vercel.app/api/latest | findstr history
 curl.exe -fsS -o NUL -w "admin HTTP %{http_code}`n" https://update-site-sigma.vercel.app/admin/
 ```
 

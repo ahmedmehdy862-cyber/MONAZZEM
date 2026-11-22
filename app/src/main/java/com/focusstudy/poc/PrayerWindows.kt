@@ -86,19 +86,18 @@ internal object PrayerWindows {
 
     /** "بعد المغرب" for the next prayer; used by the capture parser and the next-step reason. */
     fun describeNext(context: Context, now: Long = System.currentTimeMillis()): String? =
-        nextMoment(context, now)?.let { "${it.name} ${PrayerCalculator.format(it.atMillis)}" }
+        nextMoment(context, now)?.let { "${it.name} ${PrayerCalculator.format(context, it.atMillis)}" }
 
     fun isInsideQuietHours(nowMinutesOfDay: Int, quietStart: Int, quietEnd: Int): Boolean =
         if (quietStart == quietEnd) false
         else if (quietStart < quietEnd) nowMinutesOfDay in quietStart until quietEnd
         else nowMinutesOfDay >= quietStart || nowMinutesOfDay < quietEnd
 
-    fun minuteOfDay(millis: Long): Int =
-        Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).toLocalTime().let { it.hour * 60 + it.minute }
+    fun minuteOfDay(millis: Long, zone: ZoneId = ZoneId.systemDefault()): Int =
+        Instant.ofEpochMilli(millis).atZone(zone).toLocalTime().let { it.hour * 60 + it.minute }
 
     /** Start of the next quiet-hours window after [now], used to defer a reminder to morning. */
-    fun quietHoursEnd(now: Long, quietEnd: Int): Long {
-        val zone = ZoneId.systemDefault()
+    fun quietHoursEnd(now: Long, quietEnd: Int, zone: ZoneId = ZoneId.systemDefault()): Long {
         val localNow = Instant.ofEpochMilli(now).atZone(zone)
         val target = LocalTime.of(quietEnd / 60, quietEnd % 60)
         var candidate = localNow.with(target)

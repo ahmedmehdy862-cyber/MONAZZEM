@@ -1,6 +1,7 @@
 const { put } = require("@vercel/blob");
 const { isAdmin, originIsSame, parseBody, json } = require("../../lib/admin-auth");
 const { RELEASE_PATH, readLatestRelease, readFallbackRelease } = require("../../lib/release-store");
+const { recordRelease } = require("../../lib/release-history");
 
 module.exports = async function publishRelease(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
@@ -31,6 +32,7 @@ module.exports = async function publishRelease(req, res) {
         contentType: "application/json; charset=utf-8",
         cacheControlMaxAge: 60
       });
+      await recordRelease(winner);
       return json(res, 200, {
         ok: true,
         changed: true,
@@ -81,6 +83,7 @@ module.exports = async function publishRelease(req, res) {
       contentType: "application/json; charset=utf-8",
       cacheControlMaxAge: 60
     });
+    await recordRelease(release);
     return json(res, 200, { ok: true, release });
   } catch (error) {
     console.error("Release publish failed", error?.message || "unknown error");

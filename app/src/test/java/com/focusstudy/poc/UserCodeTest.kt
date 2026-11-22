@@ -1,6 +1,8 @@
 package com.focusstudy.poc
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UserCodeTest {
@@ -16,5 +18,15 @@ class UserCodeTest {
 
     @Test fun shortIdStaysReadable() {
         assertEquals("AB12", UserIdentity.codeOf("ab12"))
+    }
+
+    @Test fun profileIdAcceptsOnlyServerIssuedUuidShape() {
+        val issued = "7f3c1b9e-2d4a-4f6b-8c0e-1a2b3c4d5e6f"
+        assertTrue(UserIdentity.isValidProfileId(issued))
+        assertTrue(UserIdentity.isValidProfileId(issued.uppercase()))
+        assertFalse(UserIdentity.isValidProfileId(""))
+        assertFalse(UserIdentity.isValidProfileId("3F2A-9C1E"))
+        assertFalse(UserIdentity.isValidProfileId("not-a-uuid"))
+        assertFalse(UserIdentity.isValidProfileId("$issued-extra"))
     }
 }

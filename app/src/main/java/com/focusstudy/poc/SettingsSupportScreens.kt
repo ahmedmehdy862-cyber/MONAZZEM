@@ -64,7 +64,11 @@ import androidx.compose.ui.unit.dp
 private const val SUPPORT_USERNAME = "techsup402"
 
 @Composable
-internal fun PrayerTimesScreen(onBack: () -> Unit) {
+internal fun PrayerTimesScreen(
+    onBack: () -> Unit,
+    timezoneId: String = "",
+    onTimeZoneChanged: (String) -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var refresh by remember { mutableStateOf(0) }
@@ -74,6 +78,7 @@ internal fun PrayerTimesScreen(onBack: () -> Unit) {
     var method by rememberSaveable { mutableStateOf(PrayerPrefs.method(context)) }
     var enabled by rememberSaveable { mutableStateOf(PrayerPrefs.enabled(context)) }
     var dhikrEnabled by rememberSaveable { mutableStateOf(DhikrPrefs.enabled(context)) }
+    var timezone by rememberSaveable(timezoneId) { mutableStateOf(timezoneId.ifBlank { AppTimeZone.deviceId() }) }
     var message by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -89,7 +94,10 @@ internal fun PrayerTimesScreen(onBack: () -> Unit) {
             } else message = "تعذر تحديد الموقع الآن. أدخل الإحداثيات يدويًا أو حاول قرب نافذة."
         } else message = "لم يُمنح إذن الموقع. يمكنك إدخال الإحداثيات يدويًا."
     }
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) NotificationMaintenance.rescheduleAll(context.applicationContext)
+        else NotificationMaintenance.log(context, NotificationMaintenance.PERMISSION_DENIED)
+    }
     val hasLocation = PrayerPrefs.latitude(context).isFinite() && PrayerPrefs.longitude(context).isFinite()
     val prayers = remember(refresh) { runCatching { PrayerCalculator.today(context) }.getOrNull() }
 
@@ -104,13 +112,27 @@ internal fun PrayerTimesScreen(onBack: () -> Unit) {
             modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
-                PreferenceCard("مواقيت اليوم", "حساب فلكي محلي يتحدث حسب التاريخ والمنطقة الزمنية على جهازك.") {
+                PreferenceCard("المنطقة الزمنية", "معرّف IANA محفوظ محليًا. يُستخدم للمواقيت والأذكار وبداية اليوم في التذكيرات، ولا يُرسل لأي خادم.") {
+                    TimeZonePicker(timezone, onSelected = { selected ->
+                        timezone = selected
+                        onTimeZoneChanged(selected)
+                        refresh++
+                    })
+                    Text(
+                        "الآن: ${PrayerCalculator.format(System.currentTimeMillis(), AppTimeZone.resolve(timezone))}",
+                        color = FocusColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            item {
+                PreferenceCard("مواقيت اليوم", "حساب فلكي محلي يتحدث حسب التاريخ والمنطقة الزمنية المحفوظة.") {
                     if (prayers == null) {
                         Text("حدد موقعك التقريبي لعرض المواقيت.", color = FocusColors.TextSecondary)
                     } else prayers.forEach { prayer ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(prayer.name, color = FocusColors.TextPrimary, fontWeight = FontWeight.Medium)
-                            Text(PrayerCalculator.format(prayer.atMillis), color = FocusColors.onTint(FocusColors.Blue))
+                            Text(PrayerCalculator.format(context, prayer.atMillis), color = FocusColors.onTint(FocusColors.Blue))
                         }
                         if (prayer != prayers.last()) androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
                     }
@@ -190,7 +212,7 @@ internal fun PrayerTimesScreen(onBack: () -> Unit) {
                 }
             }
             item {
-                PreferenceCard("تذكيرات الأذكار", "أربع وقفات قصيرة: بعد الفجر والظهر والمغرب والعشاء، أو في ٧:٠٠ و١٢:٣٠ و٦:٠٠ و٩:٣٠ إن لم يكن موقع محفوظ.") {
+                PreferenceCard("تذكيرات الأذكار", "أربع وقفات قصيرة: بعد الفجر والظهر والمغرب والعشاء، أو في ٧:٠٠ و١٢:٣٠ و٦:٠٠ و٩:٣٠ إن لم يكن موقع محفوظ. كلها تُحسب في المنطقة الزمنية المحفوظة.") {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = dhikrEnabled, onCheckedChange = { checked ->
                             dhikrEnabled = checked

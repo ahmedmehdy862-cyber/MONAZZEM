@@ -1,5 +1,7 @@
 package com.focusstudy.poc
 
+import java.time.ZoneId
+
 /**
  * Pure notification decision logic for the reminder engine.
  *
@@ -64,7 +66,19 @@ internal object NotificationPolicy {
     const val MIN_GAP_MILLIS = 45 * 60 * 1000L
     const val IGNORED_THRESHOLD = 3
 
-    fun decide(input: PolicyInput): ReminderDecision {
+    /**
+     * Only an explicit swipe/ignore counts. An empty action means the app showed the notification
+     * but has no recorded answer; counting it used to drop reminders after three normal deliveries.
+     */
+    fun ignoredStreakFrom(actions: List<String>): Int {
+        var streak = 0
+        for (action in actions) {
+            if (action == ACTION_IGNORED) streak++ else break
+        }
+        return streak
+    }
+
+    fun decide(input: PolicyInput, zone: ZoneId = ZoneId.systemDefault()): ReminderDecision {
         if (!input.enabled) return ReminderDecision.Drop(DropReason.DISABLED)
 
         input.snoozedUntil?.let { if (it > input.now) return ReminderDecision.Defer(it, DeferReason.SNOOZED) }
@@ -80,9 +94,9 @@ internal object NotificationPolicy {
         val quietStart = input.quietStart
         val quietEnd = input.quietEnd
         if (quietStart != null && quietEnd != null &&
-            PrayerWindows.isInsideQuietHours(PrayerWindows.minuteOfDay(input.now), quietStart, quietEnd)
+            PrayerWindows.isInsideQuietHours(PrayerWindows.minuteOfDay(input.now, zone), quietStart, quietEnd)
         ) {
-            return ReminderDecision.Defer(PrayerWindows.quietHoursEnd(input.now, quietEnd), DeferReason.QUIET_HOURS)
+            return ReminderDecision.Defer(PrayerWindows.quietHoursEnd(input.now, quietEnd, zone), DeferReason.QUIET_HOURS)
         }
 
         // Critical reminders (a task due now, an exam tomorrow) are exempt from budget and spacing.
