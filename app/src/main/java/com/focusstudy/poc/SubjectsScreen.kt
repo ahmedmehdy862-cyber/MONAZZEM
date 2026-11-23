@@ -149,11 +149,21 @@ private fun SubjectCard(subject: StudySubject) {
                     color = FocusColors.TextSecondary
                 )
                 subject.nextExamAt?.let { examAt ->
+                    val zone = AppTimeZone.zone(androidx.compose.ui.platform.LocalContext.current)
+                    val today = rememberCurrentDate()
+                    val days = SubjectInput.daysLeft(examAt, today, zone)
                     Text(
-                        "الامتحان القادم: ${formatDueDate(examAt)}",
+                        "الامتحان القادم: ${SubjectInput.examDate(examAt, zone)?.let { "${it.dayOfMonth}-${it.monthValue}-${it.year}" } ?: ""}",
                         style = MaterialTheme.typography.labelMedium,
                         color = FocusColors.onTint(FocusColors.Amber)
                     )
+                    if (days != null) {
+                        Text(
+                            SubjectInput.daysLeftText(days),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (days in 0..3) FocusColors.onTint(FocusColors.Rose) else FocusColors.TextSecondary
+                        )
+                    }
                 }
             }
         }
@@ -168,9 +178,10 @@ private fun AddSubjectDialog(
     var name by rememberSaveable { mutableStateOf("") }
     var instructor by rememberSaveable { mutableStateOf("") }
     var goalMinutes by rememberSaveable { mutableStateOf("180") }
-    var examDate by rememberSaveable { mutableStateOf("") }
-    val parsedExamAt = parseDueDateMillis(examDate)
-    val examDateValid = examDate.isBlank() || parsedExamAt != null
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val zone = rememberSaveable { AppTimeZone.zone(context) }
+    var examDate by rememberSaveable { mutableStateOf<java.time.LocalDate?>(null) }
+    val parsedExamAt = SubjectInput.examMillis(examDate, zone)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -200,25 +211,23 @@ private fun AddSubjectDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = examDate,
-                    onValueChange = { examDate = it },
-                    label = { Text("موعد الامتحان (yyyy-mm-dd، اختياري)") },
-                    singleLine = true,
-                    isError = !examDateValid,
-                    supportingText = if (!examDateValid) {{ Text("اكتب التاريخ بصيغة سنة-شهر-يوم") }} else null,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Text("موعد الامتحان (اختياري)", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                DateChoice(label = "اختر تاريخ الامتحان", date = examDate, onSelected = { examDate = it })
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     if (name.isNotBlank()) {
-                        onAdd(name.trim(), instructor.trim(), goalMinutes.toIntOrNull() ?: 180, parsedExamAt)
+                        onAdd(
+                            SubjectInput.nameForSave(name),
+                            SubjectInput.teacherForSave(instructor),
+                            goalMinutes.toIntOrNull() ?: 180,
+                            parsedExamAt
+                        )
                     }
                 },
-                enabled = name.isNotBlank() && examDateValid
+                enabled = name.isNotBlank()
             ) { Text("حفظ") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } }

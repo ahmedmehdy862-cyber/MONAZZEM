@@ -183,7 +183,7 @@ private fun TodayPlanRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Checkbox(
-            checked = task.isDone,
+            checked = TaskState.completed(task),
             onCheckedChange = { onToggleDone() },
             colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
         )

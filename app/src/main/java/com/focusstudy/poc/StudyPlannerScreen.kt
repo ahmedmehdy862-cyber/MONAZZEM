@@ -37,12 +37,16 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
     val state by vm.state.collectAsState()
     val version by SessionEngine.tasksVersion.collectAsState()
     LaunchedEffect(version) { vm.refresh() }
-    val today = LocalDate.now()
+    val today = rememberCurrentDate()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val zone = remember(context) { AppTimeZone.zone(context) }
     val plan = remember(state.tasks, dailyGoal, today) { StudyPlanner.createWeek(state.tasks, today, dailyGoal) }
+    val staleBlocks = remember(plan, today, zone) { plan.filter { StudyPlanner.isStale(it, today, zone) } }
+    val fresh = remember(plan, today, zone) { plan.filterNot { StudyPlanner.isStale(it, today, zone) } }
     val locale = remember { Locale.forLanguageTag("ar-EG") }
     val formatter = remember { DateTimeFormatter.ofPattern("EEEE d MMMM", locale) }
-    val totalMinutes = plan.sumOf { it.minutes }
-    val openCount = state.tasks.count { !it.isDone && it.status != TaskStatus.CANCELLED }
+    val totalMinutes = fresh.sumOf { it.minutes }
+    val openCount = state.tasks.count { TaskState.active(it) }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("رجوع") }
@@ -52,15 +56,42 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
         Spacer(Modifier.height(8.dp))
         Text("خطة عملية من مهامك ومواعيدك الفعلية. خصصنا حدًا يوميًا قدره $dailyGoal دقيقة، مع تقسيم الجلسات إلى فترات قصيرة.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
-        Text("${plan.size} جلسة مقترحة · $totalMinutes دقيقة هذا الأسبوع · $openCount مهام مفتوحة", color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelMedium)
+        Text("${fresh.size} جلسة مقترحة · $totalMinutes دقيقة هذا الأسبوع · $openCount مهام مفتوحة", color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(10.dp))
-        if (plan.isEmpty()) {
+        if (staleBlocks.isNotEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text(
+                        "${staleBlocks.size} جلسة لمهام مكتملة أو انتهى موعدها",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = FocusColors.TextPrimary
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "لم نعرضها تحت تواريخ قديمة. يمكنك إعادتها لليوم والبدء من جديد.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                    TextButton(onClick = {
+                        val endOfToday = today.atTime(23, 59).atZone(zone).toInstant().toEpochMilli()
+                        staleBlocks.map { it.task.id }.distinct().forEach { id -> vm.reschedule(id, endOfToday) }
+                    }) { Text("إعادة جدولة لليوم") }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+        if (fresh.isEmpty()) {
             Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("لا توجد مهام مفتوحة للخطة حاليًا.", style = MaterialTheme.typography.titleMedium)
                 Text("أضف مهامًا مع مدة أو موعد استحقاق عشان نرتبها لك.", color = FocusColors.TextSecondary)
             }
         } else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            plan.groupBy { it.date }.forEach { (date, blocks) ->
+            fresh.groupBy { it.date }.forEach { (date, blocks) ->
                 item(key = "day-$date") {
                     Text(date.format(formatter), modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 }

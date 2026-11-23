@@ -226,7 +226,18 @@ internal fun PreferenceSwitchRow(title: String, description: String, checked: Bo
             Text(title, color = FocusColors.TextPrimary)
             Text(description, color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = androidx.compose.material3.SwitchDefaults.colors(
+                checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                checkedTrackColor = FocusColors.Green,
+                uncheckedThumbColor = FocusColors.TextMuted,
+                uncheckedTrackColor = FocusColors.SurfaceHigh,
+                disabledCheckedTrackColor = FocusColors.SurfaceHigh,
+                disabledUncheckedTrackColor = FocusColors.SurfaceHigh
+            )
+        )
     }
 }
 

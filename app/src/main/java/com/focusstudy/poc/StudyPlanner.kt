@@ -37,4 +37,23 @@ object StudyPlanner {
         }
         return result
     }
+
+    /**
+     * A planned block for a task that is already done or whose deadline has passed must not be
+     * presented as work to do on that old date. The screen offers to reschedule these instead.
+     */
+    fun staleReason(
+        block: PlannedStudyBlock,
+        today: LocalDate,
+        zone: ZoneId = ZoneId.systemDefault()
+    ): String? = when {
+        TaskState.completed(block.task) -> "المهمة مكتملة"
+        block.task.status == TaskStatus.CANCELLED -> "المهمة ملغاة"
+        block.task.status == TaskStatus.POSTPONED -> "المهمة مؤجلة"
+        TaskState.dueDate(block.task, zone)?.isBefore(today) == true -> "انتهى موعدها"
+        else -> null
+    }
+
+    fun isStale(block: PlannedStudyBlock, today: LocalDate, zone: ZoneId = ZoneId.systemDefault()): Boolean =
+        staleReason(block, today, zone) != null
 }

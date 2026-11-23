@@ -784,8 +784,7 @@ private fun AppRoot(
             QuickAddFab(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(end = 18.dp, bottom = 104.dp),
+                    .padding(end = 18.dp, bottom = LayoutSpec.FAB_BOTTOM_DP.dp),
                 onAddTask = {
                     rootTab = "tasks"
                     quickAddTask++
@@ -838,6 +837,7 @@ private fun TasksScreen(
 ) {
 
     val context = LocalContext.current
+    val today = rememberCurrentDate()
 
     val version by SessionEngine.tasksVersion.collectAsState()
 
@@ -891,16 +891,17 @@ private fun TasksScreen(
         )
     }
 
-    val visibleTasks = remember(tasks, taskQuery, taskFilter, taskSort, typeFilter, typeNames) {
+    val visibleTasks = remember(tasks, taskQuery, taskFilter, taskSort, typeFilter, typeNames, today) {
         val matchingTasks = tasks.filter { task ->
+            val done = TaskState.completed(task)
             val matchesFilter = when (taskFilter) {
                 TaskListFilter.ALL -> true
-                TaskListFilter.TODAY -> task.dueAt.isOnLocalDate(java.time.LocalDate.now()) && !task.isDone
-                TaskListFilter.UPCOMING -> task.dueAt.isAfterLocalDate(java.time.LocalDate.now()) && !task.isDone
-                TaskListFilter.OVERDUE -> task.dueAt.isBeforeLocalDate(java.time.LocalDate.now()) && !task.isDone
-                TaskListFilter.OPEN -> !task.isDone && task.status != TaskStatus.CANCELLED
-                TaskListFilter.COMPLETED -> task.isDone || task.status == TaskStatus.DONE
-                TaskListFilter.URGENT -> !task.isDone && task.status != TaskStatus.CANCELLED && task.priority == TaskPriority.URGENT
+                TaskListFilter.TODAY -> task.dueAt.isOnLocalDate(today) && !done
+                TaskListFilter.UPCOMING -> task.dueAt.isAfterLocalDate(today) && !done
+                TaskListFilter.OVERDUE -> TaskState.overdueDays(task, today) > 0
+                TaskListFilter.OPEN -> TaskState.active(task)
+                TaskListFilter.COMPLETED -> done
+                TaskListFilter.URGENT -> TaskState.active(task) && task.priority == TaskPriority.URGENT
             }
             val matchesType = typeFilter == null || task.typeId == typeFilter
             val query = taskQuery.trim()
@@ -980,9 +981,10 @@ private fun TasksScreen(
 
                 Text(
 
-                    text = java.time.LocalDate.now().format(
-                        java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.forLanguageTag("ar-EG"))
-                    ) + if (dashboard) " · رتّب يومك وابدأ بخطوة صغيرة" else " · أنشئ مهامك ونظّم أولوياتك",
+                    text = ArabicDate.withSuffix(
+                        today,
+                        if (dashboard) "رتّب يومك وابدأ بخطوة صغيرة" else "أنشئ مهامك ونظّم أولوياتك"
+                    ),
 
                     style = MaterialTheme.typography.bodySmall,
 
@@ -1017,24 +1019,37 @@ private fun TasksScreen(
 
         if (typeNames.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(FocusColors.Surface)
+                    .padding(top = 10.dp, bottom = 8.dp)
             ) {
-                TaskCategoryChip(selected = typeFilter == null, onSelect = { typeFilter = null }) { Text("كل الأنواع") }
-                typeNames.forEach { (id, name) ->
-                    TaskCategoryChip(
-                        selected = typeFilter == id,
-                        onSelect = { typeFilter = if (typeFilter == id) null else id }
-                    ) { Text(name) }
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Spacer(Modifier.width(4.dp))
+                    TaskCategoryChip(selected = typeFilter == null, onSelect = { typeFilter = null }) {
+                        Text("كل الأنواع", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                    typeNames.forEach { (id, name) ->
+                        TaskCategoryChip(
+                            selected = typeFilter == id,
+                            onSelect = { typeFilter = if (typeFilter == id) null else id }
+                        ) {
+                            Text(name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        }
+                    }
+                    Spacer(Modifier.width(4.dp))
                 }
+                HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.35f))
             }
         }
 
         if (dashboard) {
             // The day dashboard is taller than one screen on small phones, so it scrolls.
             // Bottom padding keeps the day cards clear of the floating + button.
-            Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 84.dp)) {
+            Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(bottom = LayoutSpec.CONTENT_BOTTOM_DP.dp)) {
             Spacer(Modifier.height(12.dp))
             val todayTasksForWelcome = tasks.filter { it.dueAt.isOnLocalDate(java.time.LocalDate.now()) }
             WelcomeGreeting(
@@ -1157,7 +1172,7 @@ private fun TasksScreen(
 
             verticalArrangement = Arrangement.spacedBy(10.dp),
             // Leaves room for the floating + button so the last card is never hidden under it.
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 96.dp)
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LayoutSpec.CONTENT_BOTTOM_DP.dp)
 
         ) {
 
@@ -1166,6 +1181,7 @@ private fun TasksScreen(
                 TaskCard(
 
                     task = task,
+                    today = today,
 
                     typeLabel = task.typeId?.let { typeNames[it] }.orEmpty(),
 
@@ -1420,7 +1436,8 @@ private fun MoreSectionsScreen(onOpen: (String) -> Unit) {
 
 private fun HeroCard(totalMinutes: Int, tasks: List<StudyTask>, preferences: FocusPreferences) {
 
-    val todayTasks = tasks.filter { it.dueAt.isOnLocalDate(java.time.LocalDate.now()) }
+    val today = rememberCurrentDate()
+    val todayTasks = tasks.filter { it.dueAt.isOnLocalDate(today) }
     val done = todayTasks.count { it.isDone || it.status == TaskStatus.DONE }
     val percent = if (todayTasks.isEmpty()) 0 else done * 100 / todayTasks.size
 
@@ -1588,6 +1605,7 @@ private fun RingBadge(progress: Float, label: String) {
 private fun TaskCard(
 
     task: StudyTask,
+    today: LocalDate,
 
     typeLabel: String,
 
@@ -1619,8 +1637,7 @@ private fun TaskCard(
     )
 
     val accentText = FocusColors.onTint(accent)
-    val zone = java.time.ZoneId.systemDefault()
-    val today = java.time.LocalDate.now()
+    val zone = AppTimeZone.zone(LocalContext.current)
     fun startOfDayAfter(days: Long): Long =
         today.plusDays(days).atStartOfDay(zone).toInstant().toEpochMilli()
     val todayStart = startOfDayAfter(0)
@@ -1672,7 +1689,7 @@ private fun TaskCard(
                     )
 
                     Checkbox(
-                        checked = task.isDone,
+                        checked = TaskState.completed(task),
                         onCheckedChange = { onToggleDone() },
                         colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
                     )
@@ -1691,7 +1708,7 @@ private fun TaskCard(
 
                         Text(
 
-                            text = if (task.isDone) "مكتملة" else "${task.remainingMinutes} د",
+                            text = TaskState.badge(task, today, zone),
 
                             style = MaterialTheme.typography.labelMedium,
 
@@ -1738,8 +1755,7 @@ private fun TaskCard(
                 Text(
 
                     text = (subjectName?.let { "$it · " } ?: "") + "${typeLabel.ifBlank { task.category.label }} · ${task.priority.label}" +
-                        (task.dueAt?.let { " · الموعد ${formatDueDate(it)}" } ?: "") +
-                        (task.originalDueAt?.let { " · كان ${formatDueDate(it)}" } ?: "") +
+                        " · ${TaskState.dueText(task, zone)}" +
                         (if (task.recurrence != Recurrence.NONE) " · ${RecurrenceEngine.label(task.recurrence)}" else ""),
 
                     style = MaterialTheme.typography.bodySmall,
@@ -1750,7 +1766,7 @@ private fun TaskCard(
 
                 Text(
 
-                    text = "${task.doneMinutes} من ${task.plannedMinutes} دقيقة" +
+                    text = TaskState.progressText(task) +
 
                         if (task.blockedPackages.isEmpty()) " • بلا تطبيقات محددة"
 
