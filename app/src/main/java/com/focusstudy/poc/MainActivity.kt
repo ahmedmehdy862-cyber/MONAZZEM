@@ -510,6 +510,18 @@ private fun AppRoot(
     LaunchedEffect(Unit) {
         PrayerReminderScheduler.schedule(context)
         DhikrReminderScheduler.schedule(context)
+        // One cached GPS fix is enough until the day changes or the user moves a meaningful
+        // distance. The check is offline, permission-gated and never blocks the UI.
+        if (ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            val here = withContext(Dispatchers.IO) { currentApproximateLocation(context) }
+            if (here != null && PrayerPrefs.needsLocationRefresh(context, here.latitude, here.longitude)) {
+                PrayerPrefs.saveLocation(context, here.latitude, here.longitude, "موقعي")
+                PrayerReminderScheduler.schedule(context)
+            }
+        }
     }
 
     // Keep the local consent ledger current even if the user never opens the session setup.

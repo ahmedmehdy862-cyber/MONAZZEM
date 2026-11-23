@@ -11,12 +11,9 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.CancellationSignal
 import androidx.core.content.ContextCompat
-import com.batoulapps.adhan.CalculationMethod
-import com.batoulapps.adhan.Coordinates
-import com.batoulapps.adhan.PrayerTimes
-import com.batoulapps.adhan.data.DateComponents
 import java.text.SimpleDateFormat
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
@@ -31,6 +28,11 @@ internal object PrayerPrefs {
     // Phase 4 adds full-precision string copies. The old Float keys stay for backward compatibility.
     private const val LATITUDE_TEXT = "latitude_text"
     private const val LONGITUDE_TEXT = "longitude_text"
+    private const val CITY_NAME = "city_name"
+    private const val SAVED_AT = "location_saved_at"
+    private const val SAVED_DATE = "location_saved_date"
+    private const val ASR_SCHOOL = "asr_school"
+    private const val TUNE_PREFIX = "prayer_tune_"
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     private fun coordinate(context: Context, textKey: String, floatKey: String, range: ClosedFloatingPointRange<Double>): Double {
@@ -43,41 +45,59 @@ internal object PrayerPrefs {
     fun latitude(context: Context) = coordinate(context, LATITUDE_TEXT, "latitude", -90.0..90.0)
     fun longitude(context: Context) = coordinate(context, LONGITUDE_TEXT, "longitude", -180.0..180.0)
     fun method(context: Context) = prefs(context).getString("method", "EGYPTIAN") ?: "EGYPTIAN"
+    fun cityName(context: Context) = prefs(context).getString(CITY_NAME, "").orEmpty()
+    fun savedDate(context: Context) = prefs(context).getString(SAVED_DATE, null)
+    fun savedAt(context: Context) = prefs(context).getLong(SAVED_AT, 0L)
     fun enabled(context: Context) = prefs(context).getBoolean("enabled", false)
-    fun saveLocation(context: Context, lat: Double, lon: Double) {
+
+    fun asrSchool(context: Context): AsrSchool = AsrSchool.from(prefs(context).getString(ASR_SCHOOL, "STANDARD"))
+    fun fineTune(context: Context, key: String): Int =
+        prefs(context).getInt(TUNE_PREFIX + key, 0).coerceIn(-30, 30)
+
+    fun settings(context: Context) = PrayerSettings(
+        method = method(context),
+        asrSchool = asrSchool(context),
+        fineTune = PrayerAccuracy.KEYS.associateWith { fineTune(context, it) }
+    )
+
+    fun saveLocation(context: Context, lat: Double, lon: Double, cityName: String = "") {
         prefs(context).edit()
             .putString(LATITUDE_TEXT, lat.toString())
             .putString(LONGITUDE_TEXT, lon.toString())
             .putFloat("latitude", lat.toFloat())
             .putFloat("longitude", lon.toFloat())
+            .putString(CITY_NAME, cityName)
+            .putLong(SAVED_AT, System.currentTimeMillis())
+            .putString(SAVED_DATE, LocalDate.now(AppTimeZone.zone(context)).toString())
             .apply()
     }
     fun saveMethod(context: Context, method: String) { prefs(context).edit().putString("method", method).apply() }
+    fun saveAsrSchool(context: Context, school: AsrSchool) { prefs(context).edit().putString(ASR_SCHOOL, school.key).apply() }
+    fun saveFineTune(context: Context, key: String, minutes: Int) {
+        require(key in PrayerAccuracy.KEYS)
+        prefs(context).edit().putInt(TUNE_PREFIX + key, minutes.coerceIn(-30, 30)).apply()
+    }
     fun setEnabled(context: Context, enabled: Boolean) { prefs(context).edit().putBoolean("enabled", enabled).apply() }
+
+    /** True when a new GPS fix is justified after a move of ~25 km or a new local day. */
+    fun needsLocationRefresh(context: Context, lat: Double, lon: Double, now: Long = System.currentTimeMillis()): Boolean =
+        PrayerCities.needsRefresh(
+            latitude(context), longitude(context), lat, lon,
+            savedDate(context),
+            java.time.Instant.ofEpochMilli(now).atZone(AppTimeZone.zone(context)).toLocalDate().toString()
+        )
 }
 
 internal object PrayerCalculator {
-    private fun parameters(method: String) = when (method) {
-        "UMM_AL_QURA" -> CalculationMethod.UMM_AL_QURA.parameters
-        "MUSLIM_WORLD_LEAGUE" -> CalculationMethod.MUSLIM_WORLD_LEAGUE.parameters
-        "KARACHI" -> CalculationMethod.KARACHI.parameters
-        else -> CalculationMethod.EGYPTIAN.parameters
-    }
-
     fun today(context: Context, date: Date = Date()): List<PrayerMoment> {
         val lat = PrayerPrefs.latitude(context)
         val lon = PrayerPrefs.longitude(context)
         require(lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0)
         // Adhan treats DateComponents as a calendar date in UTC, so the date we hand it must be the
-        // local date in the user's selected zone — not the device zone.
-        val localDate = Instant.ofEpochMilli(date.time).atZone(AppTimeZone.zone(context)).toLocalDate()
-        val components = DateComponents(localDate.year, localDate.monthValue, localDate.dayOfMonth)
-        val prayers = PrayerTimes(Coordinates(lat, lon), components, parameters(PrayerPrefs.method(context)))
-        return listOf(
-            PrayerMoment("الفجر", prayers.fajr.time), PrayerMoment("الظهر", prayers.dhuhr.time),
-            PrayerMoment("العصر", prayers.asr.time), PrayerMoment("المغرب", prayers.maghrib.time),
-            PrayerMoment("العشاء", prayers.isha.time)
-        )
+        // local date in the user's selected zone — not the device zone. ZoneId also applies DST.
+        val zone = AppTimeZone.zone(context)
+        val localDate = Instant.ofEpochMilli(date.time).atZone(zone).toLocalDate()
+        return PrayerAccuracy.calculate(lat, lon, localDate, PrayerPrefs.settings(context))
     }
 
     fun next(context: Context, now: Long = System.currentTimeMillis()): PrayerMoment? {
