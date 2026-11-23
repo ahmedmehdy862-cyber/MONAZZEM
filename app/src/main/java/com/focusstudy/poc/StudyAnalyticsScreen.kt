@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
@@ -39,6 +41,8 @@ import java.util.Locale
 internal fun StudyAnalyticsScreen(onBack: () -> Unit) {
     val vm: StudyAnalyticsViewModel = viewModel()
     val state by vm.state.collectAsState()
+    val context = LocalContext.current
+    val avatarPrefs = remember(context) { FocusPreferences.load(context) }
     val today = LocalDate.now()
     val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
     val weekEnd = weekStart.plusDays(7)
@@ -57,6 +61,22 @@ internal fun StudyAnalyticsScreen(onBack: () -> Unit) {
             MetricCard("تركيز الأسبوع", "${state.totalMinutes} د", Modifier.weight(1f))
             MetricCard("جلسات مكتملة", state.sessionCount.toString(), Modifier.weight(1f))
             MetricCard("مهام مكتملة", state.completedTasks.toString(), Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(10.dp))
+        Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(22.dp)) {
+            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                AvatarPortrait(avatarPrefs.avatarPath, avatarPrefs.studentName, avatarPrefs.companionStyle, 52.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("وسامك هذا الأسبوع", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (state.completedTasks >= 5) "أنجزت ${state.completedTasks} مهمة و${state.totalMinutes} دقيقة تركيز. كارتونك معاك في كل إنجاز."
+                        else "كل مهمة مكتملة تضيف لبنة لوسامك. ابدأ بخطوة صغيرة اليوم.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(14.dp))
         Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(22.dp)) {

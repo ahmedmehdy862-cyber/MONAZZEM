@@ -38,7 +38,12 @@ data class FocusPreferences(
     val remindersPerDay: Int = 1,
     val permanentBlockedPackages: Set<String> = emptySet(),
     val onboardingCompleted: Boolean = false,
+    /** Generated cartoon shown in the profile, Today companion and achievements. */
     val avatarPath: String = "",
+    /** Original photo copy, kept only in app-private files so the cartoon can be regenerated. */
+    val avatarSourcePath: String = "",
+    /** Selected on-device cartoon style (0–3). */
+    val avatarStyle: Int = 0,
     val companionStyle: Int = 0,
     val generalNotificationsEnabled: Boolean = true,
     val morningMessageEnabled: Boolean = true,
@@ -82,6 +87,8 @@ data class FocusPreferences(
                     prefs.getString("student_name", "").orEmpty().isNotBlank()
                 ),
                 avatarPath = prefs.getString("avatar_path", "").orEmpty(),
+                avatarSourcePath = prefs.getString("avatar_source_path", "").orEmpty(),
+                avatarStyle = prefs.getInt("avatar_style", 0).coerceIn(0, CartoonAvatar.STYLES.lastIndex),
                 companionStyle = prefs.getInt("companion_style", 0).coerceIn(0, 3),
                 generalNotificationsEnabled = prefs.getBoolean("general_notifications_enabled", prefs.getBoolean("daily_reminder_enabled", true)),
                 morningMessageEnabled = prefs.getBoolean("morning_message_enabled", true),
@@ -124,6 +131,8 @@ data class FocusPreferences(
                 .putStringSet("permanent_blocked_packages", value.permanentBlockedPackages.toSet())
                 .putBoolean("onboarding_completed", value.onboardingCompleted)
                 .putString("avatar_path", value.avatarPath)
+                .putString("avatar_source_path", value.avatarSourcePath)
+                .putInt("avatar_style", value.avatarStyle.coerceIn(0, CartoonAvatar.STYLES.lastIndex))
                 .putInt("companion_style", value.companionStyle.coerceIn(0, 3))
                 .putBoolean("general_notifications_enabled", value.generalNotificationsEnabled)
                 .putBoolean("morning_message_enabled", value.morningMessageEnabled)

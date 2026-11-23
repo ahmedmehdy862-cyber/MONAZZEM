@@ -15,24 +15,31 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +70,19 @@ internal data class CompanionStyle(val title: String, val mark: String, val mott
     }
 }
 
-internal fun copyAvatarToAppFiles(context: Context, uri: Uri): String? = runCatching {
+/** [path] is the generated cartoon shown everywhere; [sourcePath] is the private original copy. */
+internal data class AvatarImage(val path: String, val sourcePath: String, val style: Int) {
+    companion object { val EMPTY = AvatarImage("", "", 0) }
+}
+
+private const val AVATAR_SOURCE_NAME = "student_companion_original.jpg"
+
+/** Older installs saved the raw photo as the displayed avatar; it can still seed a cartoon. */
+internal fun avatarSource(avatar: AvatarImage): String =
+    if (avatar.sourcePath.isNotBlank()) avatar.sourcePath else avatar.path
+
+/** Picks a photo, keeps the original in app-private storage and draws the cartoon offline. */
+internal fun copyAvatarToAppFiles(context: Context, uri: Uri, style: Int): AvatarImage? = runCatching {
     val resolver = context.contentResolver
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -79,36 +98,97 @@ internal fun copyAvatarToAppFiles(context: Context, uri: Uri): String? = runCatc
         (bitmap.height * scale).toInt().coerceAtLeast(1),
         true
     ) else bitmap
-    val output = File(context.filesDir, "student_companion_avatar.jpg")
-    output.outputStream().use { prepared.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+    val source = File(context.filesDir, AVATAR_SOURCE_NAME)
+    source.outputStream().use { prepared.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+    val cartoon = CartoonAvatar.stylize(prepared, style)
+    val output = File(context.filesDir, CartoonAvatar.fileName(style))
+    output.outputStream().use { cartoon.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    cartoon.recycle()
     if (prepared !== bitmap) prepared.recycle()
     bitmap.recycle()
+    AvatarImage(output.absolutePath, source.absolutePath, style)
+}.getOrNull()
+
+/** Regenerates from the saved original with another style; still fully on-device. */
+internal fun regenerateCartoon(context: Context, sourcePath: String, style: Int): String? = runCatching {
+    val source = BitmapFactory.decodeFile(sourcePath) ?: return@runCatching null
+    val cartoon = CartoonAvatar.stylize(source, style)
+    val output = File(context.filesDir, CartoonAvatar.fileName(style))
+    output.outputStream().use { cartoon.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    cartoon.recycle()
+    source.recycle()
     output.absolutePath
 }.getOrNull()
 
 @Composable
 internal fun AvatarChooser(
-    avatarPath: String,
+    avatar: AvatarImage,
     name: String,
-    styleIndex: Int,
-    onAvatarChanged: (String) -> Unit,
+    companionStyle: Int,
+    onAvatarChanged: (AvatarImage) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var selectedStyle by rememberSaveable(avatar.style) { mutableIntStateOf(avatar.style) }
+    var busy by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
-            val saved = withContext(Dispatchers.IO) { copyAvatarToAppFiles(context, uri) }
+            busy = true
+            val saved = withContext(Dispatchers.IO) { copyAvatarToAppFiles(context, uri, selectedStyle) }
             saved?.let(onAvatarChanged)
+            busy = false
         }
     }
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        AvatarPortrait(avatarPath, name, styleIndex, 76.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("رفيقك الدراسي", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text("اختار صورة، ونحوّلها لإطار شخصية ${CompanionStyle.all[styleIndex.coerceIn(0, 3)].title} داخل التطبيق.", style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
-            Button(onClick = { picker.launch("image/*") }) { Text(if (avatarPath.isBlank()) "اختيار صورة" else "تغيير الصورة") }
+    fun regenerate(style: Int) {
+        val source = avatarSource(avatar)
+        if (source.isBlank()) return
+        scope.launch {
+            busy = true
+            val path = withContext(Dispatchers.IO) { regenerateCartoon(context, source, style) }
+            if (path != null) {
+                onAvatarChanged(AvatarImage(path, if (avatar.sourcePath.isNotBlank()) avatar.sourcePath else source, style))
+            }
+            busy = false
+        }
+    }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AvatarPortrait(avatar.path, name, companionStyle, 76.dp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("رفيقك الدراسي", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "نحوّل صورتك إلى شخصية كارتون على جهازك فقط. الصورة والكارتون ما بيخرجوا من الجوال.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FocusColors.TextSecondary
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { picker.launch("image/*") }, enabled = !busy) {
+                        Text(if (avatar.path.isBlank()) "اختيار صورة" else "تغيير الصورة")
+                    }
+                    if (avatar.path.isNotBlank()) {
+                        OutlinedButton(onClick = { regenerate(selectedStyle) }, enabled = !busy) { Text("إعادة التوليد") }
+                    }
+                }
+                if (busy) Text("جارٍ رسم الكارتون على الجهاز...", style = MaterialTheme.typography.labelSmall, color = FocusColors.TextSecondary)
+            }
+        }
+        Text("الأسلوب", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CartoonAvatar.STYLES.forEachIndexed { index, label ->
+                FilterChip(
+                    selected = selectedStyle == index,
+                    onClick = {
+                        selectedStyle = index
+                        if (avatar.path.isNotBlank()) regenerate(index)
+                    },
+                    label = { Text(label) }
+                )
+            }
+        }
+        TextButton(onClick = { onAvatarChanged(avatar.copy(path = "", sourcePath = "", style = selectedStyle)) }) {
+            Text("تخطي الصورة")
         }
     }
 }

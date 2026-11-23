@@ -42,6 +42,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -254,6 +255,8 @@ internal fun PersonalizationScreen(
     var accent by rememberSaveable(current.accentIndex) { mutableStateOf(current.accentIndex) }
     var textScale by rememberSaveable(current.textScale) { mutableStateOf(current.textScale) }
     var avatarPath by rememberSaveable(current.avatarPath) { mutableStateOf(current.avatarPath) }
+    var avatarSourcePath by rememberSaveable(current.avatarSourcePath) { mutableStateOf(current.avatarSourcePath) }
+    var avatarStyle by rememberSaveable(current.avatarStyle) { mutableIntStateOf(current.avatarStyle) }
     var companionStyle by rememberSaveable(current.companionStyle) { mutableStateOf(current.companionStyle) }
     var generalNotifications by rememberSaveable(current.generalNotificationsEnabled) { mutableStateOf(current.generalNotificationsEnabled) }
     var morningEnabled by rememberSaveable(current.morningMessageEnabled) { mutableStateOf(current.morningMessageEnabled) }
@@ -301,7 +304,16 @@ internal fun PersonalizationScreen(
                     Text("هدفك اليومي: ${goal.toInt()} دقيقة", color = FocusColors.TextSecondary)
                     Slider(value = goal, onValueChange = { goal = it }, valueRange = 30f..360f, steps = 10)
                     Spacer(Modifier.height(8.dp))
-                    AvatarChooser(avatarPath, name, companionStyle, onAvatarChanged = { avatarPath = it })
+                    AvatarChooser(
+                        avatar = AvatarImage(avatarPath, avatarSourcePath, avatarStyle),
+                        name = name,
+                        companionStyle = companionStyle,
+                        onAvatarChanged = { image ->
+                            avatarPath = image.path
+                            avatarSourcePath = image.sourcePath
+                            avatarStyle = image.style
+                        }
+                    )
                     Spacer(Modifier.height(10.dp))
                     CompanionStylePicker(companionStyle, onSelect = { companionStyle = it })
                 }
@@ -508,6 +520,8 @@ internal fun PersonalizationScreen(
                     dailyReminderEnabled = generalNotifications,
                     remindersPerDay = 1,
                     avatarPath = avatarPath,
+                    avatarSourcePath = avatarSourcePath,
+                    avatarStyle = avatarStyle,
                     companionStyle = companionStyle,
                     reduceMotion = reduceMotion,
                     generalNotificationsEnabled = generalNotifications,

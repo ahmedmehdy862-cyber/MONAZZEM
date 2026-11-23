@@ -56,6 +56,8 @@ internal fun FirstLaunchSetupScreen(
     var name by rememberSaveable { mutableStateOf(current.studentName) }
     var goal by rememberSaveable { mutableStateOf(current.dailyGoalMinutes.toFloat()) }
     var avatar by rememberSaveable { mutableStateOf(current.avatarPath) }
+    var avatarSource by rememberSaveable { mutableStateOf(current.avatarSourcePath) }
+    var avatarStyle by rememberSaveable { mutableIntStateOf(current.avatarStyle) }
     var style by rememberSaveable { mutableStateOf(current.companionStyle) }
     var profile by rememberSaveable { mutableStateOf(current.profile) }
     var timezoneId by rememberSaveable { mutableStateOf(current.timezoneId.ifBlank { AppTimeZone.deviceId() }) }
@@ -110,7 +112,16 @@ internal fun FirstLaunchSetupScreen(
                     }
                     item {
                         SetupCard("صورتك (اختياري)", "صورتك تبقى على الجهاز ولا تُرفع لأي خدمة.") {
-                            AvatarChooser(avatar, name, style, onAvatarChanged = { avatar = it })
+                            AvatarChooser(
+                                avatar = AvatarImage(avatar, avatarSource, avatarStyle),
+                                name = name,
+                                companionStyle = style,
+                                onAvatarChanged = { image ->
+                                    avatar = image.path
+                                    avatarSource = image.sourcePath
+                                    avatarStyle = image.style
+                                }
+                            )
                             Spacer(Modifier.height(10.dp))
                             CompanionStylePicker(style, onSelect = { style = it })
                         }
@@ -169,6 +180,8 @@ internal fun FirstLaunchSetupScreen(
                                 studentName = name.trim(),
                                 dailyGoalMinutes = goal.toInt(),
                                 avatarPath = avatar,
+                                avatarSourcePath = avatarSource,
+                                avatarStyle = avatarStyle,
                                 companionStyle = style,
                                 profile = profile,
                                 timezoneId = AppTimeZone.sanitize(timezoneId),
