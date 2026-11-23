@@ -64,7 +64,6 @@ class PrayerAlertActivity : ComponentActivity() {
         val prayerName = intent?.getStringExtra(EXTRA_PRAYER_NAME).orEmpty().ifBlank { "الصلاة" }
         val atMillis = intent?.getLongExtra(EXTRA_AT_MILLIS, System.currentTimeMillis())
             ?: System.currentTimeMillis()
-        val fromTest = intent?.getBooleanExtra(EXTRA_TEST, false) == true
         val alertType = PrayerAlertType.from(intent?.getStringExtra(EXTRA_TYPE))
         val voice = PrayerAdhanVoice.from(intent?.getStringExtra(EXTRA_VOICE))
         val prayerKey = intent?.getStringExtra(EXTRA_PRAYER_KEY)
@@ -86,7 +85,6 @@ class PrayerAlertActivity : ComponentActivity() {
                 PrayerAlertScreen(
                     prayerName = prayerName,
                     atMillis = atMillis,
-                    fromTest = fromTest,
                     alertType = alertType,
                     voice = voice,
                     onDone = ::finish,
@@ -146,7 +144,6 @@ class PrayerAlertActivity : ComponentActivity() {
 private fun PrayerAlertScreen(
     prayerName: String,
     atMillis: Long,
-    fromTest: Boolean,
     alertType: PrayerAlertType,
     voice: PrayerAdhanVoice,
     onDone: () -> Unit,
@@ -208,9 +205,7 @@ private fun PrayerAlertScreen(
                     }
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        text = if (fromTest) {
-                            if (alertType == PrayerAlertType.AT) "هكذا يظهر أذان مُنظِّم" else "هكذا يظهر التنبيه قبل الصلاة"
-                        } else if (alertType == PrayerAlertType.AT) "حان وقت الأذان" else "قبل الصلاة",
+                        text = if (alertType == PrayerAlertType.AT) "حان وقت الأذان" else "قبل الصلاة",
                         style = MaterialTheme.typography.labelLarge,
                         color = FocusColors.Blue,
                         fontWeight = FontWeight.Bold
@@ -236,16 +231,6 @@ private fun PrayerAlertScreen(
                         color = FocusColors.TextSecondary
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text(
-                        text = if (alertType == PrayerAlertType.AT) {
-                            "يظهر الأذان تلقائيًا في منتصف الشاشة عند دخول الوقت — ليس عند الإقامة.\nإغلاق هذه الشاشة لا يوقف الصوت."
-                        } else {
-                            "تذكير محلي من مُنظِّم حسب موقعك وطريقة الحساب التي اخترتها."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = FocusColors.TextSecondary,
-                        textAlign = TextAlign.Center
-                    )
                     Spacer(Modifier.height(20.dp))
                     Button(
                         onClick = onDone,

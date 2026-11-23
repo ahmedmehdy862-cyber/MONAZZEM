@@ -86,7 +86,11 @@ internal object PrayerAccuracy {
         val instants = listOf(prayers.fajr, prayers.dhuhr, prayers.asr, prayers.maghrib, prayers.isha)
         return instants.mapIndexed { index, instant ->
             val minutes = settings.fineTune[KEYS[index]] ?: 0
-            PrayerMoment(NAMES[index], instant.time + minutes * 60_000L)
+            // Adhan keeps the current milliseconds on every computed instant, so two calls for the
+            // same date can differ by a few ms. Prayer times are minute-precision: normalise to the
+            // whole minute so rescheduling is deterministic and past/future comparisons are exact.
+            val wholeMinute = Math.floorDiv(instant.time, 60_000L) * 60_000L
+            PrayerMoment(NAMES[index], wholeMinute + minutes * 60_000L)
         }
     }
 

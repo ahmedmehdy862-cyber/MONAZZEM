@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -67,6 +68,8 @@ internal fun NotificationCenterScreen(
     var exactAlarms by remember { mutableStateOf(NotificationMaintenance.canScheduleExact(context)) }
     var diagnostics by remember { mutableStateOf(emptyList<NotificationRecord>()) }
     var sent by remember { mutableStateOf(false) }
+    // Test and diagnostic surfaces are for verification only; keep them off the normal screen.
+    var showAdvanced by remember { mutableStateOf(false) }
     // Prayer switches live in their own preferences file; this revision makes the section reread
     // them after each change without rebuilding the whole screen.
     var prayerRevision by remember { mutableStateOf(0) }
@@ -108,7 +111,12 @@ internal fun NotificationCenterScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("رجوع") }
             Spacer(Modifier.width(8.dp))
-            Text("الإشعارات", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "الإشعارات",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.combinedClickable(onLongClick = { showAdvanced = !showAdvanced }) {}
+            )
         }
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
@@ -163,18 +171,15 @@ internal fun NotificationCenterScreen(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            TestCard(sent, allowed) {
-                StudyNotificationScheduler.notifyTest(context)
-                sent = true
+            if (showAdvanced) {
+                Spacer(Modifier.height(12.dp))
+                TestCard(sent, allowed) {
+                    StudyNotificationScheduler.notifyTest(context)
+                    sent = true
+                }
+                Spacer(Modifier.height(12.dp))
+                DiagnosticCard(diagnostics)
             }
-            Spacer(Modifier.height(12.dp))
-            DiagnosticCard(diagnostics)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "إن أرسلت إشعارًا ولم يظهر: الإذن ممنوع، أو المنبّهات الدقيقة موقوفة من النظام، أو الهاتف في وضع عدم الإزعاج، أو أوقفت إعدادات البطارية تنبيهات التطبيق (وانظر إرشادات شاومي أعلاه).",
-                style = MaterialTheme.typography.bodySmall,
-                color = FocusColors.TextMuted
-            )
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -190,6 +195,7 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
     val context = LocalContext.current
     val settings = remember(revision) { PrayerAlertPrefs.load(context) }
     val master = remember(revision) { PrayerPrefs.enabled(context) }
+    var showTests by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { PrayerAdhanSounds.stopPreview() } }
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
@@ -197,7 +203,13 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Text("الصلاة", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Text(
+                "الصلاة",
+                style = MaterialTheme.typography.titleSmall,
+                color = FocusColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.combinedClickable(onLongClick = { showTests = !showTests }) {}
+            )
             Text(
                 "تنبيه عند دخول الوقت وتنبيه قبله، لكل واحد مفتاحه وصوته. يُجدول الأسبوع القادم كاملًا حتى لو لم تفتح التطبيق.",
                 style = MaterialTheme.typography.bodySmall,
@@ -310,14 +322,16 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
             Spacer(Modifier.height(8.dp))
-            Text("جرّب الآن", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.AT) }) {
-                    Text("تنبيه وقت الصلاة")
-                }
-                OutlinedButton(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.BEFORE) }) {
-                    Text("تنبيه قبل الصلاة")
+            if (showTests) {
+                Text("جرّب الآن", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.AT) }) {
+                        Text("تنبيه وقت الصلاة")
+                    }
+                    OutlinedButton(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.BEFORE) }) {
+                        Text("تنبيه قبل الصلاة")
+                    }
                 }
             }
         }

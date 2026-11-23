@@ -254,8 +254,6 @@ internal fun TeamMessagesScreen(onBack: () -> Unit) {
             TextButton(onClick = { reload++ }) { Text(if (loading) "…" else "تحديث") }
         }
         Spacer(Modifier.height(10.dp))
-        MessageCodeCard()
-        Spacer(Modifier.height(12.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (messages.isEmpty() && !loading) {
                 item {
@@ -332,36 +330,3 @@ internal object TeamNotifier {
     }
 }
 
-/**
- * Read-only short code for the dashboard's user list.
- *
- * It is derived from the install id, but the server resolves it to the profile id before storing a
- * message. The person never has to copy, dictate or send it — the registration handshake already
- * introduced this install to the team, and no device id or push token is shown here.
- */
-@Composable
-private fun MessageCodeCard() {
-    val context = LocalContext.current
-    val code = remember(context) { UserIdentity.code(context) }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh),
-        shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Text("رمزك للرسائل الخاصة", style = MaterialTheme.typography.labelMedium, color = FocusColors.Blue)
-            Text(
-                code,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = FocusColors.TextPrimary
-            )
-            Text(
-                "يظهر اسمك ورمزك تلقائيًا في لوحة الفريق عند أول فتح. لا نطلب منك نسخ الرمز ولا إرساله، ولا نطلب بريدك أو رقم هاتفك.",
-                style = MaterialTheme.typography.bodySmall,
-                color = FocusColors.TextSecondary
-            )
-        }
-    }
-}

@@ -6,10 +6,6 @@ import android.app.Activity
 
 import android.app.AlarmManager
 
-import android.content.ClipData
-
-import android.content.ClipboardManager
-
 import android.content.Context
 
 import android.content.Intent
@@ -2371,12 +2367,8 @@ private fun SessionSetupScreen(
 
     var batteryOk by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
-    var ownerActive by remember { mutableStateOf(DeviceOwnerController.isDeviceOwner(context)) }
-
     var consentChanges by remember { mutableStateOf<Map<ConsentKey, ConsentPolicy.Change>>(emptyMap()) }
     val consentScope = rememberCoroutineScope()
-
-    var showOwnerHelp by remember { mutableStateOf(false) }
 
     LaunchedEffect(taskId) {
 
@@ -2413,8 +2405,6 @@ private fun SessionSetupScreen(
         notificationsOn = hasNotificationPermission(context)
 
         batteryOk = isIgnoringBatteryOptimizations(context)
-
-        ownerActive = DeviceOwnerController.isDeviceOwner(context)
 
         consentScope.launch {
             val fresh = withContext(Dispatchers.IO) {
@@ -2983,102 +2973,6 @@ private fun SessionSetupScreen(
 
             item {
 
-                Card(
-
-                    shape = RoundedCornerShape(22.dp),
-
-                    colors = CardDefaults.cardColors(
-
-                        containerColor = if (ownerActive) {
-
-                            FocusColors.Green.copy(alpha = 0.14f)
-
-                        } else {
-
-                            FocusColors.Surface
-
-                        }
-
-                    )
-
-                ) {
-
-                    Column(modifier = Modifier.padding(16.dp)) {
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-
-                            Text(
-
-                                text = "تعليق التطبيقات نهائيًا",
-
-                                style = MaterialTheme.typography.titleSmall
-
-                            )
-
-                            Spacer(Modifier.weight(1f))
-
-                            Text(
-
-                                text = if (ownerActive) "مفعّل" else "اختياري",
-
-                                style = MaterialTheme.typography.labelMedium,
-
-                                color = if (ownerActive) {
-
-                                    FocusColors.onTint(FocusColors.Green)
-
-                                } else {
-
-                                    FocusColors.TextMuted
-
-                                }
-
-                            )
-
-                        }
-
-                        Spacer(Modifier.height(6.dp))
-
-                        Text(
-
-                            text = if (ownerActive) {
-
-                                "التطبيقات المختارة ستُعلَّق على مستوى النظام: تُعطَّل أيقوناتها، تختفي من قائمة التطبيقات الأخيرة، ولا تعمل حتى تنتهي الجلسة."
-
-                            } else {
-
-                                "بدون وضع Device Owner يبقى المنع عبر شاشة الحجب وVPN. تفعيله يجعل النظام نفسه يوقف التطبيقات ويُعطّل أيقوناتها."
-
-                            },
-
-                            style = MaterialTheme.typography.bodySmall,
-
-                            color = FocusColors.TextSecondary
-
-                        )
-
-                        if (!ownerActive) {
-
-                            Spacer(Modifier.height(10.dp))
-
-                            OutlinedButton(
-
-                                onClick = { showOwnerHelp = true },
-
-                                shape = RoundedCornerShape(14.dp)
-
-                            ) { Text("طريقة التفعيل") }
-
-                        }
-
-                    }
-
-                }
-
-            }
-
-            item {
-
                 Row(
 
                     modifier = Modifier
@@ -3202,104 +3096,6 @@ private fun SessionSetupScreen(
 }
 
 
-
-@Composable
-
-private fun DeviceOwnerDialog(command: String, onDismiss: () -> Unit) {
-
-    val context = LocalContext.current
-
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-
-
-
-    AlertDialog(
-
-        onDismissRequest = onDismiss,
-
-        shape = RoundedCornerShape(26.dp),
-
-        containerColor = FocusColors.SurfaceHigh,
-
-        title = { Text("تفعيل Device Owner") },
-
-        text = {
-
-            Column {
-
-                Text(
-
-                    text = "خطوة اختيارية تُنفَّذ مرة واحدة من الكمبيوتر عبر USB. بعدها يعلّق النظام نفسه التطبيقات المختارة أثناء الجلسة ويُعطّل أيقوناتها.",
-
-                    style = MaterialTheme.typography.bodySmall,
-
-                    color = FocusColors.TextSecondary
-
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                Text("1. فعّل خيارات المطوّر وتصحيح USB.", style = MaterialTheme.typography.bodySmall)
-
-                Spacer(Modifier.height(4.dp))
-
-                Text("2. الجهاز يجب ألا يحتوي على حسابات مسجّلة؛ قد يحتاج إعادة ضبط مصنع.", style = MaterialTheme.typography.bodySmall)
-
-                Spacer(Modifier.height(4.dp))
-
-
-
-                Text("3. نفّذ الأمر من الكمبيوتر:", style = MaterialTheme.typography.bodySmall)
-
-                Spacer(Modifier.height(8.dp))
-
-                Text(
-
-                    text = command,
-
-                    style = MaterialTheme.typography.labelMedium,
-
-                    color = FocusColors.onTint(FocusColors.Blue)
-
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                Text(                    text = "للإزالة لاحقًا: adb shell dpm remove-active-admin مع اسم الحزمة، أو أعد ضبط المصنع.",
-
-                    style = MaterialTheme.typography.labelSmall,
-
-                    color = FocusColors.TextMuted
-
-                )
-
-            }
-
-        },
-
-        confirmButton = {
-
-            Button(
-
-                onClick = {
-
-                    clipboard?.setPrimaryClip(ClipData.newPlainText("Device Owner command", command))
-
-                    Toast.makeText(context, "تم نسخ الأمر", Toast.LENGTH_SHORT).show()
-
-                },
-
-                shape = RoundedCornerShape(14.dp)
-
-            ) { Text("نسخ الأمر") }
-
-        },
-
-        dismissButton = { TextButton(onClick = onDismiss) { Text("إغلاق") } }
-
-    )
-
-}
 
 
 @Composable

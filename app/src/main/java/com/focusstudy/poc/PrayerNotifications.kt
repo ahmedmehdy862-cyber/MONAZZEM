@@ -380,17 +380,11 @@ internal object PrayerNotificationScheduler {
         // avoid playing the same recording twice.
         val playInService = AdhanPlaybackService.shouldPlay(type, sound)
         if (playInService) AdhanPlaybackService.play(context, name, voice)
-        val title = when {
-            test && type == PrayerAlertType.AT -> "هكذا يصل أذان مُنظِّم"
-            test -> "هكذا يصل تنبيه قبل الصلاة"
-            type == PrayerAlertType.AT -> "حان وقت صلاة $name"
-            else -> "قبل صلاة $name"
-        }
-        val body = when {
-            test && type == PrayerAlertType.AT -> "شاشة الأذان تظهر تلقائيًا في منتصف الشاشة. الصوت: ${voice.label}."
-            test -> "تنبيه قبل الصلاة بالصوت: ${sound.label}."
-            type == PrayerAlertType.AT -> "الأذان الآن. الصوت: ${voice.label}. اضغط «ذكّرني بعد ٥ دقائق» إن أردت."
-            else -> rule.beforeMinutes.let { "يبدأ وقت $name بعد $it دقائق." }
+        val title = if (type == PrayerAlertType.AT) "حان وقت صلاة $name" else "قبل صلاة $name"
+        val body = if (type == PrayerAlertType.AT) {
+            "الأذان الآن. الصوت: ${voice.label}. اضغط «ذكّرني بعد ٥ دقائق» إن أردت."
+        } else {
+            rule.beforeMinutes.let { "يبدأ وقت $name بعد $it دقائق." }
         }
         val notificationId = if (type == PrayerAlertType.AT) AT_NOTIFICATION else BEFORE_NOTIFICATION
         val content = alertPendingIntent(context, name, key, prayerAt, test, notificationId + 1, type, voice)

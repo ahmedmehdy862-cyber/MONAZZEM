@@ -264,7 +264,7 @@ internal fun PrayerTimesScreen(
                         Text("فعّل تذكيرات الأذكار", color = FocusColors.TextPrimary)
                     }
                     Text(
-                        "النصوص قصيرة ومحفوظة داخل التطبيق، والصوت يخضع لاختيار الإدارة لكل نوع إشعار. لا تُرسل الأذكار ولا أوقاتها إلى أي خادم.",
+                        "النصوص قصيرة ومحفوظة داخل التطبيق، والصوت مضبوط لكل نوع إشعار. لا تُرسل الأذكار ولا أوقاتها إلى أي خادم.",
                         style = MaterialTheme.typography.bodySmall,
                         color = FocusColors.TextSecondary
                     )
@@ -612,7 +612,7 @@ internal fun SupportScreen(onBack: () -> Unit) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("محتاج مساعدة؟", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "راسل فريق مُنظِّم عن مشكلة أو اقتراح. الرسالة تصل إلى لوحة الدعم فورًا، وتقدر أيضًا تراسلنا على واتساب.",
+                    "راسل فريق مُنظِّم عن مشكلة أو اقتراح، وتقدر أيضًا تراسلنا على واتساب.",
                     color = FocusColors.TextSecondary
                 )
                 OutlinedTextField(
