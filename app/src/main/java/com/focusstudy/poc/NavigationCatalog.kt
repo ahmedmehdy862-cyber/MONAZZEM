@@ -51,7 +51,7 @@ internal object NavigationCatalog {
         SectionEntry("subjects", BottomTab.SUBJECTS.label, "نظّم موادك ومحاضراتك.", BottomTab.SUBJECTS.mark, SectionShelf.GROWTH),
 
         SectionEntry("settings", BottomTab.SETTINGS.label, "اسمك وهدفك اليومي والمظهر والملف.", BottomTab.SETTINGS.mark, SectionShelf.CUSTOMIZE),
-        SectionEntry("notifications", BottomTab.NOTIFICATIONS.label, "ما يصلك ومتى، واختبار فوري لها.", BottomTab.NOTIFICATIONS.mark, SectionShelf.CUSTOMIZE),
+        SectionEntry("notifications", BottomTab.NOTIFICATIONS.label, "ما يصلك ومتى.", BottomTab.NOTIFICATIONS.mark, SectionShelf.CUSTOMIZE),
         SectionEntry("prayer_times", BottomTab.PRAYER.label, "احسب المواقيت حسب موقعك واضبط تذكيرها.", BottomTab.PRAYER.mark, SectionShelf.CUSTOMIZE),
         SectionEntry("bottom_bar", "الشريط السفلي", "اختر أقسام الشريط السفلي ورتّبها.", "▥", SectionShelf.CUSTOMIZE),
         SectionEntry("permanent_apps", "التطبيقات الدائمة", "التطبيقات التي تبقى مفتوحة أثناء الجلسة.", "⊞", SectionShelf.CUSTOMIZE),

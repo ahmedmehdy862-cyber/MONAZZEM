@@ -28,10 +28,6 @@ object DeviceOwnerController {
         return runCatching { manager.isDeviceOwnerApp(context.packageName) }.getOrDefault(false)
     }
 
-    /** Human readable provisioning command, shown in the in-app help dialog. */
-    fun provisioningCommand(context: Context): String =
-        "adb shell dpm set-device-owner ${context.packageName}/.FocusDeviceAdminReceiver"
-
     /**
      * Suspends [packages] and returns how many were actually suspended. Packages the system refuses
      * (system apps, the launcher, packages with an active admin) are reported by the platform and
