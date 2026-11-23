@@ -627,7 +627,7 @@ private fun AppRoot(
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         Crossfade(
             targetState = screen,
-            animationSpec = tween(300),
+            animationSpec = tween(if (preferences.reduceMotion) MotionSpec.SHORT_MS else MotionSpec.LONG_MS),
             label = "screen",
             modifier = Modifier.weight(1f).fillMaxWidth()
         ) { current ->
@@ -747,6 +747,7 @@ private fun AppRoot(
                     dashboard = current == "today",
                     onOpenAllTasks = { rootTab = "tasks" },
                     onOpenMessages = { openSecondary("messages") },
+                    onOpenPrayerSettings = { openSecondary("prayer_times") },
                     preferences = preferences,
                     addRequest = quickAddTask,
                     onToggleTheme = {
@@ -829,6 +830,7 @@ private fun TasksScreen(
     dashboard: Boolean,
     onOpenAllTasks: () -> Unit,
     onOpenMessages: () -> Unit,
+    onOpenPrayerSettings: () -> Unit = {},
     preferences: FocusPreferences,
     addRequest: Int = 0,
     onToggleTheme: () -> Unit = {}
@@ -1045,6 +1047,8 @@ private fun TasksScreen(
                 openToday = todayTasksForWelcome.count { !it.isDone && it.status != TaskStatus.DONE },
                 doneToday = todayTasksForWelcome.count { it.isDone || it.status == TaskStatus.DONE }
             )
+            Spacer(Modifier.height(12.dp))
+            PrayerCountdownCard(onOpenPrayerSettings = onOpenPrayerSettings)
             Spacer(Modifier.height(12.dp))
             StudyCompanionCard(preferences, tasks)
             Spacer(Modifier.height(12.dp))

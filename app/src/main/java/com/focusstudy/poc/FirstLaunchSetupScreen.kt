@@ -26,7 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,7 +36,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
+/**
+ * A short guided first run: name, daily goal, one first task. Three steps maximum, then the person
+ * lands on Today. Everything else (reminder times, notification switches) keeps its sensible
+ * default and stays editable in Settings — no second wall of options before the app is useful.
+ */
 @Composable
 internal fun FirstLaunchSetupScreen(
     current: FocusPreferences,
@@ -42,128 +51,153 @@ internal fun FirstLaunchSetupScreen(
     onRequestNotifications: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var page by rememberSaveable { mutableStateOf(0) }
     var name by rememberSaveable { mutableStateOf(current.studentName) }
     var goal by rememberSaveable { mutableStateOf(current.dailyGoalMinutes.toFloat()) }
     var avatar by rememberSaveable { mutableStateOf(current.avatarPath) }
     var style by rememberSaveable { mutableStateOf(current.companionStyle) }
     var profile by rememberSaveable { mutableStateOf(current.profile) }
-    var general by rememberSaveable { mutableStateOf(current.generalNotificationsEnabled) }
-    var morning by rememberSaveable { mutableStateOf(current.morningMessageEnabled) }
-    var evening by rememberSaveable { mutableStateOf(current.eveningMessageEnabled) }
-    var morningHour by rememberSaveable { mutableStateOf(current.morningMessageHour) }
-    var eveningHour by rememberSaveable { mutableStateOf(current.eveningMessageHour) }
     var timezoneId by rememberSaveable { mutableStateOf(current.timezoneId.ifBlank { AppTimeZone.deviceId() }) }
+    var firstTask by rememberSaveable { mutableStateOf("") }
+    var firstMinutes by rememberSaveable { mutableIntStateOf(30) }
+
+    val titles = listOf("ما اسمك؟", "هدفك اليومي", "أول مهمة لك")
+    val hints = listOf(
+        "خطوة واحدة فقط لنعرف كيف نناديك. الباقي اختياري ويمكن تغييره لاحقًا.",
+        "نبدأ بهدف بسيط، ويمكنك تعديله في أي وقت من الإعدادات.",
+        "أضف مهمة واحدة لتبدأ يومك، أو اترك الحقل فارغًا وأضفها لاحقًا."
+    )
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp)) {
         Text("مُنظِّم", style = MaterialTheme.typography.labelLarge, color = FocusColors.onTint(FocusColors.Blue))
-        Text(if (page == 0) "نجهّز مساحتك الدراسية" else "نضبط طريقة التذكير", style = MaterialTheme.typography.headlineSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold)
-        Text("الخطوة ${page + 1} من 2", style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
+        Text(titles[page], style = MaterialTheme.typography.headlineSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold)
+        Text("الخطوة ${page + 1} من 3 · ${hints[page]}", style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
         Spacer(Modifier.height(12.dp))
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            if (page == 0) {
-                item {
-                    SetupCard("ملفك الدراسي", "اسمك هيظهر في الترحيب والرسائل التشجيعية.") {
-                        OutlinedTextField(
-                            value = name,
-                            onValueChange = { name = it.take(32) },
-                            label = { Text("الاسم الذي تحب أن نناديك به") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        if (name.trim().length < 2) Text("اكتب اسمًا من حرفين على الأقل للمتابعة.", color = FocusColors.Amber)
+            when (page) {
+                0 -> {
+                    item {
+                        SetupCard("اسمك", "يظهر في الترحيب والرسائل التشجيعية على جهازك فقط.") {
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it.take(32) },
+                                label = { Text("الاسم الذي تحب أن نناديك به") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            if (name.trim().length < 2) Text("اكتب اسمًا من حرفين على الأقل للمتابعة.", color = FocusColors.Amber)
+                        }
+                    }
+                    item {
+                        SetupCard("من أنت؟", "نجهّز لك أقسامًا مناسبة. يمكنك تغييرها في أي وقت.") {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                UserProfile.entries.forEach { option ->
+                                    FilterChip(
+                                        selected = profile == option,
+                                        onClick = { profile = option },
+                                        label = { Text(option.label) }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(profile.hint, color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    item {
+                        SetupCard("صورتك (اختياري)", "صورتك تبقى على الجهاز ولا تُرفع لأي خدمة.") {
+                            AvatarChooser(avatar, name, style, onAvatarChanged = { avatar = it })
+                            Spacer(Modifier.height(10.dp))
+                            CompanionStylePicker(style, onSelect = { style = it })
+                        }
                     }
                 }
-                item {
-                    SetupCard("من أنت؟", "نضيف أقسامًا مناسبة لك: مواد، عمل، صحة… وتغيّرها في أي وقت.") {
-                        androidx.compose.foundation.layout.FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            UserProfile.entries.forEach { option ->
-                                FilterChip(
-                                    selected = profile == option,
-                                    onClick = { profile = option },
-                                    label = { Text(option.label) }
-                                )
+                1 -> {
+                    item {
+                        SetupCard("وقت التركيز اليومي", "نبدأ بهدف بسيط، ثم تنمو تدريجيًا.") {
+                            Text("${goal.toInt()} دقيقة تركيز يوميًا", color = FocusColors.TextSecondary)
+                            Slider(value = goal, onValueChange = { goal = it }, valueRange = 30f..360f, steps = 10)
+                        }
+                    }
+                    item {
+                        SetupCard("منطقتك الزمنية", "تضبط مواقيت الصلاة والأذكار وتتحرك معك عند السفر أو التوقيت الصيفي.") {
+                            TimeZonePicker(timezoneId, onSelected = { timezoneId = it })
+                        }
+                    }
+                }
+                2 -> {
+                    item {
+                        SetupCard("مهمة واحدة للبداية", "اكتب ما تريد إنجازه اليوم. يمكنك تخطي هذه الخطوة.") {
+                            OutlinedTextField(
+                                value = firstTask,
+                                onValueChange = { firstTask = it.take(80) },
+                                label = { Text("مثال: مراجعة محاضرة الرياضيات") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text("المدة", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            Spacer(Modifier.height(4.dp))
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(15, 30, 60, 90).forEach { minutes ->
+                                    FilterChip(
+                                        selected = firstMinutes == minutes,
+                                        onClick = { firstMinutes = minutes },
+                                        label = { Text("$minutes د") }
+                                    )
+                                }
                             }
                         }
-                        Spacer(Modifier.height(6.dp))
-                        Text(profile.hint, color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
                     }
-                }
-                item {
-                    SetupCard("رفيقك الجانبي", "اختار صورتك ونمطًا بصريًا ليظهر رفيقك ويتفاعل مع تقدمك.") {
-                        AvatarChooser(avatar, name, style, onAvatarChanged = { avatar = it })
-                        Spacer(Modifier.height(12.dp))
-                        CompanionStylePicker(style, onSelect = { style = it })
-                    }
-                }
-                item {
-                    SetupCard("هدفك اليومي", "نبدأ بهدف واقعي ويمكنك تغييره في أي وقت.") {
-                        Text("${goal.toInt()} دقيقة تركيز يوميًا", color = FocusColors.TextSecondary)
-                        Slider(value = goal, onValueChange = { goal = it }, valueRange = 30f..360f, steps = 10)
-                    }
-                }
-                item {
-                    SetupCard("منطقتك الزمنية", "تُستخدم لضبط مواقيت الصلاة والأذكار وتجنّب تأثر المواعيد بالسفر أو التوقيت الصيفي. يمكنك تغييرها لاحقًا.") {
-                        TimeZonePicker(timezoneId, onSelected = { timezoneId = it })
-                    }
-                }
-            } else {
-                item {
-                    SetupCard("تذكيرات المهام", "متابعة أساسية لا يمكن إيقافها من إعدادات التطبيق.") {
-                        Text("🔔 كل ساعتين من 9 صباحًا إلى 9 مساءً طالما عندك مهام غير مكتملة.", color = FocusColors.TextPrimary)
-                        Spacer(Modifier.height(6.dp))
-                        Text("تتوقف أثناء جلسة التركيز، وتظهر المهمة ذات الأولوية أولًا.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                item {
-                    SetupCard("رسائل التشجيع العامة", "اختيارية ويمكنك التحكم فيها أو إيقافها لاحقًا.") {
-                        PreferenceSwitchRow("رسائل عامة", "تشجيع صباحي ومسائي باسمك.", general) { general = it }
-                        if (general) {
-                            PreferenceSwitchRow("رسالة الصباح", "رسالة بداية اليوم.", morning) { morning = it }
-                            if (morning) TimeChoice(context, "موعد رسالة الصباح", morningHour, 6, 11) { morningHour = it }
-                            PreferenceSwitchRow("رسالة المساء", "رسالة مراجعة خفيفة في نهاية اليوم.", evening) { evening = it }
-                            if (evening) TimeChoice(context, "موعد رسالة المساء", eveningHour, 17, 23) { eveningHour = it }
-                        }
-                    }
-                }
-                item {
-                    Text("بعد الحفظ سنطلب إذن الإشعارات من أندرويد. تسليم الإشعارات يظل خاضعًا لإذن النظام.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (page == 1) TextButton(onClick = { page = 0 }, modifier = Modifier.weight(1f)) { Text("رجوع") }
+            if (page > 0) TextButton(onClick = { page -= 1 }, modifier = Modifier.weight(1f)) { Text("رجوع") }
             Button(
                 onClick = {
-                    if (page == 0) page = 1
-                    else {
-                        val updated = current.copy(
-                            studentName = name.trim(),
-                            dailyGoalMinutes = goal.toInt(),
-                            avatarPath = avatar,
-                            companionStyle = style,
-                            generalNotificationsEnabled = general,
-                            morningMessageEnabled = morning,
-                            eveningMessageEnabled = evening,
-                            morningMessageHour = morningHour,
-                            eveningMessageHour = eveningHour,
-                            profile = profile,
-                            timezoneId = AppTimeZone.sanitize(timezoneId),
-                            onboardingCompleted = true
-                        )
-                        onComplete(updated)
-                        onRequestNotifications()
+                    when {
+                        page < 2 -> page += 1
+                        else -> {
+                            val updated = current.copy(
+                                studentName = name.trim(),
+                                dailyGoalMinutes = goal.toInt(),
+                                avatarPath = avatar,
+                                companionStyle = style,
+                                profile = profile,
+                                timezoneId = AppTimeZone.sanitize(timezoneId),
+                                onboardingCompleted = true
+                            )
+                            onComplete(updated)
+                            onRequestNotifications()
+                            val title = firstTask.trim()
+                            if (title.length >= 2) {
+                                scope.launch(Dispatchers.IO) {
+                                    TaskRepository.get(context).add(
+                                        title = title,
+                                        plannedMinutes = firstMinutes,
+                                        blockedPackages = emptySet(),
+                                        category = TaskCategory.STUDY,
+                                        priority = TaskPriority.MEDIUM,
+                                        dueAt = java.time.LocalDate.now().atTime(23, 59)
+                                            .atZone(AppTimeZone.zone(context)).toInstant().toEpochMilli()
+                                    )
+                                    SessionEngine.notifyTasksChanged()
+                                }
+                            }
+                        }
                     }
                 },
-                enabled = page == 1 || name.trim().length >= 2,
+                enabled = page != 0 || name.trim().length >= 2,
                 modifier = Modifier.weight(2f),
                 shape = RoundedCornerShape(16.dp)
-            ) { Text(if (page == 0) "متابعة" else "ابدأ رحلتك") }
+            ) { Text(if (page < 2) "متابعة" else "ابدأ رحلتك") }
         }
     }
 }
