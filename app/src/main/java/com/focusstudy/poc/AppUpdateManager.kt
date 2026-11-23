@@ -31,6 +31,9 @@ internal sealed interface UpdateCheckResult {
     data object UpToDate : UpdateCheckResult
     data class Available(val release: AppRelease) : UpdateCheckResult
     data class Failed(val message: String) : UpdateCheckResult
+
+    /** No connection: silent. The cached release, if any, is still safe to use and promote. */
+    data object Offline : UpdateCheckResult
 }
 
 internal object AppUpdateManager {
@@ -48,6 +51,10 @@ internal object AppUpdateManager {
     suspend fun check(context: Context, manual: Boolean = false): UpdateCheckResult = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         if (!configured()) return@withContext UpdateCheckResult.NotConfigured
+
+        // Offline-first: never hit the network when there is no validated connection. A manual tap
+        // is still honoured so the person can retry, but it fails silently into the cache below.
+        if (!manual && !OfflineFirst.isOnline(app)) return@withContext UpdateCheckResult.Offline
 
         val preferences = app.getSharedPreferences(FEED_PREFS, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -117,7 +124,13 @@ internal object AppUpdateManager {
                 UpdateCheckResult.UpToDate
             }
         } catch (exception: Exception) {
-            UpdateCheckResult.Failed(exception.message?.take(160) ?: "تعذر فحص التحديثات الآن.")
+            // A failed network call offline is not an error state; it is the normal offline path.
+            if (!OfflineFirst.isOnline(app)) {
+                NetworkRetryJob.schedule(app)
+                UpdateCheckResult.Offline
+            } else {
+                UpdateCheckResult.Failed(exception.message?.take(160) ?: "تعذر فحص التحديثات الآن.")
+            }
         }
     }
 

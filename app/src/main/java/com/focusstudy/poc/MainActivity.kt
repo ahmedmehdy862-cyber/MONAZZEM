@@ -331,6 +331,7 @@ class MainActivity : ComponentActivity() {
 
         SessionEngine.init(this)
         AppUpdateManager.schedule(this)
+        NetworkRetryJob.schedule(this)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             AppUpdateManager.check(applicationContext, manual = false)
         }

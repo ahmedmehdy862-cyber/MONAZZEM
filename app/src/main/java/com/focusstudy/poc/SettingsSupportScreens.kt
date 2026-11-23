@@ -693,6 +693,9 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
                 result is UpdateCheckResult.UpToDate -> {
                     Text("تطبيقك محدث لآخر إصدار موجود في المصدر.", color = FocusColors.TextSecondary)
                 }
+                result is UpdateCheckResult.Offline -> {
+                    Text("أنت غير متصل حاليًا. سيتم فحص الإصدارات تلقائيًا عند عودة الاتصال، وكل ميزات التطبيق تعمل بدون إنترنت.", color = FocusColors.TextSecondary)
+                }
                 result is UpdateCheckResult.Failed -> {
                     Text((result as UpdateCheckResult.Failed).message, color = FocusColors.onTint(FocusColors.Amber))
                 }
