@@ -217,8 +217,9 @@ internal object ReminderEngine {
             ignoredStreak = db.ignoredStreak(),
             sessionEndsAt = session?.endsAt,
             prayerWindow = if (PrayerWindows.respectInReminders(appContext)) PrayerWindows.activeWindow(appContext, now) else null,
-            quietStart = if (prefs.quietHoursEnabled) prefs.quietStartHour * 60 else null,
-            quietEnd = if (prefs.quietHoursEnabled) prefs.quietEndHour * 60 else null
+            quietStart = prefs.quietStartHour * 60,
+            quietEnd = prefs.quietEndHour * 60,
+            respectQuietHours = prefs.quietHoursEnabled
         )
 
         val decision = NotificationPolicy.decide(input, zone)

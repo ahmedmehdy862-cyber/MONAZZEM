@@ -4,6 +4,8 @@ import android.Manifest
 
 import android.app.Activity
 
+import android.app.AlarmManager
+
 import android.content.ClipData
 
 import android.content.ClipboardManager
@@ -283,15 +285,80 @@ class MainActivity : ComponentActivity() {
 
     }
 
-    private val notificationPermission = registerForActivityResult(
-
-        ActivityResultContracts.RequestPermission()
-
-    ) { granted ->
-        if (granted) {
+    /**
+     * One pass for every permission the alerts need. Android shows one runtime permission per
+     * dialog, so notifications and coarse location are requested in a single batched call here.
+     * Special access (exact alarms, battery) cannot be combined by the OS, so those screens are
+     * chained immediately afterwards, skipping whatever is already granted.
+     */
+    private val runtimePermissions = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            results[Manifest.permission.POST_NOTIFICATIONS] == true
+        if (notificationsGranted) {
             NotificationMaintenance.rescheduleAll(applicationContext)
         } else {
             NotificationMaintenance.log(this, NotificationMaintenance.PERMISSION_DENIED)
+        }
+        if (results[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+            refreshApproximateLocationOnce()
+        }
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { ConsentStore.record(applicationContext) }
+        }
+        requestSpecialAccessInOrder(0)
+    }
+
+    private val specialAccess = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        requestSpecialAccessInOrder(specialAccessStep + 1)
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { ConsentStore.record(applicationContext) }
+        }
+    }
+
+    private var specialAccessStep = 0
+
+    /** Only screens that still need a grant are returned; already-granted ones are skipped. */
+    private fun specialAccessIntent(index: Int): Intent? = when (index) {
+        0 -> {
+            val alarms = getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && alarms?.canScheduleExactAlarms() == false) {
+                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                    .setData(Uri.parse("package:$packageName"))
+            } else null
+        }
+        1 -> {
+            val power = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (power?.isIgnoringBatteryOptimizations(packageName) == false) {
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.parse("package:$packageName"))
+            } else null
+        }
+        else -> null
+    }
+
+    private fun requestSpecialAccessInOrder(from: Int) {
+        for (index in from until 2) {
+            val intent = runCatching { specialAccessIntent(index) }.getOrNull() ?: continue
+            specialAccessStep = index
+            if (runCatching { specialAccess.launch(intent) }.isSuccess) return
+        }
+        specialAccessStep = 2
+        // Every grant is in place now: rebuild the window so alarms and channels use it at once.
+        NotificationMaintenance.rescheduleAll(applicationContext)
+    }
+
+    /** One cached GPS fix, used only if the person granted coarse location in this same pass. */
+    private fun refreshApproximateLocationOnce() {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val here = runCatching { currentApproximateLocation(applicationContext) }.getOrNull()
+            if (here != null && PrayerPrefs.needsLocationRefresh(applicationContext, here.latitude, here.longitude)) {
+                PrayerPrefs.saveLocation(applicationContext, here.latitude, here.longitude, "موقعي")
+                withContext(Dispatchers.Main) { PrayerNotificationScheduler.schedule(applicationContext) }
+            }
         }
     }
 
@@ -390,20 +457,26 @@ class MainActivity : ComponentActivity() {
 
     }
 
+    /**
+     * Called once when onboarding finishes, and again only if the person taps "منح" later after
+     * the system revoked something. Already-granted permissions never show a dialog again.
+     */
     private fun requestNotificationPermissionIfNeeded() {
-
+        val runtime = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-
-            PackageManager.PERMISSION_GRANTED
-
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-
+            runtime += Manifest.permission.POST_NOTIFICATIONS
         }
-
+        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            runtime += Manifest.permission.ACCESS_COARSE_LOCATION
+        }
+        if (runtime.isNotEmpty()) {
+            runtimePermissions.launch(runtime.toTypedArray())
+        } else {
+            // Nothing for the OS to ask: go straight through the special-access pass.
+            requestSpecialAccessInOrder(0)
+        }
     }
 
     /** Only reachable from the setup screen, after duration, apps and permissions are in place. */

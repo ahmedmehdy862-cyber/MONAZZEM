@@ -117,9 +117,33 @@ internal object AppNotifications {
         soundKey = NotificationSounds.DHIKR,
         highPriority = false
     )
+    /** Silent, ongoing channel for the adhan playback service — never chooses an audible sound. */
+    val ADHAN_PLAYBACK = AlertChannel(
+        id = "adhan_playback_v1",
+        name = "تشغيل الأذان",
+        description = "إشعار هادئ يبقي صوت الأذان يعمل حتى لو أُغلقت شاشة التنبيه.",
+        soundRes = R.raw.notification_chime,
+        soundKey = "",
+        highPriority = false
+    )
 
     /** All channels whose sound the dashboard may change. */
     val ALL: List<AlertChannel> = listOf(PRAYER, PRAYER_AT, PRAYER_BEFORE, TASK, EXAM, TEAM, UPDATE, DAILY, DHIKR)
+    /** Playback channel is created separately: it must stay silent whatever the dashboard selects. */
+    fun ensurePlaybackChannel(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = NotificationChannel(
+            ADHAN_PLAYBACK.id,
+            ADHAN_PLAYBACK.name,
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = ADHAN_PLAYBACK.description
+            setSound(null, null)
+            enableVibration(false)
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+        }
+        manager(context).createNotificationChannel(channel)
+    }
 
     private val vibration = longArrayOf(0, 180, 120, 260)
 
@@ -143,13 +167,22 @@ internal object AppNotifications {
     /** Re-applies cached admin choices to channel sounds after the public feed is fetched. */
     fun refreshChannels(context: Context) = ALL.forEach { ensure(context, it) }
 
+    /** The two adhan channels follow the voice chosen on the device, even for the default choice. */
+    private fun defaultSoundRes(context: Context, channel: AlertChannel): Int =
+        if (channel.id == PRAYER.id || channel.id == PRAYER_AT.id) {
+            PrayerAdhanSounds.resource(PrayerAlertPrefs.load(context).voice)
+        } else channel.soundRes
+
     private fun resolvedSound(context: Context, channel: AlertChannel): Uri? =
         when (NotificationSounds.choice(context, channel.soundKey)) {
             NotificationSounds.SILENT -> null
             NotificationSounds.CHIME -> soundUri(context, R.raw.notification_chime)
-            NotificationSounds.ADHAN -> soundUri(context, R.raw.adhan_local)
+            NotificationSounds.ADHAN -> soundUri(
+                context,
+                PrayerAdhanSounds.resource(PrayerAlertPrefs.load(context).voice)
+            )
             NotificationSounds.SYSTEM -> systemSoundUri(channel)
-            else -> soundUri(context, channel.soundRes)
+            else -> soundUri(context, defaultSoundRes(context, channel))
         }
 
     private fun audioAttributes(context: Context, channel: AlertChannel): AudioAttributes {
@@ -192,7 +225,8 @@ internal object AppNotifications {
         largeIcon: Bitmap? = null,
         deleteIntent: PendingIntent? = null,
         soundRes: Int? = null,
-        soundIsAlarm: Boolean = false
+        soundIsAlarm: Boolean = false,
+        silent: Boolean = false
     ): NotificationCompat.Builder {
         // Reading the cached choice here as well as in ensure() means a receiver firing while the
         // app is closed still uses the latest sound the admin published before the device went offline.
@@ -217,7 +251,8 @@ internal object AppNotifications {
         // selects which of those configured sounds this alert uses. A per-prayer override also
         // sets its own attributes so an adhan played on the short-tone channel still uses alarm
         // volume, and a short tone on the adhan channel stays gentle.
-        if (soundRes != null) {
+        if (silent) notification.setSound(null)
+        else if (soundRes != null) {
             notification.setSound(
                 soundUri(context, soundRes),
                 if (soundIsAlarm) AudioManager.STREAM_ALARM else AudioManager.STREAM_NOTIFICATION

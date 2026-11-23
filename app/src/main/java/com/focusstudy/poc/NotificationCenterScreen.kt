@@ -5,6 +5,9 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -140,9 +143,18 @@ internal fun NotificationCenterScreen(
                     ) { onSave(preferences.copy(eveningMessageEnabled = it)) }
                     PreferenceSwitchRow(
                         "احترام ساعات الهدوء",
-                        "لا شيء يصل في أوقات الراحة الليلية.",
+                        "يؤجّل تذكيرات المهام والامتحانات والرفيق فقط؛ الأذان لا يتأثر.",
                         preferences.quietHoursEnabled
                     ) { onSave(preferences.copy(quietHoursEnabled = it)) }
+                    Text(
+                        if (preferences.quietHoursEnabled) {
+                            "مفعّلة: لا تصل تذكيرات المهام والامتحانات بين ${preferences.quietStartHour} و${preferences.quietEndHour}. الأذان يظهر في وقت الصلاة."
+                        } else {
+                            "معطّلة: كل الإشعارات — المهام والامتحانات والرسائل — تعمل في أي ساعة، بما فيها ساعات الهدوء."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (preferences.quietHoursEnabled) FocusColors.TextSecondary else FocusColors.Green
+                    )
                     PreferenceSwitchRow(
                         "رسائل الفريق",
                         "إعلانات وتحديثات الخدمة بدون تحديث التطبيق.",
@@ -172,11 +184,13 @@ internal fun NotificationCenterScreen(
  * Part 7: one compact section for the two prayer alerts of every prayer. All values are private
  * on-device preferences; changing any of them rewrites the seven-day exact-alarm window at once.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
     val context = LocalContext.current
     val settings = remember(revision) { PrayerAlertPrefs.load(context) }
     val master = remember(revision) { PrayerPrefs.enabled(context) }
+    DisposableEffect(Unit) { onDispose { PrayerAdhanSounds.stopPreview() } }
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
         shape = RoundedCornerShape(20.dp),
@@ -199,6 +213,37 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
                 PrayerNotificationScheduler.schedule(context)
                 onChanged()
             }
+            Spacer(Modifier.height(10.dp))
+            Text("صوت الأذان", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+            Text(
+                "٨ أصوات جاهزة وصوتك الخاص — محفوظة على الجهاز وتعمل بلا إنترنت. الأذان لا يتوقف بإغلاق الشاشة.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextMuted
+            )
+            FlowRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                PrayerAdhanVoice.entries.forEach { voice ->
+                    FilterChip(
+                        selected = settings.voice == voice,
+                        onClick = {
+                            PrayerAlertPrefs.setVoice(context, voice)
+                            onChanged()
+                        },
+                        label = { Text(voice.label, style = MaterialTheme.typography.labelSmall) }
+                    )
+                }
+                TextButton(onClick = { PrayerAdhanSounds.preview(context, settings.voice) }) {
+                    Text("استمع", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            Text(
+                settings.voice.hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
             Spacer(Modifier.height(6.dp))
             androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
             PrayerAccuracy.KEYS.forEachIndexed { index, key ->

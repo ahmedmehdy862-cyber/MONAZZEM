@@ -137,4 +137,29 @@ class Part7PrayerNotificationsTest {
         val alarms = plan()
         assertEquals(alarms.sortedBy { it.fireAt }, alarms)
     }
+
+    @Test fun automaticFullScreenHappensOnlyAtTheAdhanItself() {
+        assertTrue(PrayerAlertPolicy.automaticFullScreen(PrayerAlertType.AT))
+        assertFalse(PrayerAlertPolicy.automaticFullScreen(PrayerAlertType.BEFORE))
+        assertTrue(PrayerAlertPolicy.launchesActivity(PrayerAlertType.AT))
+        assertFalse(PrayerAlertPolicy.launchesActivity(PrayerAlertType.BEFORE))
+    }
+
+    @Test fun onlyTheAtAdhanPlaysFromTheUninterruptibleService() {
+        assertTrue(AdhanPlaybackService.shouldPlay(PrayerAlertType.AT, PrayerAlertSound.ADHAN))
+        assertFalse(AdhanPlaybackService.shouldPlay(PrayerAlertType.AT, PrayerAlertSound.TONE))
+        assertFalse(AdhanPlaybackService.shouldPlay(PrayerAlertType.BEFORE, PrayerAlertSound.ADHAN))
+        assertFalse(AdhanPlaybackService.shouldPlay(PrayerAlertType.BEFORE, PrayerAlertSound.TONE))
+    }
+
+    @Test fun screenLaunchAlarmsNeverCollideWithBroadcastSlots() {
+        val alarms = plan()
+        val broadcastCodes = alarms.map { it.requestCode }.toSet()
+        val screenCodes = alarms.filter { it.type == PrayerAlertType.AT }
+            .map { PrayerNotificationPlan.screenRequestCode(it.requestCode) }
+        assertEquals(7 * 5, screenCodes.size)
+        assertEquals(screenCodes.size, screenCodes.toSet().size)
+        assertTrue(screenCodes.none { it in broadcastCodes })
+        assertTrue(screenCodes.all { it in PrayerNotificationPlan.CANCEL_RANGE })
+    }
 }

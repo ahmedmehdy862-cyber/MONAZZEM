@@ -6,7 +6,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.util.Log
 import android.content.Intent
-import android.graphics.BitmapFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -229,7 +228,7 @@ internal object StudyNotificationScheduler {
             title = title,
             message = message,
             contentIntent = openApp,
-            largeIcon = if (avatarPath.isNotBlank()) BitmapFactory.decodeFile(avatarPath) else null
+            largeIcon = NotificationAvatar.decode(avatarPath)
         )
         notificationManager(context).notify(notificationId, builder.build())
     }

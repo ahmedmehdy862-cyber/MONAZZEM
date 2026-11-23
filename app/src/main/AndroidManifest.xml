@@ -51,11 +51,23 @@
         <activity
             android:name=".PrayerAlertActivity"
             android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:excludeFromRecents="true"
             android:label="@string/prayer_alert_label"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:theme="@style/Theme.FocusStudy" />
+
+        <!-- Keeps the selected adhan playing at alarm volume even if the alert screen is closed
+             or another notification arrives. Its ongoing notification is silent and ongoing. -->
+        <service
+            android:name=".AdhanPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Plays the locally packaged adhan as an alarm at the exact prayer time" />
+        </service>
 
         <service
             android:name=".BlockVpnService"

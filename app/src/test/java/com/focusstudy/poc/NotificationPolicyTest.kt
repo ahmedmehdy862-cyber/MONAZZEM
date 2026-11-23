@@ -22,6 +22,7 @@ class NotificationPolicyTest {
         prayerWindow: LongRange? = null,
         quietStart: Int? = null,
         quietEnd: Int? = null,
+        respectQuietHours: Boolean = true,
         snoozedUntil: Long? = null
     ) = PolicyInput(
         now = now,
@@ -36,6 +37,7 @@ class NotificationPolicyTest {
         prayerWindow = prayerWindow,
         quietStart = quietStart,
         quietEnd = quietEnd,
+        respectQuietHours = respectQuietHours,
         snoozedUntil = snoozedUntil
     )
 
@@ -97,6 +99,35 @@ class NotificationPolicyTest {
             input(quietStart = 23 * 60, quietEnd = 7 * 60).copy(now = midday)
         )
         assertEquals(ReminderDecision.Send, decision)
+    }
+
+    @Test
+    fun `respect quiet hours off sends critical reminders during the quiet window`() {
+        val decision = NotificationPolicy.decide(
+            input(critical = true, quietStart = 23 * 60, quietEnd = 7 * 60, respectQuietHours = false)
+        )
+        assertEquals(ReminderDecision.Send, decision)
+    }
+
+    @Test
+    fun `respect quiet hours off sends every reminder kind at any hour`() {
+        ReminderKind.entries.forEach { kind ->
+            val decision = NotificationPolicy.decide(
+                input(kind = kind, quietStart = 23 * 60, quietEnd = 7 * 60, respectQuietHours = false)
+            )
+            assertEquals("kind ${kind.key}", ReminderDecision.Send, decision)
+        }
+    }
+
+    @Test
+    fun `respect quiet hours off still keeps budget and spacing rules`() {
+        val decision = NotificationPolicy.decide(
+            input(
+                quietStart = 23 * 60, quietEnd = 7 * 60, respectQuietHours = false,
+                density = NotificationDensity.CALM, deliveredToday = 3
+            )
+        )
+        assertEquals(ReminderDecision.Drop(DropReason.DAILY_BUDGET), decision)
     }
 
     @Test

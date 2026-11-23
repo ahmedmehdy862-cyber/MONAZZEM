@@ -59,6 +59,8 @@ internal data class PolicyInput(
     val prayerWindow: LongRange? = null,
     val quietStart: Int? = null,
     val quietEnd: Int? = null,
+    /** When false, the quiet window below is ignored: every kind may arrive at any hour. */
+    val respectQuietHours: Boolean = true,
     val snoozedUntil: Long? = null
 )
 
@@ -93,7 +95,7 @@ internal object NotificationPolicy {
 
         val quietStart = input.quietStart
         val quietEnd = input.quietEnd
-        if (quietStart != null && quietEnd != null &&
+        if (input.respectQuietHours && quietStart != null && quietEnd != null &&
             PrayerWindows.isInsideQuietHours(PrayerWindows.minuteOfDay(input.now, zone), quietStart, quietEnd)
         ) {
             return ReminderDecision.Defer(PrayerWindows.quietHoursEnd(input.now, quietEnd, zone), DeferReason.QUIET_HOURS)

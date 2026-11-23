@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.os.Build
 import android.provider.Settings
 import java.time.LocalDate
@@ -57,12 +56,25 @@ internal data class PrayerAlertRule(
 
 internal data class PrayerAlertSettings(
     val enabled: Boolean = true,
-    val rules: Map<String, PrayerAlertRule> = emptyMap()
+    val rules: Map<String, PrayerAlertRule> = emptyMap(),
+    val voice: PrayerAdhanVoice = PrayerAdhanVoice.DEFAULT
 ) {
     fun rule(key: String): PrayerAlertRule = rules[key] ?: PrayerAlertRule()
 
     fun withRule(key: String, rule: PrayerAlertRule): PrayerAlertSettings =
         copy(rules = rules + (key to rule))
+}
+
+/**
+ * What is allowed to take over the screen.
+ *
+ * Only the AT alarm opens the centred alert: it is the adhan, not the iqama and not the optional
+ * "before" nudge. Quiet hours never gate prayer alarms, so the adhan still arrives at its time when
+ * the person has switched quiet-hours respect off (or on).
+ */
+internal object PrayerAlertPolicy {
+    fun automaticFullScreen(type: PrayerAlertType): Boolean = type == PrayerAlertType.AT
+    fun launchesActivity(type: PrayerAlertType): Boolean = type == PrayerAlertType.AT
 }
 
 /** A fully described alarm; [fireAt] is when the alarm fires, [prayerAt] is the prayer time. */
@@ -81,10 +93,15 @@ internal object PrayerNotificationPlan {
     const val DAYS_AHEAD = 7
     const val FIRST_REQUEST = 7000
     const val REQUEST_SPAN = 100
+    /** Slot 2 of each prayer is the direct screen launch for the AT alarm; 0/1 stay broadcasts. */
+    const val ACTIVITY_SLOT = 2
     val CANCEL_RANGE = FIRST_REQUEST until FIRST_REQUEST + (DAYS_AHEAD + 2) * REQUEST_SPAN
 
     fun requestCode(dayIndex: Int, prayerIndex: Int, type: PrayerAlertType): Int =
         FIRST_REQUEST + dayIndex * REQUEST_SPAN + prayerIndex * 10 + if (type == PrayerAlertType.AT) 0 else 1
+
+    /** The screen alarm shares the prayer's ten-slot block but never collides with its broadcast. */
+    fun screenRequestCode(alarmRequestCode: Int): Int = alarmRequestCode + ACTIVITY_SLOT
 
     /**
      * Builds the whole rolling window from pure inputs. [fromMillis] suppresses alarms that are
@@ -145,6 +162,7 @@ internal object PrayerAlertPrefs {
     private const val BEFORE = "before_"
     private const val AT_SOUND = "at_sound_"
     private const val BEFORE_SOUND = "before_sound_"
+    private const val VOICE = "adhan_voice"
     private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     fun load(context: Context): PrayerAlertSettings {
@@ -159,7 +177,11 @@ internal object PrayerAlertPrefs {
         }
         // The long-standing master switch in prayer settings stays authoritative for focus windows
         // as well as alerts, so turning the feature off in either place cannot leave stray alarms.
-        return PrayerAlertSettings(enabled = PrayerPrefs.enabled(context), rules = rules)
+        return PrayerAlertSettings(
+            enabled = PrayerPrefs.enabled(context),
+            rules = rules,
+            voice = PrayerAdhanVoice.from(values.getString(VOICE, PrayerAdhanVoice.DEFAULT.key))
+        )
     }
 
     fun setAtEnabled(context: Context, key: String, enabled: Boolean) {
@@ -177,6 +199,12 @@ internal object PrayerAlertPrefs {
         val field = if (type == PrayerAlertType.AT) AT_SOUND else BEFORE_SOUND
         prefs(context).edit().putString(field + key, sound.key).apply()
     }
+
+    /** One voice for every adhan in the app; the short reminder tone is unaffected. */
+    fun setVoice(context: Context, voice: PrayerAdhanVoice) {
+        prefs(context).edit().putString(VOICE, voice.key).apply()
+        AppNotifications.refreshChannels(context)
+    }
 }
 
 internal object PrayerNotificationScheduler {
@@ -190,6 +218,7 @@ internal object PrayerNotificationScheduler {
     private const val SNOOZE_REQUEST = 6203
     private const val AT_NOTIFICATION = 6202
     private const val BEFORE_NOTIFICATION = 6204
+    private const val TEST_SCREEN_REQUEST = 6311
 
     /** Rebuilds the seven-day window. Safe to call from boot, time change, app update or settings. */
     fun schedule(context: Context) {
@@ -233,6 +262,15 @@ internal object PrayerNotificationScheduler {
                     )
                 )
             }
+            // The AT alarm also has a direct screen launch in the next slot.
+            manager.cancel(
+                PendingIntent.getActivity(
+                    context,
+                    PrayerNotificationPlan.screenRequestCode(request),
+                    Intent(context, PrayerAlertActivity::class.java),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
         }
     }
 
@@ -252,7 +290,31 @@ internal object PrayerNotificationScheduler {
             context, manager, alarm.fireAt, pending,
             kind = "prayer_${alarm.type.key}"
         )
+        // Android lets the system start an activity from an alarm PendingIntent even while the app
+        // is in the background. This is what makes the centred adhan screen appear by itself at the
+        // exact prayer time; the notification's full-screen intent remains the fallback.
+        if (PrayerAlertPolicy.launchesActivity(alarm.type)) {
+            NotificationMaintenance.schedule(
+                context, manager, alarm.fireAt,
+                screenPendingIntent(context, alarm),
+                kind = "prayer_screen"
+            )
+        }
     }
+
+    private fun screenPendingIntent(context: Context, alarm: PrayerAlarm): PendingIntent =
+        PendingIntent.getActivity(
+            context,
+            PrayerNotificationPlan.screenRequestCode(alarm.requestCode),
+            Intent(context, PrayerAlertActivity::class.java)
+                .putExtra(PrayerAlertActivity.EXTRA_PRAYER_NAME, alarm.name)
+                .putExtra(PrayerAlertActivity.EXTRA_PRAYER_KEY, alarm.key)
+                .putExtra(PrayerAlertActivity.EXTRA_AT_MILLIS, alarm.prayerAt)
+                .putExtra(PrayerAlertActivity.EXTRA_TYPE, alarm.type.key)
+                .putExtra(PrayerAlertActivity.EXTRA_VOICE, PrayerAlertPrefs.load(context).voice.key)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
     fun handle(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
@@ -282,7 +344,20 @@ internal object PrayerNotificationScheduler {
         val next = runCatching { PrayerCalculator.next(context) }.getOrNull()
         val name = next?.name ?: PrayerAccuracy.NAMES.first()
         val key = PrayerAccuracy.keyFor(name)
-        notify(context, name, key, type, next?.atMillis ?: System.currentTimeMillis(), test = true)
+        val atMillis = next?.atMillis ?: System.currentTimeMillis()
+        notify(context, name, key, type, atMillis, test = true)
+        // The real AT alert is opened by a system alarm holding an activity PendingIntent; some
+        // OEMs ignore the notification's full-screen intent. Fire that same launch here so «جرّب
+        // الآن» previews the centred screen a person actually sees at prayer time.
+        if (type == PrayerAlertType.AT) {
+            val launch = PendingIntent.getActivity(
+                context,
+                TEST_SCREEN_REQUEST,
+                alertActivityIntent(context, name, key, atMillis, true, type, PrayerAlertPrefs.load(context).voice),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            runCatching { launch.send() }
+        }
     }
 
     private fun notify(
@@ -295,9 +370,16 @@ internal object PrayerNotificationScheduler {
     ) {
         AppNotifications.ensure(context, channel(type))
         if (!AppNotifications.canPost(context)) return
-        val rule = PrayerAlertPrefs.load(context).rule(key)
+        val settings = PrayerAlertPrefs.load(context)
+        val rule = settings.rule(key)
         val sound = if (type == PrayerAlertType.AT) rule.atSound else rule.beforeSound
+        val voice = settings.voice
         val channel = channel(type)
+        // The full adhan plays from a foreground service with an exclusive alarm focus, so no
+        // later notification can duck or cut it. The notification itself stays audible-free to
+        // avoid playing the same recording twice.
+        val playInService = AdhanPlaybackService.shouldPlay(type, sound)
+        if (playInService) AdhanPlaybackService.play(context, name, voice)
         val title = when {
             test && type == PrayerAlertType.AT -> "هكذا يصل أذان مُنظِّم"
             test -> "هكذا يصل تنبيه قبل الصلاة"
@@ -305,13 +387,16 @@ internal object PrayerNotificationScheduler {
             else -> "قبل صلاة $name"
         }
         val body = when {
-            test -> "اضغط لعرض الشاشة كما تظهر عند وقت الصلاة. الصوت: ${sound.label}."
-            type == PrayerAlertType.AT -> "افتح شاشة الأذان، أو اضغط «ذكّرني بعد ٥ دقائق»."
+            test && type == PrayerAlertType.AT -> "شاشة الأذان تظهر تلقائيًا في منتصف الشاشة. الصوت: ${voice.label}."
+            test -> "تنبيه قبل الصلاة بالصوت: ${sound.label}."
+            type == PrayerAlertType.AT -> "الأذان الآن. الصوت: ${voice.label}. اضغط «ذكّرني بعد ٥ دقائق» إن أردت."
             else -> rule.beforeMinutes.let { "يبدأ وقت $name بعد $it دقائق." }
         }
         val notificationId = if (type == PrayerAlertType.AT) AT_NOTIFICATION else BEFORE_NOTIFICATION
-        val content = alertPendingIntent(context, name, prayerAt, test, notificationId + 1, type)
-        val fullScreen = alertPendingIntent(context, name, prayerAt, test, notificationId + 2, type)
+        val content = alertPendingIntent(context, name, key, prayerAt, test, notificationId + 1, type, voice)
+        val fullScreen = if (PrayerAlertPolicy.automaticFullScreen(type)) {
+            alertPendingIntent(context, name, key, prayerAt, test, notificationId + 2, type, voice)
+        } else null
         val notification = AppNotifications.builder(
             context = context,
             channel = channel,
@@ -319,9 +404,10 @@ internal object PrayerNotificationScheduler {
             message = body,
             contentIntent = content,
             fullScreenIntent = fullScreen,
-            largeIcon = runCatching { BitmapFactory.decodeFile(FocusPreferences.load(context).avatarPath) }.getOrNull(),
-            soundRes = if (sound == PrayerAlertSound.ADHAN) R.raw.adhan_local else R.raw.notification_chime,
-            soundIsAlarm = sound == PrayerAlertSound.ADHAN
+            largeIcon = NotificationAvatar.decode(FocusPreferences.load(context).avatarPath),
+            soundRes = if (sound == PrayerAlertSound.ADHAN) PrayerAdhanSounds.resource(voice) else R.raw.notification_chime,
+            soundIsAlarm = sound == PrayerAlertSound.ADHAN,
+            silent = playInService
         ).build()
         AppNotifications.manager(context).notify(notificationId, notification)
     }
@@ -331,21 +417,36 @@ internal object PrayerNotificationScheduler {
     private fun alertPendingIntent(
         context: Context,
         name: String,
+        key: String,
         atMillis: Long,
         test: Boolean,
         request: Int,
-        type: PrayerAlertType
+        type: PrayerAlertType,
+        voice: PrayerAdhanVoice
     ): PendingIntent = PendingIntent.getActivity(
         context,
         request,
-        Intent(context, PrayerAlertActivity::class.java)
-            .putExtra(PrayerAlertActivity.EXTRA_PRAYER_NAME, name)
-            .putExtra(PrayerAlertActivity.EXTRA_AT_MILLIS, atMillis)
-            .putExtra(PrayerAlertActivity.EXTRA_TEST, test)
-            .putExtra(PrayerAlertActivity.EXTRA_TYPE, type.key)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        alertActivityIntent(context, name, key, atMillis, test, type, voice),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
+
+    /** One launch intent shared by the real alarm, the full-screen fallback and the test button. */
+    private fun alertActivityIntent(
+        context: Context,
+        name: String,
+        key: String,
+        atMillis: Long,
+        test: Boolean,
+        type: PrayerAlertType,
+        voice: PrayerAdhanVoice
+    ): Intent = Intent(context, PrayerAlertActivity::class.java)
+        .putExtra(PrayerAlertActivity.EXTRA_PRAYER_NAME, name)
+        .putExtra(PrayerAlertActivity.EXTRA_PRAYER_KEY, key)
+        .putExtra(PrayerAlertActivity.EXTRA_AT_MILLIS, atMillis)
+        .putExtra(PrayerAlertActivity.EXTRA_TEST, test)
+        .putExtra(PrayerAlertActivity.EXTRA_TYPE, type.key)
+        .putExtra(PrayerAlertActivity.EXTRA_VOICE, voice.key)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
     /** Request codes reserved for the one-off snooze; never cancelled by the rolling window. */
     fun snoozePendingIntent(context: Context, name: String): PendingIntent {
