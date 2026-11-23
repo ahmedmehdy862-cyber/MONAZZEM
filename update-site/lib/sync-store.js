@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { normalizeProfileId } = require("./messaging-store");
+const { storageToken } = require("./blob-access");
 
 const ACCOUNTS_PATH = "focus-study/web-accounts.json";
 const SYNC_PREFIX = "focus-study/web-sync-";
@@ -136,7 +137,7 @@ function verifyPassphrase(passphrase, salt, hash) {
 
 async function readBlobJson(blobPath) {
   const { get } = await import("@vercel/blob");
-  const result = await get(blobPath, { access: ACCESS, useCache: false });
+  const result = await get(blobPath, { access: ACCESS, token: storageToken(ACCESS), useCache: false });
   if (result?.statusCode === 200 && result.stream) {
     return JSON.parse(await new Response(result.stream).text());
   }
@@ -153,7 +154,7 @@ function readLocalJson(blobPath, fallback) {
 
 /** A failed private read throws; it must never fall back to an empty record and overwrite real data. */
 async function readJson(blobPath, fallback) {
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  if (storageToken(ACCESS)) {
     try {
       const record = await readBlobJson(blobPath);
       if (record) return record;
@@ -166,10 +167,12 @@ async function readJson(blobPath, fallback) {
 }
 
 async function writeJson(blobPath, value) {
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  const token = storageToken(ACCESS);
+  if (token) {
     const { put } = await import("@vercel/blob");
     await put(blobPath, JSON.stringify(value), {
       access: ACCESS,
+      token,
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: "application/json; charset=utf-8",

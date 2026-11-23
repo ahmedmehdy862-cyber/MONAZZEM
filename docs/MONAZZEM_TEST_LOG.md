@@ -1,5 +1,23 @@
 # سجل الاختبار — مُنظِّم
 
+## Part 8 — إصلاح تسجيل المستخدمين والدعم (update-site) — 23 نوفمبر 2026
+
+| الفحص | نتيجة |
+|---|---|
+| السبب الجذري | ✅ المتجر الحالي `focus-study-releases` مضبوط على `Access: Public`، بينما `lib/messaging-store.js` يكتب السجل والدعم بـ `access: "private"`. الرسالة الفعلية من SDK بعد إعادة إنتاج محلية بنفس توكن الإنتاج: `Vercel Blob: Cannot use private access on a public store. The store must be configured with private access.` وليست توكنًا تالفًا ولا متجرًا محذوفًا. |
+| الفحص البيئي | ✅ `BLOB_READ_WRITE_TOKEN` موجود في Production ومأخوذ من نفس المتجر المتصل بالمشروع: قراءة القائمة والملفات العامة تعمل. إذن المشكلة في وضع وصول المتجر لا في قيمة التوكن. |
+| الإصلاح | ✅ إنشاء متجر خاص مستقل `focus-study-private` (نفس Vercel Blob، بلا خدمة جديدة) وربطه بالإنتاج باسم `PRIVATE_READ_WRITE_TOKEN`، مع إبقاء المتجر العام للتغذية وروابط APK كما هي. الدالة `storageToken(access)` في `messaging-store.js` توجّه المسارات الخاصة إلى توكن المتجر الخاص والعامة إلى التوكن القديم. |
+| ترحيل الدعم | ✅ أول قراءة نقلت `support-inbox.json` من المتجر العام إلى الخاص ثم حذفت النسخة العامة: تحقّقت أن العام أصبح `MISSING` والخاص `PRESENT`. |
+| تسجيل حقيقي | ✅ `POST /api/messages {action:"register"}` على `https://update-site-sigma.vercel.app` أعاد 200 `{"ok":true,"code":"REVI-EWPR","profileId":"..."}` لمعرّف الفحص `review-probe-0801`. |
+| دعم حقيقي | ✅ `POST /api/support` أعاد 200 `{"ok":true,"id":"s-..."}`، والرسالة وصلت إلى صندوق الإدارة. |
+| التغذية والأحدث | ✅ `GET /api/messages?uid=...` أعاد 200، و`GET /api/latest` أعاد 200 مع بقاء `0.29.0 / 37` وتطبيق المتجر. |
+| الصحة | ✅ `GET /api/health` أعاد 200 `{"blob":"ok"}` عبر rewrite إلى نفس دالة الرسائل، بلا دالة Vercel إضافية. |
+| سجل الأخطاء | ✅ لا سطور `blob read failed` أو `registration failed` أو `support failed` في سجلات الدالة بعد الإصلاح، وأُضيف `console.error` لمسار التسجيل والدعم ليكون التشخيص أسرع في أي انقطاع قادم. |
+| ظهور المستخدم في الإدارة | ✅ `GET /api/admin/messages?view=users` يقرأ من `readUsers()`؛ تحقّقت مباشرة من متجر الإنتاج الخاص: `review-probe-0801` موجود باسم `review-probe` وكود `REVI-EWPR`. تعذّر فتح واجهة `/admin` من هذه البيئة لأن بيانات دخول الإدارة الحقيقية محفوظة كأسرار في Vercel وغير متاحة محليًا. |
+| المزامنة الخاصة | ✅ نفس توجيه التوكن طُبّق على `sync-store.js` عبر `lib/blob-access.js` دون تغيير الحمولة أو القائمة المسموح بها (`tasks`، `subjects`، `taskTypes`)؛ اختبار محلي: register/pull/push/pull أعاد 200 وحافظ على نسخة واحدة. |
+| النشر | ✅ نشر إنتاجي نهائي `dpl_DmoJpt2Kx6hH44W4Ua1qva7y1z3S` على نفس الاسم `https://update-site-sigma.vercel.app`، وأُعيد فحص النقاط الثلاث بعده: register 200، support 200، `GET /api/messages` 200، و`GET /api/health` 200. |
+| اختبارات update-site | ✅ `npm run build` و`check` و`test:targeting` و`test:sync` و`test:web` و`test:history` و`test:session` و`test:catalog` كلها ناجحة. |
+
 ## Part 7 — تنبيهات الصلاة (قوية وموثوقة) — 23 نوفمبر 2026
 
 | الفحص | نتيجة |

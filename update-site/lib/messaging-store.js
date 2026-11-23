@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { userCode } = require("./user-code");
+const { storageToken } = require("./blob-access");
 
 const MESSAGES_PATH = "focus-study/team-messages.json";
 const INBOX_PATH = "focus-study/support-inbox.json";
@@ -37,7 +38,7 @@ function normalizeSounds(input) {
 
 async function readBlobJson(blobPath, access) {
   const { get } = await import("@vercel/blob");
-  const result = await get(blobPath, { access });
+  const result = await get(blobPath, { access, token: storageToken(access) });
   if (result?.statusCode === 200 && result.stream) {
     return JSON.parse(await new Response(result.stream).text());
   }
@@ -53,7 +54,7 @@ function readLocalJson(blobPath, fallback) {
 }
 
 async function readJson(blobPath, fallback, access = MESSAGES_ACCESS, strict = false) {
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  if (storageToken(access)) {
     try {
       const record = await readBlobJson(blobPath, access);
       if (record) return record;
@@ -69,7 +70,7 @@ async function readJson(blobPath, fallback, access = MESSAGES_ACCESS, strict = f
 
 /** Reads the inbox from its new private host, migrating an older public record once. */
 async function readInboxJson() {
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  if (storageToken(INBOX_ACCESS) || storageToken(MESSAGES_ACCESS)) {
     try {
       const current = await readBlobJson(INBOX_PATH, INBOX_ACCESS);
       if (current) return current;
@@ -78,7 +79,7 @@ async function readInboxJson() {
         await writeJson(INBOX_PATH, legacy, INBOX_ACCESS);
         try {
           const { del } = await import("@vercel/blob");
-          await del(INBOX_PATH, { access: MESSAGES_ACCESS });
+          await del(INBOX_PATH, { access: MESSAGES_ACCESS, token: storageToken(MESSAGES_ACCESS) });
         } catch (error) {
           console.error("legacy inbox cleanup failed", error?.message || "unknown");
         }
@@ -94,10 +95,12 @@ async function readInboxJson() {
 }
 
 async function writeJson(blobPath, value, access = MESSAGES_ACCESS) {
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  const token = storageToken(access);
+  if (token) {
     const { put } = await import("@vercel/blob");
     await put(blobPath, JSON.stringify(value), {
       access,
+      token,
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: "application/json; charset=utf-8",

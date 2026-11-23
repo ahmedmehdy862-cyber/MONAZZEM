@@ -25,7 +25,8 @@ module.exports = async function support(request, response) {
     };
     await appendSupport(item);
     return response.status(200).json({ ok: true, id: item.id });
-  } catch {
+  } catch (error) {
+    console.error("support failed", error?.message || "unknown");
     return response.status(503).json({ error: "support_unavailable" });
   }
 };

@@ -1,5 +1,5 @@
 const {
-  readMessages, upsertUser, readNotificationSounds, normalizeProfileId, appendDeliveryEvents
+  readMessages, readUsers, upsertUser, readNotificationSounds, normalizeProfileId, appendDeliveryEvents
 } = require("../lib/messaging-store");
 const { userCode } = require("../lib/user-code");
 const { parseBody } = require("../lib/admin-auth");
@@ -28,6 +28,17 @@ module.exports = async function messages(request, response) {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET, POST");
     return response.status(405).json({ error: "method_not_allowed" });
+  }
+  // GET /api/health is a rewrite to this function, so the deployment stays inside the Hobby
+  // function limit. It repeats the strict private read registration depends on and returns no
+  // token, path, user data or other secret.
+  if (String(request.query?.health || "") === "1") {
+    try {
+      await readUsers();
+      return response.status(200).json({ blob: "ok" });
+    } catch {
+      return response.status(200).json({ blob: "unreachable" });
+    }
   }
   try {
     const profile = String(request.query?.profile || "").trim();
@@ -100,7 +111,8 @@ async function register(body, response) {
     const profileId = normalizeProfileId(registered && registered.profileId);
     response.setHeader("Cache-Control", "no-store");
     return response.status(200).json({ ok: true, code: userCode(id), profileId });
-  } catch {
+  } catch (error) {
+    console.error("registration failed", error?.message || "unknown");
     return response.status(503).json({ error: "registration_unavailable" });
   }
 }
