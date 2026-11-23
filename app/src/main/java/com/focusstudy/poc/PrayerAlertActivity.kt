@@ -49,6 +49,7 @@ class PrayerAlertActivity : ComponentActivity() {
         val atMillis = intent?.getLongExtra(EXTRA_AT_MILLIS, System.currentTimeMillis())
             ?: System.currentTimeMillis()
         val fromTest = intent?.getBooleanExtra(EXTRA_TEST, false) == true
+        val alertType = PrayerAlertType.from(intent?.getStringExtra(EXTRA_TYPE))
 
         setContent {
             FocusTheme(dark = true) {
@@ -56,6 +57,7 @@ class PrayerAlertActivity : ComponentActivity() {
                     prayerName = prayerName,
                     atMillis = atMillis,
                     fromTest = fromTest,
+                    alertType = alertType,
                     onDone = ::finish,
                     onSnooze = {
                         PrayerReminderScheduler.snooze(this, prayerName)
@@ -68,7 +70,7 @@ class PrayerAlertActivity : ComponentActivity() {
                         )
                         finish()
                     },
-                    onSettings = { openPrayerChannelSettings(this) }
+                    onSettings = { openPrayerChannelSettings(this, alertType) }
                 )
             }
         }
@@ -78,12 +80,16 @@ class PrayerAlertActivity : ComponentActivity() {
         const val EXTRA_PRAYER_NAME = "prayer_name"
         const val EXTRA_AT_MILLIS = "at_millis"
         const val EXTRA_TEST = "prayer_test"
+        const val EXTRA_TYPE = "prayer_alert_type"
 
-        fun openPrayerChannelSettings(context: Context) {
+        internal fun openPrayerChannelSettings(context: Context, type: PrayerAlertType = PrayerAlertType.AT) {
             val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                     .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                    .putExtra(Settings.EXTRA_CHANNEL_ID, AppNotifications.PRAYER.id)
+                    .putExtra(
+                        Settings.EXTRA_CHANNEL_ID,
+                        if (type == PrayerAlertType.AT) AppNotifications.PRAYER_AT.id else AppNotifications.PRAYER_BEFORE.id
+                    )
             } else {
                 Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                     .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
@@ -98,6 +104,7 @@ private fun PrayerAlertScreen(
     prayerName: String,
     atMillis: Long,
     fromTest: Boolean,
+    alertType: PrayerAlertType,
     onDone: () -> Unit,
     onSnooze: () -> Unit,
     onOpenApp: () -> Unit,
@@ -136,7 +143,9 @@ private fun PrayerAlertScreen(
                 )
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = if (fromTest) "هكذا يظهر تنبيه الأذان" else "حان وقت الصلاة",
+                    text = if (fromTest) {
+                        if (alertType == PrayerAlertType.AT) "هكذا يظهر تنبيه الأذان" else "هكذا يظهر التنبيه قبل الصلاة"
+                    } else if (alertType == PrayerAlertType.AT) "حان وقت الصلاة" else "قبل الصلاة",
                     style = MaterialTheme.typography.labelLarge,
                     color = FocusColors.Blue,
                     fontWeight = FontWeight.Bold

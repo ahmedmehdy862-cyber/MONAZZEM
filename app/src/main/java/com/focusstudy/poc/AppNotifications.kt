@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -44,6 +45,29 @@ internal object AppNotifications {
         name = "الأذان ومواقيت الصلاة",
         description = "صوت أذان كامل وظهور عاجل على الشاشة عند دخول وقت الصلاة.",
         soundRes = R.raw.adhan_local,
+        soundKey = NotificationSounds.PRAYER,
+        category = NotificationCompat.CATEGORY_ALARM,
+        alarmSound = true
+    )
+    /**
+     * Part 7 splits prayer alerts in two channels. Their volume/importance and visibility are
+     * permanently high; only the sound can change, and the per-prayer adhan/tone choice is applied
+     * per notification on top of the channel default. New ids avoid inheriting an old quiet channel.
+     */
+    val PRAYER_AT = AlertChannel(
+        id = "prayer_at_v4",
+        name = "الأذان عند وقت الصلاة",
+        description = "ظهور عاجل وصوت أذان عند دخول وقت كل صلاة.",
+        soundRes = R.raw.adhan_local,
+        soundKey = NotificationSounds.PRAYER,
+        category = NotificationCompat.CATEGORY_ALARM,
+        alarmSound = true
+    )
+    val PRAYER_BEFORE = AlertChannel(
+        id = "prayer_before_v4",
+        name = "تنبيه قبل الصلاة",
+        description = "تنبيه عاجل قبل كل صلاة بالمدة والصوت الذي تختاره.",
+        soundRes = R.raw.notification_chime,
         soundKey = NotificationSounds.PRAYER,
         category = NotificationCompat.CATEGORY_ALARM,
         alarmSound = true
@@ -95,7 +119,7 @@ internal object AppNotifications {
     )
 
     /** All channels whose sound the dashboard may change. */
-    val ALL: List<AlertChannel> = listOf(PRAYER, TASK, EXAM, TEAM, UPDATE, DAILY, DHIKR)
+    val ALL: List<AlertChannel> = listOf(PRAYER, PRAYER_AT, PRAYER_BEFORE, TASK, EXAM, TEAM, UPDATE, DAILY, DHIKR)
 
     private val vibration = longArrayOf(0, 180, 120, 260)
 
@@ -166,7 +190,9 @@ internal object AppNotifications {
         contentIntent: PendingIntent,
         fullScreenIntent: PendingIntent? = null,
         largeIcon: Bitmap? = null,
-        deleteIntent: PendingIntent? = null
+        deleteIntent: PendingIntent? = null,
+        soundRes: Int? = null,
+        soundIsAlarm: Boolean = false
     ): NotificationCompat.Builder {
         // Reading the cached choice here as well as in ensure() means a receiver firing while the
         // app is closed still uses the latest sound the admin published before the device went offline.
@@ -188,8 +214,15 @@ internal object AppNotifications {
             .setAutoCancel(true)
             .setShowWhen(true)
         // AudioAttributes are applied on the channel in ensure(); the per-notification Uri only
-        // selects which of those configured sounds this alert uses.
-        if (sound == null) notification.setSound(null)
+        // selects which of those configured sounds this alert uses. A per-prayer override also
+        // sets its own attributes so an adhan played on the short-tone channel still uses alarm
+        // volume, and a short tone on the adhan channel stays gentle.
+        if (soundRes != null) {
+            notification.setSound(
+                soundUri(context, soundRes),
+                if (soundIsAlarm) AudioManager.STREAM_ALARM else AudioManager.STREAM_NOTIFICATION
+            )
+        } else if (sound == null) notification.setSound(null)
         else notification.setSound(sound)
         return notification.apply {
             if (fullScreenIntent != null) setFullScreenIntent(fullScreenIntent, true)

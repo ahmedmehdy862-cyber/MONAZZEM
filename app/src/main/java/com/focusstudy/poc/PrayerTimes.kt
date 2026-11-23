@@ -2,7 +2,6 @@ package com.focusstudy.poc
 
 import android.Manifest
 import android.app.AlarmManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -116,92 +115,38 @@ internal object PrayerCalculator {
     fun format(context: Context, millis: Long): String = format(millis, AppTimeZone.zone(context))
 }
 
+/**
+ * Compatibility facade. Part 7 replaced the single next-prayer alarm with a rolling seven-day
+ * window of independent AT and BEFORE alarms, but every existing caller keeps using this name.
+ */
 internal object PrayerReminderScheduler {
-    private const val ACTION = "com.focusstudy.poc.PRAYER_REMINDER"
-    private const val REQUEST = 6201
-    private const val SNOOZE_REQUEST = 6203
-    private const val NOTIFICATION = 6202
-    private const val EXTRA_PRAYER = "prayer_name"
     private const val FIVE_MINUTES = 5 * 60_000L
 
-    fun schedule(context: Context) {
-        val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val baseIntent = Intent(context, PrayerReminderReceiver::class.java).setAction(ACTION)
-        val pending = PendingIntent.getBroadcast(context, REQUEST, baseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        if (!PrayerPrefs.enabled(context)) { manager.cancel(pending); return }
-        val next = runCatching { PrayerCalculator.next(context) }.getOrNull() ?: run { manager.cancel(pending); return }
-        baseIntent.putExtra(EXTRA_PRAYER, next.name)
-        val updatedPending = PendingIntent.getBroadcast(context, REQUEST, baseIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        setAlarm(context, manager, next.atMillis, updatedPending)
-    }
+    fun schedule(context: Context) = PrayerNotificationScheduler.schedule(context)
 
     /** A one-off reminder from the full-screen alert; the normal daily schedule is untouched. */
     fun snooze(context: Context, prayerName: String) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, PrayerReminderReceiver::class.java)
-            .setAction(ACTION)
-            .putExtra(EXTRA_PRAYER, prayerName)
-        val pending = PendingIntent.getBroadcast(
-            context, SNOOZE_REQUEST, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        NotificationMaintenance.schedule(
+            context,
+            manager,
+            System.currentTimeMillis() + FIVE_MINUTES,
+            PrayerNotificationScheduler.snoozePendingIntent(context, prayerName),
+            kind = "prayer_snooze"
         )
-        setAlarm(context, manager, System.currentTimeMillis() + FIVE_MINUTES, pending)
     }
 
-    fun notifyTest(context: Context) {
-        val nextName = runCatching { PrayerCalculator.next(context)?.name }.getOrNull()
-        notifyPrayer(context, nextName ?: "الفجر", test = true)
-    }
+    fun notifyTest(context: Context) = PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.AT)
 
-    fun notifyPrayer(context: Context, prayerName: String?, test: Boolean = false) {
-        val name = prayerName?.takeIf { it.isNotBlank() } ?: "الصلاة"
-        AppNotifications.ensure(context, AppNotifications.PRAYER)
-        val now = System.currentTimeMillis()
-        val displayAt = if (test) runCatching { PrayerCalculator.next(context)?.atMillis }.getOrNull() ?: now else now
-        if (AppNotifications.canPost(context)) {
-            val content = alertPendingIntent(context, name, displayAt, test, NOTIFICATION + 1)
-            val fullScreen = alertPendingIntent(context, name, displayAt, test, NOTIFICATION + 2)
-            val title = if (test) "هكذا يصل أذان مُنظِّم" else "حان وقت صلاة $name"
-            val body = if (test) "اضغط لعرض شاشة التنبيه كما تظهر عند وقت الصلاة."
-                else "افتح شاشة الأذان، أو اضغط «ذكّرني بعد ٥ دقائق»."
-            val notification = AppNotifications.builder(
-                context = context,
-                channel = AppNotifications.PRAYER,
-                title = title,
-                message = body,
-                contentIntent = content,
-                fullScreenIntent = fullScreen
-            ).build()
-            AppNotifications.manager(context).notify(NOTIFICATION, notification)
-        }
-        schedule(context)
-    }
-
-    private fun alertPendingIntent(
-        context: Context,
-        prayerName: String,
-        atMillis: Long,
-        test: Boolean,
-        request: Int
-    ): PendingIntent = PendingIntent.getActivity(
-        context,
-        request,
-        Intent(context, PrayerAlertActivity::class.java)
-            .putExtra(PrayerAlertActivity.EXTRA_PRAYER_NAME, prayerName)
-            .putExtra(PrayerAlertActivity.EXTRA_AT_MILLIS, atMillis)
-            .putExtra(PrayerAlertActivity.EXTRA_TEST, test)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-
-    private fun setAlarm(context: Context, manager: AlarmManager, atMillis: Long, pending: PendingIntent) {
-        NotificationMaintenance.schedule(context, manager, atMillis, pending, kind = "prayer")
-    }
+    fun notifyPrayer(context: Context, prayerName: String?, test: Boolean = false) =
+        PrayerNotificationScheduler.notifyPrayer(context, prayerName, test)
 }
 
 class PrayerReminderReceiver : BroadcastReceiver() {
+    companion object { const val EXTRA_NAME = "prayer_name" }
+
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action == "com.focusstudy.poc.PRAYER_REMINDER") PrayerReminderScheduler.notifyPrayer(context, intent.getStringExtra("prayer_name"))
+        PrayerNotificationScheduler.handle(context, intent)
     }
 }
 

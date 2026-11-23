@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +20,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,6 +64,9 @@ internal fun NotificationCenterScreen(
     var exactAlarms by remember { mutableStateOf(NotificationMaintenance.canScheduleExact(context)) }
     var diagnostics by remember { mutableStateOf(emptyList<NotificationRecord>()) }
     var sent by remember { mutableStateOf(false) }
+    // Prayer switches live in their own preferences file; this revision makes the section reread
+    // them after each change without rebuilding the whole screen.
+    var prayerRevision by remember { mutableStateOf(0) }
 
     // The permission dialog is async: re-check when the activity resumes instead of immediately
     // after the request click, which used to leave the card stuck on "denied". A later grant of
@@ -101,6 +110,10 @@ internal fun NotificationCenterScreen(
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             StatusCard(allowed, exactAlarms, onAllow = onRequestNotifications)
+            Spacer(Modifier.height(12.dp))
+            PrayerCard(revision = prayerRevision, onChanged = { prayerRevision++ })
+            Spacer(Modifier.height(12.dp))
+            BatteryGuidanceCard()
             Spacer(Modifier.height(12.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
@@ -146,11 +159,162 @@ internal fun NotificationCenterScreen(
             DiagnosticCard(diagnostics)
             Spacer(Modifier.height(12.dp))
             Text(
-                "إن أرسلت إشعارًا ولم يظهر: الإذن ممنوع، أو المنبّهات الدقيقة موقوفة من النظام، أو الهاتف في وضع عدم الإزعاج، أو أُوقفت إشعارات التطبيق من إعدادات النظام.",
+                "إن أرسلت إشعارًا ولم يظهر: الإذن ممنوع، أو المنبّهات الدقيقة موقوفة من النظام، أو الهاتف في وضع عدم الإزعاج، أو أوقفت إعدادات البطارية تنبيهات التطبيق (وانظر إرشادات شاومي أعلاه).",
                 style = MaterialTheme.typography.bodySmall,
                 color = FocusColors.TextMuted
             )
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Part 7: one compact section for the two prayer alerts of every prayer. All values are private
+ * on-device preferences; changing any of them rewrites the seven-day exact-alarm window at once.
+ */
+@Composable
+private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
+    val context = LocalContext.current
+    val settings = remember(revision) { PrayerAlertPrefs.load(context) }
+    val master = remember(revision) { PrayerPrefs.enabled(context) }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("الصلاة", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Text(
+                "تنبيه عند دخول الوقت وتنبيه قبله، لكل واحد مفتاحه وصوته. يُجدول الأسبوع القادم كاملًا حتى لو لم تفتح التطبيق.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Spacer(Modifier.height(6.dp))
+            PreferenceSwitchRow(
+                "تنبيهات الصلاة",
+                "المفتاح الرئيسي للمواقيت والتنبيهات معًا.",
+                master
+            ) {
+                PrayerPrefs.setEnabled(context, it)
+                PrayerNotificationScheduler.schedule(context)
+                onChanged()
+            }
+            Spacer(Modifier.height(6.dp))
+            androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
+            PrayerAccuracy.KEYS.forEachIndexed { index, key ->
+                val rule = settings.rule(key)
+                val name = PrayerAccuracy.NAMES[index]
+                Spacer(Modifier.height(8.dp))
+                Text(name, style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.Medium)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "عند وقت الصلاة",
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                    TextButton(onClick = {
+                        val next = if (rule.atSound == PrayerAlertSound.ADHAN) PrayerAlertSound.TONE else PrayerAlertSound.ADHAN
+                        PrayerAlertPrefs.setSound(context, key, PrayerAlertType.AT, next)
+                        onChanged()
+                    }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                        Text(rule.atSound.label, style = MaterialTheme.typography.labelSmall)
+                    }
+                    Switch(
+                        checked = rule.atEnabled,
+                        onCheckedChange = {
+                            PrayerAlertPrefs.setAtEnabled(context, key, it)
+                            PrayerNotificationScheduler.schedule(context)
+                            onChanged()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            checkedTrackColor = FocusColors.Green,
+                            uncheckedThumbColor = FocusColors.TextMuted,
+                            uncheckedTrackColor = FocusColors.SurfaceHigh
+                        )
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("قبلها", style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
+                    Spacer(Modifier.width(6.dp))
+                    PrayerAlertRule.BEFORE_OPTIONS.forEach { option ->
+                        FilterChip(
+                            selected = rule.beforeMinutes == option,
+                            onClick = {
+                                PrayerAlertPrefs.setBeforeMinutes(context, key, option)
+                                PrayerNotificationScheduler.schedule(context)
+                                onChanged()
+                            },
+                            label = { Text(if (option == 0) "إيقاف" else "$option د") }
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(onClick = {
+                        val next = if (rule.beforeSound == PrayerAlertSound.ADHAN) PrayerAlertSound.TONE else PrayerAlertSound.ADHAN
+                        PrayerAlertPrefs.setSound(context, key, PrayerAlertType.BEFORE, next)
+                        onChanged()
+                    }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                        Text(rule.beforeSound.label, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
+            Spacer(Modifier.height(8.dp))
+            Text("جرّب الآن", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.AT) }) {
+                    Text("تنبيه وقت الصلاة")
+                }
+                OutlinedButton(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.BEFORE) }) {
+                    Text("تنبيه قبل الصلاة")
+                }
+            }
+        }
+    }
+}
+
+/** Short, honest battery guidance — the usual cause of missed alarms on Xiaomi/MIUI devices. */
+@Composable
+private fun BatteryGuidanceCard() {
+    val context = LocalContext.current
+    var ignoring by remember { mutableStateOf(PrayerBatteryGuidance.isIgnoringOptimizations(context)) }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("الأذان والهاتف مغلق", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "التنبيهات تصل بالمنبّهات الدقيقة حتى مع إغلاق التطبيق وفي وضع السكون العميق (Doze). إن تأخرت، فالسبب غالبًا توفير البطارية.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Text(
+                "على شاومي / MIUI: اسمح بالتشغيل التلقائي (Autostart) وصلاحية التشغيل في الخلفية لمُنظِّم من إعدادات التطبيق، وثبّته في ذاكرة الهاتف إن وُجد الخيار.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (ignoring) "تحسين البطارية لا يوقف مُنظِّم الآن ✓" else "استثناء مُنظِّم من تحسين البطارية موصى به لضمان الأذان.",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (ignoring) FocusColors.Green else FocusColors.Amber
+            )
+            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = {
+                    PrayerBatteryGuidance.openBatterySettings(context)
+                    ignoring = PrayerBatteryGuidance.isIgnoringOptimizations(context)
+                }) { Text("استثناء من البطارية") }
+                TextButton(onClick = { PrayerBatteryGuidance.openAppSettings(context) }) { Text("إعدادات التطبيق") }
+            }
         }
     }
 }
