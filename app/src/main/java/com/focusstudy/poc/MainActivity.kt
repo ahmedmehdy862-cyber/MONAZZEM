@@ -1894,6 +1894,7 @@ private fun SubtasksDialog(
 
 @Composable
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun EditTaskDialog(
 
     onDismiss: () -> Unit,
@@ -1965,63 +1966,18 @@ private fun EditTaskDialog(
                 SubjectChooser(subjects = subjects, selectedId = subjectId, onSelect = { subjectId = it })
 
                 Text("التصنيف", style = MaterialTheme.typography.labelLarge)
-
                 Spacer(Modifier.height(8.dp))
-
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(end = 4.dp)
+                ) {
+                    TaskComposer.CATEGORIES.forEach { option ->
                         TaskCategoryChip(
-
-                            selected = category == TaskCategory.STUDY,
-
-                            onSelect = { category = TaskCategory.STUDY }
-
-                        ) { Text("دراسة") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.UNIVERSITY,
-
-                            onSelect = { category = TaskCategory.UNIVERSITY }
-
-                        ) { Text("جامعة") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.PERSONAL,
-
-                            onSelect = { category = TaskCategory.PERSONAL }
-
-                        ) { Text("شخصي") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.WORK,
-
-                            onSelect = { category = TaskCategory.WORK }
-
-                        ) { Text("عمل") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.HABITS,
-
-                            onSelect = { category = TaskCategory.HABITS }
-
-                        ) { Text("عادات") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.OTHER,
-
-                            onSelect = { category = TaskCategory.OTHER }
-
-                        ) { Text("أخرى") }
-
+                            selected = category == option,
+                            onSelect = { category = option }
+                        ) { Text(option.label) }
                     }
-
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -3725,6 +3681,7 @@ private fun QuickCaptureHint(title: String, onApply: (ParsedCapture) -> Unit) {
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun AddTaskDialog(
     onDismiss: () -> Unit,
     subjects: List<StudySubject>,
@@ -3735,6 +3692,7 @@ private fun AddTaskDialog(
     var title by rememberSaveable { mutableStateOf("") }
 
     var minutesInput by rememberSaveable { mutableStateOf("30") }
+    var customMinutes by rememberSaveable { mutableStateOf(false) }
     var subjectId by rememberSaveable { mutableStateOf<Long?>(null) }
 
     var category by rememberSaveable { mutableStateOf(TaskCategory.STUDY) }
@@ -3814,143 +3772,79 @@ private fun AddTaskDialog(
                         expanded = true
                     }
                 )
+                Spacer(Modifier.height(10.dp))
+                Text("المدة", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(end = 4.dp)
+                ) {
+                    TaskComposer.QUICK_MINUTES.forEach { value ->
+                        TaskCategoryChip(
+                            selected = !customMinutes && minutesInput.toIntOrNull() == value,
+                            onSelect = { minutesInput = value.toString(); customMinutes = false }
+                        ) { Text("$value د") }
+                    }
+                    TaskCategoryChip(selected = customMinutes, onSelect = { customMinutes = true }) { Text("مخصص") }
+                }
+                if (customMinutes) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = minutesInput,
+                        onValueChange = { value -> if (value.length <= 3 && value.all(Char::isDigit)) minutesInput = value },
+                        singleLine = true,
+                        label = { Text("المدة بالدقائق (1–720)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = minutesInput.isNotEmpty() && minutesInput.toIntOrNull() !in TaskDraft.MIN_MINUTES..TaskDraft.MAX_MINUTES,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("الأولوية", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(end = 4.dp)
+                ) {
+                    TaskPriorityChip(selected = priority == TaskPriority.LOW, onSelect = { priority = TaskPriority.LOW }) { Text("منخفضة") }
+                    TaskPriorityChip(selected = priority == TaskPriority.MEDIUM, onSelect = { priority = TaskPriority.MEDIUM }) { Text("متوسطة") }
+                    TaskPriorityChip(selected = priority == TaskPriority.HIGH, onSelect = { priority = TaskPriority.HIGH }) { Text("عالية") }
+                    TaskPriorityChip(selected = priority == TaskPriority.URGENT, onSelect = { priority = TaskPriority.URGENT }) { Text("عاجلة") }
+                }
+                Spacer(Modifier.height(8.dp))
                 TextButton(
                     onClick = { expanded = !expanded },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                 ) {
-                    Text(if (expanded) "إخفاء الخيارات" else "خيارات إضافية (اختياري)")
+                    Text(if (expanded) "إخفاء الخيارات" else "المزيد من الخيارات")
                 }
                 if (expanded) {
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = minutesInput,
-                    onValueChange = { value -> if (value.length <= 3 && value.all(Char::isDigit)) minutesInput = value },
-                    singleLine = true,
-                    label = { Text("المدة المتوقعة بالدقائق (1–720)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = minutesInput.isNotEmpty() && minutesInput.toIntOrNull() !in TaskDraft.MIN_MINUTES..TaskDraft.MAX_MINUTES,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(8.dp))
-                SubjectChooser(subjects = subjects, selectedId = subjectId, onSelect = { subjectId = it })
-
-                Spacer(Modifier.height(16.dp))
-                Text("النوع", style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.height(8.dp))
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TaskCategoryChip(selected = typeId == null, onSelect = { typeId = null }) { Text("بدون نوع") }
-                        types.filter { !it.archived }.forEach { type ->
-                            TaskCategoryChip(selected = typeId == type.id, onSelect = { typeId = type.id }) { Text(type.name) }
-                        }
-                    }
-                }
-
                 Text("التصنيف", style = MaterialTheme.typography.labelLarge)
-
                 Spacer(Modifier.height(8.dp))
-
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(end = 4.dp)
+                ) {
+                    TaskComposer.CATEGORIES.forEach { option ->
                         TaskCategoryChip(
-
-                            selected = category == TaskCategory.STUDY,
-
-                            onSelect = { category = TaskCategory.STUDY }
-
-                        ) { Text("دراسة") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.UNIVERSITY,
-
-                            onSelect = { category = TaskCategory.UNIVERSITY }
-
-                        ) { Text("جامعة") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.PERSONAL,
-
-                            onSelect = { category = TaskCategory.PERSONAL }
-
-                        ) { Text("شخصي") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.WORK,
-
-                            onSelect = { category = TaskCategory.WORK }
-
-                        ) { Text("عمل") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.HABITS,
-
-                            onSelect = { category = TaskCategory.HABITS }
-
-                        ) { Text("عادات") }
-
-                        TaskCategoryChip(
-
-                            selected = category == TaskCategory.OTHER,
-
-                            onSelect = { category = TaskCategory.OTHER }
-
-                        ) { Text("أخرى") }
-
+                            selected = typeId == null && category == option,
+                            onSelect = { category = option; typeId = null }
+                        ) { Text(option.label) }
                     }
-
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                Text("أولوية", style = MaterialTheme.typography.labelLarge)
-
-                Spacer(Modifier.height(8.dp))
-
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-
-                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-
-                        TaskPriorityChip(
-
-                            selected = priority == TaskPriority.LOW,
-
-                            onSelect = { priority = TaskPriority.LOW }
-
-                        ) { Text("منخفضة") }
-
-                        TaskPriorityChip(
-
-                            selected = priority == TaskPriority.MEDIUM,
-
-                            onSelect = { priority = TaskPriority.MEDIUM }
-
-                        ) { Text("متوسطة") }
-
-                        TaskPriorityChip(
-
-                            selected = priority == TaskPriority.HIGH,
-
-                            onSelect = { priority = TaskPriority.HIGH }
-
-                        ) { Text("عالية") }
-
-                        TaskPriorityChip(
-
-                            selected = priority == TaskPriority.URGENT,
-
-                            onSelect = { priority = TaskPriority.URGENT }
-
-                        ) { Text("عاجلة") }
-
+                    types.filter { !it.archived }.forEach { type ->
+                        TaskCategoryChip(
+                            selected = typeId == type.id,
+                            onSelect = { typeId = type.id }
+                        ) { Text(type.name) }
                     }
-
                 }
+                Spacer(Modifier.height(12.dp))
+                SubjectChooser(subjects = subjects, selectedId = subjectId, onSelect = { subjectId = it })
+                Spacer(Modifier.height(12.dp))
 
                 Spacer(Modifier.height(16.dp))
 

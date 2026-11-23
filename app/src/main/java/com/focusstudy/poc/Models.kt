@@ -4,9 +4,12 @@ package com.focusstudy.poc
 enum class TaskCategory(val key: String, val label: String) {
     STUDY("study", "دراسة"),
     UNIVERSITY("university", "جامعة"),
-    PERSONAL("personal", "شخصي"),
     WORK("work", "عمل"),
+    PERSONAL("personal", "شخصي"),
+    RELIGIOUS("religious", "ديني"),
+    LIFE("life", "حياة"),
     HABITS("habits", "عادات"),
+    VOLUNTEERING("volunteering", "تطوع"),
     OTHER("other", "أخرى");
 
     companion object {
