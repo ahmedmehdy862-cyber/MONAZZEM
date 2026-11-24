@@ -1,0 +1,105 @@
+name: FocusStudy CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: focus-study-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android unit tests and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages used by the build
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Run unit tests and lint
+        run: ./gradlew :app:testDebugUnitTest :storeapp:testDebugUnitTest :app:lintDebug --no-daemon
+
+      - name: Upload reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+            app/build/reports/lint-results-debug.xml
+            storeapp/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+  site:
+    name: Update site checks and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: update-site
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          cache: npm
+          cache-dependency-path: update-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release metadata
+        run: npm run check
+
+      - name: Run message targeting and delivery tests
+        run: npm run test:targeting
+
+      - name: Run sync tests
+        run: npm run test:sync
+
+      - name: Run web data tests
+        run: npm run test:web
+
+      - name: Run release history tests
+        run: npm run test:history
+
+      - name: Run admin session tests
+        run: npm run test:session
+
+      - name: Run app catalog tests
+        run: npm run test:catalog
+
+      - name: Verify committed admin bundle
+        run: |
+          npm run build
+          cd "$GITHUB_WORKSPACE"
+          git diff --exit-code -- update-site/public/admin/app.bundle.js
