@@ -4,9 +4,13 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
+import java.time.ZoneId
 
 class NotificationPolicyTest {
-    private val now = 1_700_000_000_000L
+    // Fixed UTC zone and instant so quiet-hour checks do not depend on the machine's locale.
+    private val zone = ZoneId.of("UTC")
+    private val now = Instant.parse("2023-11-14T23:30:00Z").toEpochMilli()
     private val minute = 60_000L
     private val hour = 60 * minute
 
@@ -85,18 +89,19 @@ class NotificationPolicyTest {
 
     @Test
     fun `quiet hours overnight defer to the morning`() {
-        val decision = NotificationPolicy.decide(input(quietStart = 23 * 60, quietEnd = 7 * 60))
+        val decision = NotificationPolicy.decide(input(quietStart = 23 * 60, quietEnd = 7 * 60), zone)
         assertTrue(decision is ReminderDecision.Defer)
         val defer = decision as ReminderDecision.Defer
         assertEquals(DeferReason.QUIET_HOURS, defer.reason)
-        assertEquals(7, PrayerWindows.minuteOfDay(defer.until) / 60)
+        assertEquals(7, PrayerWindows.minuteOfDay(defer.until, zone) / 60)
     }
 
     @Test
     fun `outside quiet hours notifications flow`() {
-        val midday = now - (PrayerWindows.minuteOfDay(now) - 12 * 60) * minute
+        val midday = now - (PrayerWindows.minuteOfDay(now, zone) - 12 * 60) * minute
         val decision = NotificationPolicy.decide(
-            input(quietStart = 23 * 60, quietEnd = 7 * 60).copy(now = midday)
+            input(quietStart = 23 * 60, quietEnd = 7 * 60).copy(now = midday),
+            zone
         )
         assertEquals(ReminderDecision.Send, decision)
     }
