@@ -26,6 +26,7 @@ data class SessionRow(
  *   v14 — notes(id, title, body, category, pinned, created_at, updated_at) for the private «نوتة».
  *   v15 — life tracking: habits, habit_logs, wird_settings, wird_logs, health_logs,
  *        transactions, mood_logs.
+ *   v16 — fitness: fitness_profile, calorie_logs, exercise_logs.
  *
  * Every upgrade is additive: no column or table is dropped, so existing data survives.
  */
@@ -76,6 +77,7 @@ class StudyDb private constructor(context: Context) :
         migrateToV13(db)
         migrateToV14(db)
         migrateToV15(db)
+        migrateToV16(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -93,6 +95,7 @@ class StudyDb private constructor(context: Context) :
         if (oldVersion < 13) migrateToV13(db)
         if (oldVersion < 14) migrateToV14(db)
         if (oldVersion < 15) migrateToV15(db)
+        if (oldVersion < 16) migrateToV16(db)
     }
 
     private fun migrateToV4(db: SQLiteDatabase) {
@@ -1608,6 +1611,51 @@ class StudyDb private constructor(context: Context) :
         )
     }
 
+    /**
+     * v16 — اللياقة: ملف الجسم، سجل السعرات، سجل إتمام التمارين.
+     *
+     * جداول جديدة فقط؛ لا يتغير أي جدول قائم، فبيانات المستخدمين الحاليين تبقى كما هي.
+     */
+    private fun migrateToV16(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS fitness_profile(
+              id INTEGER PRIMARY KEY,
+              gender TEXT NOT NULL DEFAULT 'male',
+              age INTEGER NOT NULL DEFAULT 30,
+              height_cm REAL NOT NULL DEFAULT 170,
+              weight_kg REAL NOT NULL DEFAULT 70,
+              activity TEXT NOT NULL DEFAULT 'moderate',
+              goal TEXT NOT NULL DEFAULT 'maintain'
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS calorie_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              day TEXT NOT NULL,
+              name TEXT NOT NULL DEFAULT '',
+              calories INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_calorie_logs_day ON calorie_logs(day)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS exercise_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              day TEXT NOT NULL,
+              exercise_id TEXT NOT NULL,
+              done INTEGER NOT NULL DEFAULT 1,
+              UNIQUE(day, exercise_id)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_exercise_logs_day ON exercise_logs(day)")
+    }
+
     // ------------------------------------------------------- life tracking
 
     fun habits(): List<Habit> = readableDatabase.rawQuery(
@@ -1809,9 +1857,113 @@ class StudyDb private constructor(context: Context) :
             }
         }
 
+    // ------------------------------------------------------- fitness (v16)
+
+    /** ملف الجسم؛ الافتراضي ذكر، 30 سنة، 170 سم، 70 كجم، نشاط متوسط، حفاظ. */
+    fun fitnessProfile(): FitnessProfile =
+        readableDatabase.rawQuery(
+            "SELECT gender, age, height_cm, weight_kg, activity, goal FROM fitness_profile WHERE id = 1 LIMIT 1",
+            null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                FitnessProfile(
+                    gender = FitnessGender.from(cursor.getString(0)),
+                    age = cursor.getInt(1).coerceIn(10, 100),
+                    heightCm = cursor.getDouble(2).coerceIn(100.0, 250.0),
+                    weightKg = cursor.getDouble(3).coerceIn(30.0, 300.0),
+                    activity = ActivityLevel.from(cursor.getString(4)),
+                    goal = FitnessGoal.from(cursor.getString(5))
+                )
+            } else {
+                FitnessProfile()
+            }
+        }
+
+    fun saveFitnessProfile(profile: FitnessProfile) {
+        require(profile.age in 10..100) { "العمر بين 10 و 100" }
+        require(profile.heightCm in 100.0..250.0) { "الطول بين 100 و 250 سم" }
+        require(profile.weightKg in 30.0..300.0) { "الوزن بين 30 و 300 كجم" }
+        val values = ContentValues().apply {
+            put("id", 1)
+            put("gender", profile.gender.key)
+            put("age", profile.age)
+            put("height_cm", profile.heightCm)
+            put("weight_kg", profile.weightKg)
+            put("activity", profile.activity.key)
+            put("goal", profile.goal.key)
+        }
+        writableDatabase.insertWithOnConflict(
+            "fitness_profile", null, values, SQLiteDatabase.CONFLICT_REPLACE
+        )
+    }
+
+    /** وجبات يوم واحد؛ الأحدث أولًا. */
+    fun calorieEntries(day: String): List<CalorieEntry> =
+        readableDatabase.rawQuery(
+            "SELECT id, day, name, calories, created_at FROM calorie_logs WHERE day = ? ORDER BY created_at DESC",
+            arrayOf(day)
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        CalorieEntry(
+                            id = cursor.getLong(0),
+                            day = cursor.getString(1).orEmpty(),
+                            name = cursor.getString(2).orEmpty(),
+                            calories = cursor.getInt(3),
+                            createdAt = cursor.getLong(4)
+                        )
+                    )
+                }
+            }
+        }
+
+    fun addCalorieEntry(name: String, calories: Int, day: String): Long {
+        require(calories in 1..10000) { "السعرات بين 1 و 10000" }
+        val values = ContentValues().apply {
+            put("day", day)
+            put("name", name.trim().take(48))
+            put("calories", calories)
+            put("created_at", System.currentTimeMillis())
+        }
+        return writableDatabase.insert("calorie_logs", null, values)
+    }
+
+    fun deleteCalorieEntry(entryId: Long) {
+        writableDatabase.delete("calorie_logs", "id = ?", arrayOf(entryId.toString()))
+    }
+
+    /** كل تسجيلات إتمام التمارين منذ يوم معين؛ تُبنى منها علامات الإنجاز. */
+    fun exerciseLogsSince(sinceDay: String): List<ExerciseDone> =
+        readableDatabase.rawQuery(
+            "SELECT day, exercise_id FROM exercise_logs WHERE done = 1 AND day >= ? ORDER BY day DESC",
+            arrayOf(sinceDay)
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(ExerciseDone(day = cursor.getString(0).orEmpty(), exerciseId = cursor.getString(1).orEmpty()))
+                }
+            }
+        }
+
+    fun setExerciseDone(exerciseId: String, day: String, done: Boolean) {
+        if (done) {
+            writableDatabase.execSQL(
+                "INSERT OR IGNORE INTO exercise_logs(day, exercise_id, done) VALUES(?, ?, 1)",
+                arrayOf<Any?>(day, exerciseId)
+            )
+        } else {
+            writableDatabase.delete(
+                "exercise_logs",
+                "day = ? AND exercise_id = ?",
+                arrayOf(day, exerciseId)
+            )
+        }
+    }
+
     companion object {
         private const val DB_NAME = "focus_study.db"
-        private const val DB_VERSION = 15
+        private const val DB_VERSION = 16
         private const val STATE_ACTIVE = "active"
         private const val SEPARATOR = "\n"
 

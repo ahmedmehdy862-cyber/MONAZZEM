@@ -53,6 +53,23 @@ class LifeRepository private constructor(private val db: StudyDb) {
 
     suspend fun moodLogsSince(sinceDay: String): List<MoodLog> = io { db.moodLogsSince(sinceDay) }
 
+    suspend fun fitnessProfile(): FitnessProfile = io { db.fitnessProfile() }
+
+    suspend fun saveFitnessProfile(profile: FitnessProfile) = io { db.saveFitnessProfile(profile) }
+
+    suspend fun calorieEntries(day: String): List<CalorieEntry> = io { db.calorieEntries(day) }
+
+    suspend fun addCalorieEntry(name: String, calories: Int, day: String): Long =
+        io { db.addCalorieEntry(name, calories, day) }
+
+    suspend fun deleteCalorieEntry(entryId: Long) = io { db.deleteCalorieEntry(entryId) }
+
+    suspend fun exerciseLogsSince(sinceDay: String): List<ExerciseDone> =
+        io { db.exerciseLogsSince(sinceDay) }
+
+    suspend fun setExerciseDone(exerciseId: String, day: String, done: Boolean) =
+        io { db.setExerciseDone(exerciseId, day, done) }
+
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 
     companion object {

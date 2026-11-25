@@ -229,3 +229,65 @@ data class MoodLog(
     val day: String,
     val mood: Int
 )
+
+/** جنس المستخدم لحساب السعرات (معادلة Mifflin-St Jeor). */
+enum class FitnessGender(val key: String, val label: String) {
+    MALE("male", "ذكر"),
+    FEMALE("female", "أنثى");
+
+    companion object {
+        fun from(key: String?): FitnessGender =
+            entries.firstOrNull { it.key == key } ?: MALE
+    }
+}
+
+/** مستوى النشاط البدني مع معامل TDEE. */
+enum class ActivityLevel(val key: String, val label: String, val factor: Double) {
+    SEDENTARY("sedentary", "قليل الحركة (عمل مكتبي)", 1.2),
+    LIGHT("light", "نشاط خفيف (1–3 أيام أسبوعيًا)", 1.375),
+    MODERATE("moderate", "نشاط متوسط (3–5 أيام أسبوعيًا)", 1.55),
+    ACTIVE("active", "نشاط عالٍ (6–7 أيام أسبوعيًا)", 1.725),
+    VERY_ACTIVE("very_active", "نشاط عالٍ جدًا + عمل بدني", 1.9);
+
+    companion object {
+        fun from(key: String?): ActivityLevel =
+            entries.firstOrNull { it.key == key } ?: MODERATE
+    }
+}
+
+/** هدف السعرات اليومية. */
+enum class FitnessGoal(val key: String, val label: String, val adjustmentKcal: Int) {
+    LOSE("lose", "إنقاص الوزن", -500),
+    MAINTAIN("maintain", "الحفاظ على الوزن", 0),
+    GAIN("gain", "زيادة الوزن", 300);
+
+    companion object {
+        fun from(key: String?): FitnessGoal =
+            entries.firstOrNull { it.key == key } ?: MAINTAIN
+    }
+}
+
+/** ملف الجسم المحفوظ محليًا؛ صف واحد في fitness_profile. */
+data class FitnessProfile(
+    val gender: FitnessGender = FitnessGender.MALE,
+    val age: Int = 30,
+    val heightCm: Double = 170.0,
+    val weightKg: Double = 70.0,
+    val activity: ActivityLevel = ActivityLevel.MODERATE,
+    val goal: FitnessGoal = FitnessGoal.MAINTAIN
+)
+
+/** وجبة أو طعام سُجّل يدويًا في يوم معين (إدخال يدوي فقط، بلا قاعدة بيانات أغذية). */
+data class CalorieEntry(
+    val id: Long,
+    val day: String,
+    val name: String,
+    val calories: Int,
+    val createdAt: Long = 0L
+)
+
+/** إتمام تمرين في يوم معين؛ يُبنى منه سجل الإنجاز الأسبوعي. */
+data class ExerciseDone(
+    val day: String,
+    val exerciseId: String
+)
