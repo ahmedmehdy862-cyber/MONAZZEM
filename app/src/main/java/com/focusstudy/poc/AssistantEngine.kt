@@ -1,6 +1,10 @@
 package com.focusstudy.poc
 
 import android.content.Context
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -75,6 +79,69 @@ val ASSISTANT_KNOWLEDGE_PROMPTS = listOf(
     "سعراتي النهاردة عاملة إيه؟",
     "تعرف عني إيه؟"
 )
+
+/**
+ * أوامر تنفيذية جاهزة: الضغط على أي منها ينفّذ الفعل فعلًا داخل التطبيق
+ * (إضافة مهمة، تسجيل ورد، بدء جلسة، فتح المصحف أو خطة اليوم) — لا مجرد سؤال.
+ */
+val ASSISTANT_ACTION_PROMPTS = listOf(
+    "ضيف مهمة مراجعة فيزياء الساعة 6",
+    "سجّل ورد اليوم",
+    "ابدأ جلسة تركيز",
+    "افتح المصحف",
+    "اعرض خطة اليوم"
+)
+
+/**
+ * فعل يطلبه المستخدم من المساعد وينفَّذ داخل التطبيق محليًا بلا شبكة.
+ *
+ * المحرك نقي: يحدد الفعل ومعاملاته فقط. التنفيذ نفسه يتم في شاشة المساعد عبر
+ * دوال رد نداء من MainActivity إلى المستودعات والتنقّل القائمين، فلا يملك
+ * المحرك أي مرجع لمستودع أو نشاط، ولا ينشئ مسار تنفيذ موازيًا.
+ */
+sealed class AssistantAction {
+    /** إضافة مهمة جديدة؛ [dueAt] بالمللي ثانية أو null بلا موعد محدد. */
+    data class AddTask(
+        val title: String,
+        val dueAt: Long?,
+        val priorityLevel: Int?,
+        val recurrence: Recurrence
+    ) : AssistantAction()
+
+    /** تسجيل ورد اليوم بإعدادات الورد الحالية. */
+    object LogWird : AssistantAction()
+
+    /**
+     * بدء جلسة تركيز؛ [taskId] null تعني جلسة عامة. [minutes] مضبوطة بين 5 و120
+     * دقيقة في المحرك قبل أن تصل إلى التنفيذ.
+     */
+    data class StartFocus(
+        val taskId: Long?,
+        val taskTitle: String?,
+        val minutes: Int
+    ) : AssistantAction()
+
+    /** تعليم مهمة موجودة كمنجزة. */
+    data class CompleteTask(val taskId: Long, val title: String) : AssistantAction()
+
+    /** فتح المصحف على صفحة ورد اليوم. */
+    object OpenQuran : AssistantAction()
+
+    /** عرض خطة اليوم (شاشة «اليوم»). */
+    object OpenToday : AssistantAction()
+}
+
+/** نتيجة محاولة بدء جلسة تركيز من المساعد. */
+enum class AssistantFocusOutcome {
+    /** بدأت الجلسة فعلًا عبر مسار بدء الجلسة القائم. */
+    STARTED,
+    /** لا تطبيقات محظورة للمهمة/الجلسة: فُتحت شاشة إعداد الجلسة ليختارها المستخدم. */
+    SETUP_OPENED,
+    /** توجد جلسة تركيز شغالة أصلًا، فلم يبدأ شيء جديد. */
+    ALREADY_RUNNING,
+    /** فشل التنفيذ لسبب غير متوقع. */
+    FAILED
+}
 
 /** تخزين المساعد المحلي: SharedPreferences واحدة باسم ثابت، بلا قاعدة بيانات. */
 internal object AssistantStore {
@@ -182,8 +249,12 @@ internal object AssistantStore {
     }
 }
 
-/** نتيجة رد المحرك: النص، مع حقيقة تعلّمها من الرسالة إن وُجدت. */
-data class AssistantReply(val text: String, val learnedFact: LearnedFact? = null)
+/** نتيجة رد المحرك: النص، مع حقيقة تعلّمها من الرسالة إن وُجدت، وفعل ينفَّذ إن طُلب. */
+data class AssistantReply(
+    val text: String,
+    val learnedFact: LearnedFact? = null,
+    val action: AssistantAction? = null
+)
 
 /**
  * محرك الردود: قواعد محلية فقط. يطابق نية الرسالة بكلمات مفتاحية عربية، ويبني
@@ -191,6 +262,9 @@ data class AssistantReply(val text: String, val learnedFact: LearnedFact? = null
  * التعريفي، ثم يغلّف الرد بصياغة النبرة المختارة.
  */
 internal object AssistantEngine {
+
+    /** مدة جلسة التركيز الافتراضية بالدقائق عند عدم ذكر مدة (مطابقة لإعداد التطبيق). */
+    private const val DEFAULT_FOCUS_MINUTES = 25
 
     fun greeting(settings: AssistantSettings, userName: String): String {
         val name = userName.ifBlank { "صديقي" }
@@ -206,18 +280,253 @@ internal object AssistantEngine {
         snapshot: AssistantSnapshot,
         settings: AssistantSettings,
         facts: List<LearnedFact>,
-        profileText: String
+        profileText: String,
+        today: LocalDate = LocalDate.now(),
+        zone: ZoneId = ZoneId.systemDefault()
     ): AssistantReply {
         val text = input.trim()
         val lower = text.lowercase()
         val learned = extractFact(text, lower)
-        val core = answerFor(lower, snapshot, settings, facts, profileText)
+        // النوايا التنفيذية تُفحص أولًا: «ضيف مهمة…» و«سجّل وردي» مثلًا تحوي
+        // كلمات («مهمة»، «ورد») تطابق أيضًا فروع الإجابة الإخبارية أدناه.
+        val decision = decideAction(lower, snapshot, today, zone)
+        val core = decision?.text ?: answerFor(lower, snapshot, settings, facts, profileText)
         val withLearning = if (learned != null) {
             "$core\n\nحفظت إن «${learned.text}»، وهستخدمها في ردودي الجاية."
         } else {
             core
         }
-        return AssistantReply(text = withLearning, learnedFact = learned)
+        return AssistantReply(text = withLearning, learnedFact = learned, action = decision?.action)
+    }
+
+    /** نتيجة فحص نية تنفيذية: فعل يُنفَّذ مع نص تأكيده، أو نص توضيح بلا فعل. */
+    private data class ActionDecision(val action: AssistantAction?, val text: String)
+
+    /**
+     * يطابق نية تنفيذية في الرسالة ويبني فعلها ونص تأكيدها، أو null إن لم تكن
+     * الرسالة أمرًا تنفيذيًا. الترتيب مقصود: تسجيل الورد قبل تعليم مهمة
+     * كمنجزة («خلصت الورد» ليست مهمة)، وفتح المصحف قبل إجابة حالة الورد.
+     */
+    private fun decideAction(
+        lower: String,
+        snapshot: AssistantSnapshot,
+        today: LocalDate,
+        zone: ZoneId
+    ): ActionDecision? {
+        addTaskDecision(lower, today, zone)?.let { return it }
+        logWirdDecision(lower, snapshot)?.let { return it }
+        startFocusDecision(lower, snapshot, today)?.let { return it }
+        openQuranDecision(lower, snapshot)?.let { return it }
+        openTodayDecision(lower)?.let { return it }
+        completeTaskDecision(lower, snapshot)?.let { return it }
+        return null
+    }
+
+    /** يحذف كلمات الأمر من الرسالة ويبقي ما يصلح عنوانًا أو اسم مهمة. */
+    private fun stripCommandWords(
+        lower: String,
+        words: Set<String>,
+        dropNumbers: Boolean = true
+    ): String =
+        lower.split(Regex("\\s+"))
+            .filter { token ->
+                token.isNotEmpty() && token !in words &&
+                    (!dropNumbers || token.all { ch -> !ch.isDigit() })
+            }
+            .joinToString(" ").trim()
+
+    /** يطابق نصًا مع المهام المفتوحة: تطابق تام أو احتواء في أي اتجاه. */
+    private fun matchOpenTasks(query: String, tasks: List<AssistantTaskRef>): List<AssistantTaskRef> {
+        val clean = query.trim()
+        if (clean.isEmpty()) return emptyList()
+        val exact = tasks.filter { it.title.lowercase() == clean }
+        if (exact.isNotEmpty()) return exact
+        return tasks.filter { task ->
+            val title = task.title.lowercase()
+            title.contains(clean) || clean.contains(title)
+        }
+    }
+
+    /** نص يلخّص مرشحين غامضين ليسأل المستخدم عن المقصود. */
+    private fun ambiguousText(query: String, candidates: List<AssistantTaskRef>, user: String): String {
+        val listed = candidates.take(3).joinToString("؛ ") { "«${it.title}»" }
+        return "لقيت أكتر من مهمة شبه «$query» يا $user: $listed. قولي اسمها بالظبط، أو افتح «مهامي» واختارها."
+    }
+
+    private fun addTaskDecision(lower: String, today: LocalDate, zone: ZoneId): ActionDecision? {
+        // «سجّل ورد اليوم» تحوي فعل إضافة لكنها تسجيل ورد، لا مهمة.
+        if (lower.contains("ورد")) return null
+        val addVerbs = setOf("ضيف", "أضف", "اضف", "أضيف", "ضيفي", "سجل", "سجّل", "حط", "اعمل", "أعمل", "أنشئ", "انشئ")
+        val mentionsTask = lower.contains("مهمة") || lower.contains("مهمه")
+        val startsWithVerb = addVerbs.any { lower.startsWith(it) }
+        if (!mentionsTask && !startsWithVerb) return null
+        if (!addVerbs.any { lower.contains(it) }) return null
+        // الأرقام تبقى: المحلل يحتاجها لاستخراج الساعة والمدة («الساعة 6»).
+        val cleaned = stripCommandWords(
+            lower,
+            addVerbs + setOf("مهمة", "مهمه", "لي", "جديدة", "جديده", "من فضلك"),
+            dropNumbers = false
+        )
+        val parsed = QuickCaptureParser.parse(cleaned, today)
+        val title = parsed.title.trim()
+        if (title.isBlank()) {
+            return ActionDecision(
+                action = null,
+                text = "قولي عنوان المهمة — مثلًا «ضيف مهمة مراجعة فيزياء الساعة 6» — وأنا أضيفها لك على طول."
+            )
+        }
+        val dueAt = if (parsed.date != null || parsed.hour != null) {
+            val date = parsed.date ?: today
+            val time = if (parsed.hour != null) {
+                LocalTime.of(parsed.hour, parsed.minute)
+            } else {
+                // تاريخ بلا وقت: نهاية اليوم موعدًا.
+                LocalTime.of(23, 59)
+            }
+            LocalDateTime.of(date, time).atZone(zone).toInstant().toEpochMilli()
+        } else {
+            null
+        }
+        val dueText = if (dueAt == null) {
+            ""
+        } else {
+            // بلا تاريخ مذكور يكون الموعد اليوم؛ وبلا وقت مذكور يكون نهاية اليوم.
+            val dateLabel = when (parsed.date) {
+                null -> "النهاردة"
+                today -> "النهاردة"
+                today.plusDays(1) -> "بكرة"
+                else -> parsed.date.toString()
+            }
+            val timeLabel = if (parsed.hour != null) {
+                " الساعة ${parsed.hour.toString().padStart(2, '0')}:${parsed.minute.toString().padStart(2, '0')}"
+            } else {
+                ""
+            }
+            "، موعدها $dateLabel$timeLabel"
+        }
+        return ActionDecision(
+            action = AssistantAction.AddTask(
+                title = title,
+                dueAt = dueAt,
+                priorityLevel = parsed.priorityLevel,
+                recurrence = parsed.recurrence
+            ),
+            text = "تم إضافة المهمة «$title»$dueText، وهتلاقيها في «مهامي»."
+        )
+    }
+
+    private fun logWirdDecision(lower: String, snapshot: AssistantSnapshot): ActionDecision? {
+        if (!lower.contains("ورد")) return null
+        val logVerbs = setOf("سجل", "سجّل", "سجلت", "سجّلت", "خلصت", "خلّصت", "قرأت", "قرات", "قريت", "تم", "عملت")
+        if (!logVerbs.any { lower.contains(it) }) return null
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        if (snapshot.wirdDoneToday) {
+            return ActionDecision(
+                action = null,
+                text = "ما شاء الله يا $user، ورد النهاردة متسجّل أصلًا: ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}."
+            )
+        }
+        return ActionDecision(
+            action = AssistantAction.LogWird,
+            text = "تم تسجيل ورد اليوم: ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}. تقبّل الله منك."
+        )
+    }
+
+    private fun startFocusDecision(lower: String, snapshot: AssistantSnapshot, today: LocalDate): ActionDecision? {
+        if (!lower.contains("جلسة") && !lower.contains("جلسه") && !lower.contains("تركيز")) return null
+        val startVerbs = setOf("ابدأ", "ابدا", "ابدء", "شغل", "يلا", "عايز", "عايزه", "نبدأ", "نبدا")
+        if (!startVerbs.any { lower.contains(it) }) return null
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val parsed = QuickCaptureParser.parse(lower, today)
+        val minutes = (parsed.durationMinutes ?: DEFAULT_FOCUS_MINUTES).coerceIn(5, 120)
+        val query = stripCommandWords(
+            lower,
+            setOf(
+                "ابدأ", "ابدا", "ابدء", "شغل", "جلسة", "جلسه", "تركيز", "لمهمة", "لمهمه",
+                "مهمة", "مهمه", "على", "في", "يلا", "عايز", "عايزه", "لمدة", "دقيقة",
+                "دقيقه", "دقائق", "دقايق", "ساعة", "ساعه", "ساعات", "نص", "نصف"
+            )
+        )
+        if (query.isBlank()) {
+            return ActionDecision(
+                action = AssistantAction.StartFocus(taskId = null, taskTitle = null, minutes = minutes),
+                text = "بدأت جلسة تركيز عامة لمدة $minutes دقيقة — بالتوفيق!"
+            )
+        }
+        val matches = matchOpenTasks(query, snapshot.openTasks)
+        return when {
+            matches.size == 1 -> {
+                val task = matches.first()
+                ActionDecision(
+                    action = AssistantAction.StartFocus(taskId = task.id, taskTitle = task.title, minutes = minutes),
+                    text = "بدأت جلسة تركيز لمهمة «${task.title}» لمدة $minutes دقيقة — بالتوفيق!"
+                )
+            }
+            matches.size > 1 -> ActionDecision(action = null, text = ambiguousText(query, matches, user))
+            else -> ActionDecision(
+                action = null,
+                text = "مش لاقي مهمة بالاسم ده يا $user. جرّب «ابدأ جلسة تركيز» لجلسة عامة، أو قولي اسم المهمة زي ما هو في «مهامي»."
+            )
+        }
+    }
+
+    private fun openQuranDecision(lower: String, snapshot: AssistantSnapshot): ActionDecision? {
+        val openVerbs = setOf("افتح", "افتحلي", "هات", "وريني", "شوف", "عايز أقرا", "عايز اقرا")
+        if (!openVerbs.any { lower.contains(it) }) return null
+        if (!lower.contains("مصحف") && !lower.contains("قرآن") && !lower.contains("قران") && !lower.contains("ورد")) return null
+        return ActionDecision(
+            action = AssistantAction.OpenQuran,
+            text = "فتحت المصحف على صفحة ورد اليوم (صفحة ${snapshot.wirdNextPage}). قراءة مباركة!"
+        )
+    }
+
+    private fun openTodayDecision(lower: String): ActionDecision? {
+        if (!lower.contains("خطة اليوم")) return null
+        val showVerbs = setOf("افتح", "اعرض", "أعرض", "وريني", "هات", "شوف", "عرض", "اظهر", "أظهر")
+        if (!showVerbs.any { lower.contains(it) }) return null
+        return ActionDecision(
+            action = AssistantAction.OpenToday,
+            text = "فتحت خطة اليوم — دي مهامك وخطوتك التالية."
+        )
+    }
+
+    private fun completeTaskDecision(lower: String, snapshot: AssistantSnapshot): ActionDecision? {
+        if (lower.contains("ورد")) return null
+        val doneVerbs = setOf("خلص", "خلّص", "علّم", "علم", "أنجز", "انجز")
+        if (!doneVerbs.any { lower.contains(it) }) return null
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val query = stripCommandWords(
+            lower,
+            setOf(
+                "خلص", "خلّص", "خلصت", "خلصتي", "علّم", "علم", "أنجز", "انجز",
+                "أنجزت", "انجزت", "مهمة", "مهمه", "كمنجزة", "كمنجزه", "منجزة",
+                "منجزه", "تم", "دي", "ده", "اللي"
+            )
+        )
+        val mentionsTask = lower.contains("مهمة") || lower.contains("مهمه")
+        if (query.isBlank() && !mentionsTask) return null
+        val matches = matchOpenTasks(query, snapshot.openTasks)
+        // بلا ذكر «مهمة» وبلا تطابق مع مهمة موجودة، الرسالة ليست أمر إنجاز
+        // («علمني إنجليزي» مثلًا تحوي «علم» ولا تعني مهمة).
+        if (matches.isEmpty() && !mentionsTask) return null
+        return when {
+            matches.size == 1 -> {
+                val task = matches.first()
+                ActionDecision(
+                    action = AssistantAction.CompleteTask(taskId = task.id, title = task.title),
+                    text = "تمام، علمت مهمة «${task.title}» كمنجزة. أحسنت!"
+                )
+            }
+            matches.size > 1 -> ActionDecision(action = null, text = ambiguousText(query, matches, user))
+            query.isBlank() -> ActionDecision(
+                action = null,
+                text = "قولي اسم المهمة اللي خلصتها — مثلًا «خلصت مهمة مراجعة فيزياء» — وأنا أعلّمها كمنجزة."
+            )
+            else -> ActionDecision(
+                action = null,
+                text = "مش لاقي مهمة بالاسم ده بين مهامك المفتوحة يا $user. جرّب تقول اسمها زي ما هو في «مهامي»، أو اسألني «عندي مهام إيه؟» عشان أراجعها معاك."
+            )
+        }
     }
 
     /**
@@ -266,7 +575,7 @@ internal object AssistantEngine {
                 "أنا $name، مساعدك الشخصي في تطبيق مُنظِّم. بتكلم باللهجة المصرية، وكل اللي أعرفه عنك محفوظ على جهازك بس — مفيش حاجة بتطلع برّه."
             lower.contains("تقدر تعمل") || lower.contains("بتعمل ايه") || lower.contains("بتعمل إيه") ||
                 lower.contains("ساعدني ازاي") || lower.contains("ساعدني إزاي") ->
-                "أقدر أتابع معاك ورد القرآن ومهام اليوم والصلاة الجاية وسعراتك وعاداتك، من بيانات التطبيق نفسه. ولو عرّفتني عليك من تبويب «عرّفني عليك» هفهمك أكتر يوم بعد يوم."
+                "أقدر أنفّذ لك حاجات على طول من هنا، على جهازك من غير إنترنت: أضيف مهمة («ضيف مهمة مراجعة فيزياء الساعة 6»)، أسجّل ورد اليوم، أبدأ جلسة تركيز، أفتح المصحف على ورد اليوم، أعرض خطة اليوم، وأعلّم مهمة كمنجزة. وكمان أتابع معاك ورد القرآن ومهام اليوم والصلاة الجاية وسعراتك وعاداتك من بيانات التطبيق نفسه."
             lower.contains("ورد") || lower.contains("قرآن") || lower.contains("قران") ||
                 lower.contains("قرأت") || lower.contains("قرات") ->
                 if (snapshot.wirdDoneToday) {

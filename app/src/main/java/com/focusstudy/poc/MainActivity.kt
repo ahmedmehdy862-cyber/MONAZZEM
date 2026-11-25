@@ -119,6 +119,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -689,32 +690,36 @@ private fun AppRoot(
 
     var pickerTaskId by remember { mutableStateOf<Long?>(null) }
 
+    // جذر البدء البارد: عند فتح التطبيق من إشعار يكون الجذر وجهة الإشعار لا «اليوم».
+    val initialRoot = if (openUpdatesInitially) "updates" else if (openTasksInitially) "tasks" else "today"
     var rootTab by rememberSaveable {
-        mutableStateOf(if (openUpdatesInitially) "updates" else if (openTasksInitially) "tasks" else "today")
+        mutableStateOf(initialRoot)
     }
     // The assistant's display name, renameable from its own screen; the drawer row
     // and the conversation title read this state, not a hard-coded «منظم».
     var assistantName by remember { mutableStateOf(AssistantStore.loadSettings(context).name) }
     // A reminder tapped while the app is already running: onNewIntent bumps this counter.
+    // Every destination below goes through openSecondary, not a bare assignment, so
+    // the root the person was on is pushed onto the back stack and back returns to it.
     val tasksRequest = NotificationNavigation.openTasksRequest
     LaunchedEffect(tasksRequest) {
-        if (tasksRequest > 0) rootTab = "tasks"
+        if (tasksRequest > 0) openSecondary("tasks")
     }
     val updatesRequest = NotificationNavigation.openUpdatesRequest
     LaunchedEffect(updatesRequest) {
-        if (updatesRequest > 0) rootTab = "updates"
+        if (updatesRequest > 0) openSecondary("updates")
     }
     val quranRequest = NotificationNavigation.openQuranRequest
     LaunchedEffect(quranRequest) {
-        if (quranRequest > 0) rootTab = "quran"
+        if (quranRequest > 0) openSecondary("quran")
     }
     val skillsRequest = NotificationNavigation.openSkillsRequest
     LaunchedEffect(skillsRequest) {
-        if (skillsRequest > 0) rootTab = "skills"
+        if (skillsRequest > 0) openSecondary("skills")
     }
     val prayerTimesRequest = NotificationNavigation.openPrayerTimesRequest
     LaunchedEffect(prayerTimesRequest) {
-        if (prayerTimesRequest > 0) rootTab = "prayer_times"
+        if (prayerTimesRequest > 0) openSecondary("prayer_times")
     }
     val requestedTaskId = NotificationNavigation.requestedTaskId
     LaunchedEffect(requestedTaskId) {
@@ -730,7 +735,10 @@ private fun AppRoot(
     // last root, so back from a chain like «المزيد ← التخصيص ← التطبيقات الدائمة»
     // jumped straight to the start. The stack below is capped so it cannot grow
     // without bound, and it is cleared on every root jump (bottom bar / drawer).
-    var backStack by rememberSaveable { mutableStateOf(listOf<String>()) }
+    // بدء بارد من إشعار: «اليوم» قاعدة في المكدس، فيعود زر الرجوع إلى الرئيسية
+    // بدل الخروج من التطبيق. البدء البارد من المصحف/المهارات يأتي عبر عدّاد
+    // الإشعار، فيدفع openSecondary «اليوم» إلى المكدس عند استقباله.
+    var backStack by rememberSaveable { mutableStateOf(if (initialRoot == "today") emptyList() else listOf("today")) }
     fun openSecondary(tab: String) {
         if (tab == rootTab) return
         backStack = (backStack + rootTab).takeLast(MAX_BACK_STACK_ENTRIES)
@@ -745,6 +753,39 @@ private fun AppRoot(
         val previous = backStack.lastOrNull()
         backStack = backStack.dropLast(1)
         rootTab = previous ?: "today"
+    }
+
+    /**
+     * ينفّذ طلب المساعد ببدء جلسة تركيز عبر مسار بدء الجلسة القائم
+     * ([onStartSession]). المهمة المذكورة تُستخدم بتطبيقاتها المحظورة مضافًا إليها
+     * التطبيقات الدائمة، والجلسة العامة تستخدم التطبيقات الدائمة وحدها. بلا
+     * تطبيقات محظورة تُفتح شاشة إعداد الجلسة ليختارها المستخدم، بدل رفض
+     * صامت أو تنبيه عابر. معرّف 0 يعني جلسة عامة بلا مهمة.
+     */
+    suspend fun assistantStartFocus(action: AssistantAction.StartFocus): AssistantFocusOutcome {
+        if (SessionEngine.active.value != null) return AssistantFocusOutcome.ALREADY_RUNNING
+        val minutes = action.minutes.coerceIn(5, 120)
+        val taskId: Long
+        val title: String
+        val packages: Set<String>
+        if (action.taskId != null) {
+            val task = runCatching { TaskRepository.get(context).task(action.taskId) }.getOrNull()
+            packages = task?.blockedPackages.orEmpty() + preferences.permanentBlockedPackages
+            taskId = action.taskId
+            title = task?.title ?: action.taskTitle ?: "جلسة تركيز"
+        } else {
+            packages = preferences.permanentBlockedPackages
+            taskId = 0L
+            title = "جلسة تركيز"
+        }
+        if (packages.isEmpty()) {
+            setupTaskId = taskId
+            return AssistantFocusOutcome.SETUP_OPENED
+        }
+        return runCatching {
+            onStartSession(taskId, title, minutes, packages)
+            AssistantFocusOutcome.STARTED
+        }.getOrDefault(AssistantFocusOutcome.FAILED)
     }
 
     val screen = when {
@@ -768,8 +809,13 @@ private fun AppRoot(
         if (tab in bottomTabIds) openRoot(tab) else openSecondary(tab)
     }
     var quickAddTask by remember { mutableStateOf(0) }
+    // System back is also caught on a bottom-tab screen when the back stack is
+    // non-empty (e.g. the app was cold-started from a notification): back then pops
+    // to the previous root instead of leaving the app. On a bottom-tab screen with
+    // an empty stack, back keeps its usual meaning: exit the app.
     androidx.activity.compose.BackHandler(
-        enabled = screen != "session" && screen != "onboarding" && screen !in bottomTabIds
+        enabled = screen != "session" && screen != "onboarding" &&
+            (screen !in bottomTabIds || backStack.isNotEmpty())
     ) {
         when {
             pickerTaskId != null -> pickerTaskId = null
@@ -900,7 +946,39 @@ private fun AppRoot(
                     userName = preferences.studentName,
                     assistantName = assistantName,
                     onAssistantNameChanged = { assistantName = it },
-                    onOpenTasks = { openRoot("tasks") }
+                    onOpenTasks = { openRoot("tasks") },
+                    onAssistantAddTask = { title, dueAt, priorityLevel, recurrence ->
+                        runCatching {
+                            TaskRepository.get(context).add(
+                                title = title,
+                                plannedMinutes = 30,
+                                blockedPackages = emptySet(),
+                                priority = TaskPriority.from(priorityLevel ?: TaskPriority.MEDIUM.level),
+                                dueAt = dueAt,
+                                recurrence = recurrence
+                            )
+                            SessionEngine.notifyTasksChanged()
+                            true
+                        }.getOrDefault(false)
+                    },
+                    onAssistantLogWird = {
+                        runCatching {
+                            val life = LifeRepository.get(context)
+                            val settings = life.wirdSettings()
+                            val todayKey = LocalDate.now(AppTimeZone.zone(context)).toString()
+                            life.logWird(todayKey, settings.pagesPerDay, settings.surah)
+                        }.getOrDefault(false)
+                    },
+                    onAssistantStartFocus = { action -> assistantStartFocus(action) },
+                    onAssistantCompleteTask = { taskId ->
+                        runCatching {
+                            TaskRepository.get(context).setStatus(taskId, TaskStatus.DONE)
+                            SessionEngine.notifyTasksChanged()
+                            true
+                        }.getOrDefault(false)
+                    },
+                    onAssistantOpenQuran = { openSecondary("quran") },
+                    onAssistantOpenToday = { openRoot("today") }
                 )
                 "quran" -> QuranRouteScreen(onBack = { returnToPreviousTab() })
                 "adhkar" -> AdhkarRouteScreen(onBack = { returnToPreviousTab() })
@@ -956,6 +1034,8 @@ private fun AppRoot(
                     assistantName = assistantName,
                     onOpenSkills = { openSecondary("skills") },
                     onOpenGoals = { openSecondary("goals") },
+                    showBack = backStack.isNotEmpty() && current == "tasks",
+                    onBack = { returnToPreviousTab() },
                     onToggleTheme = {
                         onPreferencesChanged(
                             preferences.copy(
@@ -1047,7 +1127,12 @@ private fun TasksScreen(
     assistantName: String = "منظم",
     onToggleTheme: () -> Unit = {},
     onOpenSkills: () -> Unit = {},
-    onOpenGoals: () -> Unit = {}
+    onOpenGoals: () -> Unit = {},
+    // يظهر زر رجوع في الترويسة بدل زر القايمة عند فتح «مهامي» من إشعار (أو من
+    // أي مسار دفع الجذر الحالي إلى المكدس): بدونه لا مخرج مرئي من الشاشة، لأنها
+    // جذر في الشريط السفلي بلا زر رجوع في ترويستها أصلًا.
+    showBack: Boolean = false,
+    onBack: () -> Unit = {}
 
 ) {
 
@@ -1177,12 +1262,22 @@ private fun TasksScreen(
 
         Row(verticalAlignment = Alignment.CenterVertically) {
 
-            IconButton(onClick = onOpenDrawer) {
-                Icon(
-                    imageVector = Icons.Filled.Menu,
-                    contentDescription = "القايمة",
-                    tint = FocusColors.TextSecondary
-                )
+            if (showBack) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.Filled.ArrowBack,
+                        contentDescription = "رجوع",
+                        tint = FocusColors.TextSecondary
+                    )
+                }
+            } else {
+                IconButton(onClick = onOpenDrawer) {
+                    Icon(
+                        imageVector = Icons.Filled.Menu,
+                        contentDescription = "القايمة",
+                        tint = FocusColors.TextSecondary
+                    )
+                }
             }
 
             FocusLogo(size = 46.dp)

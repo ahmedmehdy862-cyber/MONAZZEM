@@ -15,6 +15,9 @@ import java.util.TimeZone
  * و[PrayerCalculator] — بلا أي كتابة في قواعد بيانات التطبيق، وكل قراءة ملفوفة
  * في runCatching حتى لا تكسر قراءة فاشلة المحادثة أبدًا.
  */
+/** مرجع خفيف لمهمة مفتوحة، يكفي المساعد لمطابقة اسم تذكره في المحادثة. */
+data class AssistantTaskRef(val id: Long, val title: String)
+
 data class AssistantSnapshot(
     val userName: String = "",
     val wirdDoneToday: Boolean = false,
@@ -26,6 +29,8 @@ data class AssistantSnapshot(
     val doneTasksToday: Int = 0,
     val nextTaskTitle: String? = null,
     val nextTaskDueText: String? = null,
+    /** كل المهام المفتوحة (مرتبة بالاستحقاق) ليطابق المساعد اسم مهمة يذكره المستخدم. */
+    val openTasks: List<AssistantTaskRef> = emptyList(),
     val dailyCalorieTarget: Int? = null,
     val caloriesToday: Int = 0,
     val exerciseDaysThisWeek: Int = 0,
@@ -83,6 +88,10 @@ internal object AssistantKnowledge {
                 timeZone = TimeZone.getTimeZone(zone.id)
             }.format(Date(due))
         }
+        val openTaskRefs = allTasks
+            .filter { !it.isDone && it.status != TaskStatus.DONE && it.status != TaskStatus.CANCELLED }
+            .sortedBy { it.dueAt ?: Long.MAX_VALUE }
+            .map { AssistantTaskRef(it.id, it.title) }
 
         val nextPrayer = runCatching { PrayerCalculator.next(context) }.getOrNull()
         val nextPrayerTime = nextPrayer?.let { PrayerCalculator.format(context, it.atMillis) }
@@ -99,6 +108,7 @@ internal object AssistantKnowledge {
             doneTasksToday = doneToday,
             nextTaskTitle = nextTask?.title,
             nextTaskDueText = nextDueText,
+            openTasks = openTaskRefs,
             dailyCalorieTarget = fitness?.let { dailyTargetKcal(it) },
             caloriesToday = calories.sumOf { it.calories },
             exerciseDaysThisWeek = exerciseLogs.map { it.day }.toSet().size,

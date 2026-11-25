@@ -108,7 +108,19 @@ internal fun AssistantScreen(
     userName: String,
     assistantName: String,
     onAssistantNameChanged: (String) -> Unit,
-    onOpenTasks: () -> Unit = {}
+    onOpenTasks: () -> Unit = {},
+    /** تنفّذها MainActivity: إضافة مهمة عبر TaskRepository وإشعار واجهة المهام. */
+    onAssistantAddTask: suspend (String, Long?, Int?, Recurrence) -> Boolean = { _, _, _, _ -> false },
+    /** تنفّذها MainActivity: تسجيل ورد اليوم عبر LifeRepository بإعدادات الورد. */
+    onAssistantLogWird: suspend () -> Boolean = { false },
+    /** تنفّذها MainActivity: بدء جلسة عبر مسار بدء الجلسة القائم أو فتح إعدادها. */
+    onAssistantStartFocus: suspend (AssistantAction.StartFocus) -> AssistantFocusOutcome = { AssistantFocusOutcome.FAILED },
+    /** تنفّذها MainActivity: تعليم مهمة كمنجزة عبر TaskRepository. */
+    onAssistantCompleteTask: suspend (Long) -> Boolean = { false },
+    /** تنفّذها MainActivity: انتقال إلى مسار المصحف المباشر. */
+    onAssistantOpenQuran: () -> Unit = {},
+    /** تنفّذها MainActivity: انتقال إلى خطة اليوم. */
+    onAssistantOpenToday: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -117,6 +129,10 @@ internal fun AssistantScreen(
     var profile by remember { mutableStateOf(AssistantStore.loadProfile(context)) }
     var messages by remember { mutableStateOf(AssistantStore.loadHistory(context)) }
     var snapshot by remember { mutableStateOf(AssistantSnapshot(userName = userName)) }
+    // تاريخ اليوم ومنطقته الزمنية (من إعدادات التطبيق) لتمريرهما إلى المحرك:
+    // استخراج موعد مهمة أو مدة جلسة يحتاجان تاريخ اليوم والمنطقة الصحيحين.
+    val today = rememberCurrentDate()
+    val zone = remember(context) { AppTimeZone.zone(context) }
     var tab by rememberSaveable { mutableStateOf(0) }
     var input by rememberSaveable { mutableStateOf("") }
     var avatarState by remember { mutableStateOf(AssistantAvatarState.IDLE) }
@@ -150,15 +166,55 @@ internal fun AssistantScreen(
         scope.launch {
             val fresh = AssistantKnowledge.load(context, userName)
             snapshot = fresh
-            val reply = AssistantEngine.reply(clean, fresh, settings, facts, profile)
+            val reply = AssistantEngine.reply(clean, fresh, settings, facts, profile, today = today, zone = zone)
             reply.learnedFact?.let { learned ->
                 facts = facts + learned
                 AssistantStore.saveFacts(context, facts)
             }
-            addMessage("assistant", reply.text)
-            if (settings.speakReplies) voice.speak(reply.text)
-            delay(reply.text.length.coerceIn(30, 130) * 45L)
+            // الفعل يُنفَّذ أولًا، ثم يُعرض تأكيده: نص المحرك عند النجاح، أو
+            // رسالة بديلة دقيقة عند الفشل أو عند فتح إعداد الجلسة بدل بدئها.
+            val finalText = reply.action?.let { executeAssistantAction(it, reply.text) } ?: reply.text
+            addMessage("assistant", finalText)
+            if (settings.speakReplies) voice.speak(finalText)
+            delay(finalText.length.coerceIn(30, 130) * 45L)
             avatarState = AssistantAvatarState.IDLE
+        }
+    }
+
+    /**
+     * ينفّذ فعل المساعد عبر دوال رد النداء من MainActivity، ويعيد نص التأكيد
+     * النهائي للعرض في المحادثة.
+     */
+    suspend fun executeAssistantAction(action: AssistantAction, confirmation: String): String = when (action) {
+        is AssistantAction.AddTask ->
+            if (onAssistantAddTask(action.title, action.dueAt, action.priorityLevel, action.recurrence)) confirmation
+            else "حاولت أضيف المهمة بس حصلت مشكلة. جرّب تاني من زر الإضافة السريع."
+        AssistantAction.LogWird ->
+            if (onAssistantLogWird()) confirmation
+            else "ورد النهاردة متسجّل أصلًا — أو حصلت مشكلة في التسجيل. افتح المصحف للتأكيد."
+        is AssistantAction.StartFocus -> when (onAssistantStartFocus(action)) {
+            AssistantFocusOutcome.STARTED -> confirmation
+            AssistantFocusOutcome.SETUP_OPENED ->
+                if (action.taskTitle != null) {
+                    "فتحت لك إعداد جلسة مهمة «${action.taskTitle}» — اختر التطبيقات المحظورة واضغط «ابدأ الجلسة»."
+                } else {
+                    "فتحت لك إعداد جلسة تركيز عامة — اختر التطبيقات المحظورة واضغط «ابدأ الجلسة»."
+                }
+            AssistantFocusOutcome.ALREADY_RUNNING ->
+                "في جلسة تركيز شغالة أصلًا دلوقتي. خلصها الأول وبعدين نبدأ جلسة جديدة."
+            AssistantFocusOutcome.FAILED ->
+                "ما قدرتش أبدأ الجلسة دلوقتي. جرّب من «مهامي» — افتح المهمة واضغط بدء الجلسة."
+        }
+        is AssistantAction.CompleteTask ->
+            if (onAssistantCompleteTask(action.taskId)) confirmation
+            else "ما قدرتش أعلّم المهمة كمنجزة. جرّب من «مهامي»."
+        AssistantAction.OpenQuran -> {
+            onAssistantOpenQuran()
+            confirmation
+        }
+        AssistantAction.OpenToday -> {
+            onAssistantOpenToday()
+            confirmation
         }
     }
 
@@ -310,6 +366,17 @@ internal fun AssistantScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages) { message -> AssistantMessageBubble(message) }
+            }
+            Spacer(Modifier.height(8.dp))
+            // صف الأوامر التنفيذية أولًا: الضغط على أي منها ينفّذ الفعل فعلًا
+            // (إضافة مهمة، تسجيل ورد، بدء جلسة، فتح المصحف أو خطة اليوم).
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
+            ) {
+                ASSISTANT_ACTION_PROMPTS.forEach { prompt ->
+                    AssistChip(onClick = { send(prompt) }, label = { Text(prompt) })
+                }
             }
             Spacer(Modifier.height(8.dp))
             Row(
