@@ -51,10 +51,10 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("رجوع") }
             Spacer(Modifier.weight(1f))
-            Text("الخطة الذكية", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("الخطة الأسبوعية", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(8.dp))
-        Text("خطة عملية من مهامك ومواعيدك الفعلية. خصصنا حدًا يوميًا قدره $dailyGoal دقيقة، مع تقسيم الجلسات إلى فترات قصيرة.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        Text("خطة أسبوعك الذكية: كتل زمنية مقترحة من مهامك ومواعيدك الفعلية — رتّب أسبوعك كاملًا، لا يومك فقط. خصصنا حدًا يوميًا قدره $dailyGoal دقيقة، مع تقسيم الجلسات إلى فترات قصيرة.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
         Text("${fresh.size} جلسة مقترحة · $totalMinutes دقيقة هذا الأسبوع · $openCount مهام مفتوحة", color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(10.dp))
@@ -97,14 +97,14 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
                 }
                 items(blocks, key = { "${date}-${it.task.id}" }) { block ->
                     Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(block.task.title, maxLines = 1, fontWeight = FontWeight.SemiBold)
-                                Text("${block.minutes} دقيقة · ${block.task.priority.label}", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                                if (block.minutes >= 45) Text("استراحة 10 دقائق بعد الجلسة", color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelSmall)
-                            }
-                            TextButton(onClick = { onStartTask(block.task.id) }) { Text("ابدأ") }
-                        }
+                        UnifiedTaskCard(
+                            task = block.task,
+                            today = today,
+                            density = TaskCardDensity.COMPACT,
+                            subtitle = "${block.minutes} دقيقة · ${block.task.priority.label}" +
+                                if (block.minutes >= 45) " · استراحة 10 دقائق بعد الجلسة" else "",
+                            onStart = { onStartTask(block.task.id) }
+                        )
                     }
                 }
             }

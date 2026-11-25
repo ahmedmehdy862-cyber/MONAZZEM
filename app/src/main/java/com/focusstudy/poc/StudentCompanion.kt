@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.io.File
@@ -226,6 +227,15 @@ internal fun AvatarPortrait(
     }
 }
 
+/** رسالة الرفيق من حالة اليوم — تُستخدم في البطاقة وفي ملخص صف «تفاصيل يومك». */
+internal fun companionMessage(sessionActive: Boolean, completedToday: Int, urgentTitle: String?, hasPending: Boolean): String = when {
+    sessionActive -> "جلسة رائعة! أنا جنبك لحد ما تخلص."
+    completedToday > 0 -> "أنجزت $completedToday اليوم. كمّل بنفس الهدوء!"
+    urgentTitle != null -> "نبدأ بـ $urgentTitle؟ خطوة واحدة تكفي للبداية."
+    hasPending -> "اختار مهمة واحدة، وأنا هفضل أشجعك."
+    else -> "يوم جديد يعني فرصة جديدة. أضف أول خطوة!"
+}
+
 @Composable
 internal fun StudyCompanionCard(preferences: FocusPreferences, tasks: List<StudyTask>) {
     val session by SessionEngine.active.collectAsState()
@@ -236,13 +246,12 @@ internal fun StudyCompanionCard(preferences: FocusPreferences, tasks: List<Study
     val pending = tasks.filter { !it.isDone && it.status != TaskStatus.DONE && it.status != TaskStatus.CANCELLED }
     val urgent = pending.firstOrNull { it.priority == TaskPriority.URGENT }
     val style = CompanionStyle.all[preferences.companionStyle.coerceIn(0, CompanionStyle.all.lastIndex)]
-    val message = when {
-        session != null -> "جلسة رائعة! أنا جنبك لحد ما تخلص."
-        completedToday > 0 -> "أنجزت $completedToday اليوم. كمّل بنفس الهدوء!"
-        urgent != null -> "نبدأ بـ ${urgent.title}؟ خطوة واحدة تكفي للبداية."
-        pending.isNotEmpty() -> "اختار مهمة واحدة، وأنا هفضل أشجعك."
-        else -> "يوم جديد يعني فرصة جديدة. أضف أول خطوة!"
-    }
+    val message = companionMessage(
+        sessionActive = session != null,
+        completedToday = completedToday,
+        urgentTitle = urgent?.title,
+        hasPending = pending.isNotEmpty()
+    )
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
@@ -252,9 +261,9 @@ internal fun StudyCompanionCard(preferences: FocusPreferences, tasks: List<Study
             AvatarPortrait(preferences.avatarPath, preferences.studentName, preferences.companionStyle, 62.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("${style.mark} رفيقك ${style.title}", style = MaterialTheme.typography.labelLarge, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold)
-                Text(message, style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
-                Text(style.motto, style = MaterialTheme.typography.labelSmall, color = FocusColors.onTint(FocusColors.Blue))
+                Text("${style.mark} رفيقك ${style.title}", style = MaterialTheme.typography.labelLarge, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(message, style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(style.motto, style = MaterialTheme.typography.labelSmall, color = FocusColors.onTint(FocusColors.Blue), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text("✦", color = FocusColors.Amber, style = MaterialTheme.typography.titleLarge)
         }

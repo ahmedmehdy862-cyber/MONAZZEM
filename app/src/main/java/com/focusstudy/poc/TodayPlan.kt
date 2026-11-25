@@ -1,25 +1,17 @@
 package com.focusstudy.poc
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -28,9 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
@@ -93,7 +83,6 @@ internal fun TodayPlanSection(
     tasks: List<StudyTask>,
     onToggleDone: (StudyTask) -> Unit,
     onStartTask: (Long) -> Unit,
-    onDeferToTomorrow: (StudyTask) -> Unit,
     onScheduleToday: (StudyTask) -> Unit,
     onAddTask: () -> Unit
 ) {
@@ -188,89 +177,18 @@ internal fun TodayPlanSection(
                     }
                 }
                 group.tasks.forEach { task ->
-                    TodayPlanRow(
+                    UnifiedTaskCard(
                         task = task,
+                        today = LocalDate.now(),
+                        density = TaskCardDensity.COMPACT,
                         onToggleDone = { onToggleDone(task) },
                         onStart = { onStartTask(task.id) },
-                        onScheduleToday = { onScheduleToday(task) },
-                        onDefer = { onDeferToTomorrow(task) }
+                        onScheduleToday = { onScheduleToday(task) }
                     )
+                    HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.6f), modifier = Modifier.padding(start = 56.dp))
                 }
             }
             Spacer(Modifier.height(4.dp))
         }
     }
-}
-
-@Composable
-private fun TodayPlanRow(
-    task: StudyTask,
-    onToggleDone: () -> Unit,
-    onStart: () -> Unit,
-    onScheduleToday: () -> Unit,
-    onDefer: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onStart)
-            .heightIn(min = FocusSpacing.rowMinHeight)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Checkbox(
-            checked = TaskState.completed(task),
-            onCheckedChange = { onToggleDone() },
-            colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
-        )
-        Column(Modifier.weight(1f)) {
-            Text(
-                task.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = FocusColors.TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(6.dp).clip(CircleShape)
-                        .background(priorityColor(task.priority))
-                )
-                Spacer(Modifier.width(5.dp))
-                Text(
-                    DayPlan.timeLabel(task) +
-                        (if (task.recurrence != Recurrence.NONE) " · ${RecurrenceEngine.label(task.recurrence)}" else ""),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FocusColors.TextSecondary
-                )
-            }
-        }
-        Spacer(Modifier.width(6.dp))
-        if (task.dueAt == null) {
-            BoxedAction("اليوم") { onScheduleToday() }
-        } else {
-            BoxedAction("ابدأ", onClick = onStart)
-        }
-    }
-    HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.6f), modifier = Modifier.padding(start = 56.dp))
-}
-
-/** Priority at a glance: urgent reads red, high amber, medium teal, low stays quiet. */
-internal fun priorityColor(priority: TaskPriority): Color = when (priority) {
-    TaskPriority.URGENT -> FocusColors.Rose
-    TaskPriority.HIGH -> FocusColors.Amber
-    TaskPriority.MEDIUM -> FocusColors.Blue
-    TaskPriority.LOW -> FocusColors.TextMuted
-}
-
-@Composable
-private fun BoxedAction(label: String, onClick: () -> Unit) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelMedium,
-        color = FocusColors.onTint(FocusColors.Blue),
-        modifier = Modifier
-            .clip(RoundedCornerShape(FocusSpacing.radiusChip))
-            .background(FocusColors.SurfaceHigh)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp)
-    )
 }

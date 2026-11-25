@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.LocalTime
@@ -110,7 +111,9 @@ internal fun DailyIntentionCard(openToday: Int, doneToday: Int) {
                     "«$saved»",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = FocusColors.TextPrimary
+                    color = FocusColors.TextPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(2.dp))
                 TextButton(onClick = { draft = saved; editing = true }, modifier = Modifier.align(Alignment.End)) {

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
@@ -118,22 +120,26 @@ internal fun TaskListControls(
                 TextButton(onClick = { sortMenuExpanded = true }) {
                     Text("ترتيب")
                 }
-                DropdownMenu(
-                    expanded = sortMenuExpanded,
-                    onDismissRequest = { sortMenuExpanded = false }
-                ) {
-                    TaskListSort.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option.label) },
-                            onClick = {
-                                onSortChange(option)
-                                sortMenuExpanded = false
-                            },
-                            trailingIcon = if (sort == option) {
-                                { Text("✓", color = MaterialTheme.colorScheme.primary) }
-                            } else null
-                        )
-                    }
+            }
+
+            // قائمة الترتيب ابنة مباشرة لصف الأدوات (بعرض الشاشة)، لا لمرساة زر «ترتيب»
+            // الصغيرة عند الحافة اليسرى في RTL — فتنفتح من الحافة اليمنى وتبقى داخل الشاشة.
+            DropdownMenu(
+                expanded = sortMenuExpanded,
+                onDismissRequest = { sortMenuExpanded = false },
+                modifier = Modifier.widthIn(max = 280.dp)
+            ) {
+                TaskListSort.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        onClick = {
+                            onSortChange(option)
+                            sortMenuExpanded = false
+                        },
+                        trailingIcon = if (sort == option) {
+                            { Text("✓", color = MaterialTheme.colorScheme.primary) }
+                        } else null
+                    )
                 }
             }
         }

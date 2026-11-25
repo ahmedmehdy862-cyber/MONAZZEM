@@ -808,30 +808,12 @@ private fun TasksSection(
         }
         state.tasksDueToday.forEach { task ->
             Column(Modifier.fillMaxWidth()) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = FocusSpacing.rowMinHeight)
-                ) {
-                    Checkbox(
-                        checked = task.status == TaskStatus.DONE || task.isDone,
-                        onCheckedChange = { onToggleTask(task, it) },
-                        colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            task.title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = FocusColors.TextPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            DayPlan.timeLabel(task),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = FocusColors.TextSecondary
-                        )
-                    }
-                }
+                UnifiedTaskCard(
+                    task = task,
+                    today = LocalDate.now(),
+                    density = TaskCardDensity.COMPACT,
+                    onToggleDone = { onToggleTask(task, !TaskState.completed(task)) }
+                )
                 HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.6f))
             }
         }

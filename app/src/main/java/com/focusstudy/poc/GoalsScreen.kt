@@ -457,15 +457,13 @@ private fun GoalCard(
             }
             linkedTasks.forEach { task ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        (if (task.isDone || task.status == TaskStatus.DONE) "✓ " else "○ ") + task.title,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (task.isDone || task.status == TaskStatus.DONE) FocusColors.TextMuted else FocusColors.TextPrimary,
-                        modifier = Modifier.weight(1f).clickable { onOpenTask(task) }
+                    UnifiedTaskCard(
+                        task = task,
+                        today = LocalDate.now(),
+                        density = TaskCardDensity.COMPACT,
+                        modifier = Modifier.weight(1f),
+                        onToggleDone = { onOpenTask(task) }
                     )
-                    TextButton(onClick = { onOpenTask(task) }) {
-                        Text(if (task.isDone || task.status == TaskStatus.DONE) "إعادة فتح" else "أنجز", color = FocusColors.TextSecondary)
-                    }
                     TextButton(onClick = { onUnlink("task", task.id) }) { Text("×", color = FocusColors.TextMuted) }
                 }
             }

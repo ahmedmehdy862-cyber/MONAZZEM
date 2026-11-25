@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.net.HttpURLConnection
 import java.net.URL
@@ -223,9 +224,22 @@ internal fun TeamMessageBanner(onOpenAll: () -> Unit) {
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { TeamMessages.dismiss(context, current.id); message = null }) { Text("تم") }
             }
-            Text(current.title, style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+            Text(
+                current.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = FocusColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
             Spacer(Modifier.height(4.dp))
-            Text(current.body, style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
+            Text(
+                current.body,
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
             Spacer(Modifier.height(6.dp))
             TextButton(onClick = onOpenAll) { Text("كل الرسائل") }
         }

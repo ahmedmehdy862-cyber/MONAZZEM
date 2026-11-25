@@ -32,6 +32,7 @@ import androidx.activity.compose.setContent
 
 import androidx.activity.result.contract.ActivityResultContracts
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -91,7 +92,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 
 import androidx.compose.foundation.shape.CircleShape
 
@@ -117,6 +117,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
@@ -200,6 +202,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.input.KeyboardType
@@ -220,6 +223,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
@@ -1152,7 +1156,7 @@ private fun TasksScreen(
 
                     text = ArabicDate.withSuffix(
                         today,
-                        if (dashboard) "رتّب يومك وابدأ بخطوة صغيرة" else "أنشئ مهامك ونظّم أولوياتك"
+                        if (dashboard) "تركيز اليوم: خطوتك التالية وخطة اليوم فقط" else "القائمة الكاملة — ابحث وصفِّ ورتّب"
                     ),
 
                     style = MaterialTheme.typography.bodySmall,
@@ -1206,7 +1210,9 @@ private fun TasksScreen(
         }
 
         if (dashboard) {
-            // The day dashboard is taller than one screen on small phones, so it scrolls.
+            // تسلسل بصري واحد يجيب عن «ماذا أفعل الآن؟»: بطل واحد (التقدّم + الخطوة
+            // التالية) أولًا، ثم خطة اليوم. باقي بطاقات اليوم مطوية في «تفاصيل يومك»
+            // أسفل الصفحة: موجودة وقابلة للوصول، لكنها لا تنافس البطل.
             // Bottom padding keeps the day cards clear of the floating + button.
             Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(bottom = LayoutSpec.CONTENT_BOTTOM_DP.dp)) {
             Spacer(Modifier.height(12.dp))
@@ -1217,53 +1223,25 @@ private fun TasksScreen(
                 doneToday = todayTasksForWelcome.count { it.isDone || it.status == TaskStatus.DONE }
             )
             Spacer(Modifier.height(12.dp))
-            DailyIntentionCard(
-                openToday = todayTasksForWelcome.count { !it.isDone && it.status != TaskStatus.DONE },
-                doneToday = todayTasksForWelcome.count { it.isDone || it.status == TaskStatus.DONE }
+            HeroCard(
+                totalMinutes = totalMinutes,
+                tasks = tasks,
+                preferences = preferences,
+                nextStep = nextStep,
+                onStartNextStep = { step -> onOpenSetup(step.task.id) },
+                onSnoozeNextStep = { step ->
+                    val base = maxOf(step.task.dueAt ?: System.currentTimeMillis(), System.currentTimeMillis())
+                    viewModel.reschedule(step.task.id, base + 60 * 60 * 1000L)
+                },
+                onAddTask = { showAddDialog = true }
             )
-            Spacer(Modifier.height(12.dp))
-            PrayerCountdownCard(onOpenPrayerSettings = onOpenPrayerSettings)
-            Spacer(Modifier.height(12.dp))
-            StudyCompanionCard(preferences, tasks)
-            Spacer(Modifier.height(12.dp))
-            // Small, local entry point to the assistant; the full Today redesign
-            // is a later phase, so this stays one card and nothing else moves.
-            AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant)
-            Spacer(Modifier.height(12.dp))
-            HeroCard(totalMinutes = totalMinutes, tasks = tasks, preferences = preferences)
             Spacer(Modifier.height(14.dp))
-            if (nextStep != null) {
-                nextStep?.let { step ->
-                    NextStepCard(
-                        step = step,
-                        onStart = { onOpenSetup(step.task.id) },
-                        onSnooze = {
-                            val base = maxOf(step.task.dueAt ?: System.currentTimeMillis(), System.currentTimeMillis())
-                            viewModel.reschedule(step.task.id, base + 60 * 60 * 1000L)
-                        }
-                    )
-                }
-            } else {
-                DashboardEmptyStep(onAddTask = { showAddDialog = true })
-            }
-            if (!accessibilityOn) {
-                Spacer(Modifier.height(10.dp))
-                AccessibilityWarningCard(onEnable = { openAccessibilitySettings(context) })
-            }
-            Spacer(Modifier.height(12.dp))
-            TeamMessageBanner(onOpenAll = onOpenMessages)
-            Spacer(Modifier.height(12.dp))
             TodayPlanSection(
                 tasks = tasks,
                 onToggleDone = { task ->
                     viewModel.setStatus(task.id, if (task.isDone) TaskStatus.TODO else TaskStatus.DONE)
                 },
                 onStartTask = { taskId -> onOpenSetup(taskId) },
-                onDeferToTomorrow = { task ->
-                    val start = java.time.LocalDate.now().plusDays(1)
-                        .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    viewModel.reschedule(task.id, start)
-                },
                 onScheduleToday = { task ->
                     val endOfToday = java.time.LocalDate.now()
                         .atTime(23, 59)
@@ -1271,6 +1249,14 @@ private fun TasksScreen(
                     viewModel.reschedule(task.id, endOfToday)
                 },
                 onAddTask = { showAddDialog = true }
+            )
+            Spacer(Modifier.height(12.dp))
+            AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant)
+            Spacer(Modifier.height(12.dp))
+            DayExtrasSection(
+                preferences = preferences,
+                tasks = tasks,
+                onOpenPrayerSettings = onOpenPrayerSettings
             )
             Spacer(Modifier.height(12.dp))
             Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
@@ -1282,6 +1268,12 @@ private fun TasksScreen(
                     TextButton(onClick = onOpenAllTasks) { Text("إدارة المهام") }
                 }
             }
+            if (!accessibilityOn) {
+                Spacer(Modifier.height(10.dp))
+                AccessibilityWarningCard(onEnable = { openAccessibilitySettings(context) })
+            }
+            Spacer(Modifier.height(12.dp))
+            TeamMessageBanner(onOpenAll = onOpenMessages)
             Spacer(Modifier.height(12.dp))
             }
         } else {
@@ -1317,6 +1309,12 @@ private fun TasksScreen(
 
         }
 
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "القائمة الكاملة بكل مهامك — ابحث، صفِّ، ورتّب كما يناسبك.",
+            style = MaterialTheme.typography.bodySmall,
+            color = FocusColors.TextSecondary
+        )
         Spacer(Modifier.height(10.dp))
         TaskListControls(
             query = taskQuery,
@@ -1339,18 +1337,17 @@ private fun TasksScreen(
 
         ) {
 
-            itemsIndexed(visibleTasks, key = { _, task -> task.id }) { index, task ->
+            items(visibleTasks, key = { task -> task.id }) { task ->
 
-                TaskCard(
+                UnifiedTaskCard(
 
                     task = task,
                     today = today,
+                    density = TaskCardDensity.FULL,
 
                     typeLabel = task.typeId?.let { typeNames[it] }.orEmpty(),
 
                     subjectName = task.subjectId?.let { subjectNames[it] },
-
-                    accent = FocusColors.accents[index % FocusColors.accents.size],
 
                     onStart = { onOpenSetup(task.id) },
 
@@ -1532,54 +1529,6 @@ private fun TasksScreen(
 
 @Composable
 
-private fun NextStepCard(step: NextStep, onStart: () -> Unit, onSnooze: () -> Unit) {
-
-    val task = step.task
-    Card(
-        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(FocusSpacing.radiusCard)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("خطوتك التالية", color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.height(3.dp))
-                Text(task.title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                Text(
-                    "لماذا الآن؟ ${step.reason}",
-                    color = FocusColors.TextSecondary,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    "${step.suggestedMinutes} دقيقة مقترحة · ${task.remainingMinutes} متبقية · ${task.priority.label}",
-                    color = FocusColors.TextMuted,
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onSnooze) { Text("أجّل") }
-                TextButton(onClick = onStart) { Text("ابدأ") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DashboardEmptyStep(onAddTask: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("جاهز لخطوتك الأولى؟", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
-                Text("أضف مهمة وسنساعدك على تنظيم وقتها.", style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary)
-            }
-            TextButton(onClick = onAddTask) { Text("أضف مهمة") }
-        }
-    }
-}
-
-@Composable
 private fun MoreSectionsScreen(onOpen: (String) -> Unit) {
     Column(
         Modifier
@@ -1598,7 +1547,20 @@ private fun MoreSectionsScreen(onOpen: (String) -> Unit) {
 
 @Composable
 
-private fun HeroCard(totalMinutes: Int, tasks: List<StudyTask>, preferences: FocusPreferences) {
+/**
+ * بطل اليوم الوحيد: حلقة تقدّم مهام اليوم + الخطوة التالية داخل البطاقة نفسها،
+ * فتقود العين إلى «ماذا أفعل الآن؟» قبل أي شيء آخر. عند غياب خطوة تالية يعرض
+ * دعوة لإضافة أول مهمة بدل بطاقة منفصلة.
+ */
+private fun HeroCard(
+    totalMinutes: Int,
+    tasks: List<StudyTask>,
+    preferences: FocusPreferences,
+    nextStep: NextStep?,
+    onStartNextStep: (NextStep) -> Unit,
+    onSnoozeNextStep: (NextStep) -> Unit,
+    onAddTask: () -> Unit
+) {
 
     val today = rememberCurrentDate()
     val todayTasks = tasks.filter { it.dueAt.isOnLocalDate(today) }
@@ -1619,71 +1581,260 @@ private fun HeroCard(totalMinutes: Int, tasks: List<StudyTask>, preferences: Foc
 
     ) {
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
 
-            Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
 
-                Text(
-
-                    text = "مهام اليوم",
-
-                    style = MaterialTheme.typography.labelLarge,
-
-                    color = Color.White.copy(alpha = 0.95f)
-
-                )
-
-                Spacer(Modifier.height(4.dp))
-
-                Row(verticalAlignment = Alignment.Bottom) {
+                Column(modifier = Modifier.weight(1f)) {
 
                     Text(
 
-                        // LRM marks keep "1 / 3" reading left-to-right inside the RTL layout.
-                        text = "‎$done / ${todayTasks.size}‎",
+                        text = "مهام اليوم",
 
-                        fontSize = 40.sp,
+                        style = MaterialTheme.typography.labelLarge,
 
-                        fontWeight = FontWeight.Bold,
-
-                        color = Color.White
+                        color = Color.White.copy(alpha = 0.95f)
 
                     )
 
+                    Spacer(Modifier.height(4.dp))
+
+                    Row(verticalAlignment = Alignment.Bottom) {
+
+                        Text(
+
+                            // LRM marks keep "1 / 3" reading left-to-right inside the RTL layout.
+                            text = "‎$done / ${todayTasks.size}‎",
+
+                            fontSize = 40.sp,
+
+                            fontWeight = FontWeight.Bold,
+
+                            color = Color.White
+
+                        )
+
+                        Text(
+
+                            text = " مكتملة",
+
+                            style = MaterialTheme.typography.bodyMedium,
+
+                            color = Color.White.copy(alpha = 0.95f),
+
+                            modifier = Modifier.padding(bottom = 8.dp)
+
+                        )
+
+                    }
+
+                    Spacer(Modifier.height(6.dp))
+
                     Text(
 
-                        text = " مكتملة",
+                        text = "هدف اليوم: ${preferences.dailyGoalMinutes} دقيقة · التركيز الكلي: $totalMinutes دقيقة",
 
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
 
-                        color = Color.White.copy(alpha = 0.95f),
-
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        color = Color.White.copy(alpha = 0.95f)
 
                     )
 
                 }
 
-                Spacer(Modifier.height(6.dp))
-
-                Text(
-
-                    text = "هدف اليوم: ${preferences.dailyGoalMinutes} دقيقة · التركيز الكلي: $totalMinutes دقيقة",
-
-                    style = MaterialTheme.typography.bodySmall,
-
-                    color = Color.White.copy(alpha = 0.95f)
-
-                )
+                RingBadge(progress = percent / 100f, label = "$percent%")
 
             }
 
-            RingBadge(progress = percent / 100f, label = "$percent%")
+            HorizontalDivider(
+                modifier = Modifier.padding(top = 16.dp, bottom = 12.dp),
+                color = Color.White.copy(alpha = 0.25f)
+            )
 
+            val step = nextStep
+            if (step != null) {
+                val task = step.task
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("خطوتك التالية", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            task.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "لماذا الآن؟ ${step.reason}",
+                            color = Color.White.copy(alpha = 0.85f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${step.suggestedMinutes} دقيقة مقترحة · ${task.remainingMinutes} متبقية · ${task.priority.label}",
+                            color = Color.White.copy(alpha = 0.75f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = { onSnoozeNextStep(step) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                        ) { Text("أجّل") }
+                        TextButton(
+                            onClick = { onStartNextStep(step) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                        ) { Text("ابدأ", fontWeight = FontWeight.SemiBold) }
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("جاهز لخطوتك الأولى؟", style = MaterialTheme.typography.titleSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        Text("أضف مهمة وسنساعدك على تنظيم وقتها.", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f))
+                    }
+                    TextButton(
+                        onClick = onAddTask,
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                    ) { Text("أضف مهمة", fontWeight = FontWeight.SemiBold) }
+                }
+            }
         }
 
     }
 
+}
+
+/**
+ * «تفاصيل يومك»: النية والصلاة والرفيق في صفوف مدمجة قابلة للطي تحت البطل وخطة اليوم.
+ * كل صف يعرض ملخصًا من سطر واحد حتى وهو مطوي، فيبقى المحتوى موجودًا وقابلًا للوصول
+ * دون أن ينافس بطل اليوم. البطاقات الكاملة نفسها تظهر عند فتح الصف.
+ */
+@Composable
+private fun DayExtrasSection(
+    preferences: FocusPreferences,
+    tasks: List<StudyTask>,
+    onOpenPrayerSettings: () -> Unit
+) {
+    val context = LocalContext.current
+    val today = LocalDate.now()
+    val todayTasks = tasks.filter { it.dueAt.isOnLocalDate(today) }
+    val openToday = todayTasks.count { !it.isDone && it.status != TaskStatus.DONE }
+    val doneToday = todayTasks.count { it.isDone || it.status == TaskStatus.DONE }
+    var expanded by rememberSaveable { mutableStateOf<String?>(null) }
+
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "تفاصيل يومك",
+            style = MaterialTheme.typography.labelMedium,
+            color = FocusColors.TextMuted,
+            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+        )
+        DayExtraRow(
+            label = "نية اليوم",
+            summary = DailyIntentions.of(context, today).ifBlank { "لم تكتب نيتك بعد — أضف سطرًا واحدًا" },
+            expanded = expanded == "intention",
+            onToggle = { expanded = if (expanded == "intention") null else "intention" }
+        ) {
+            DailyIntentionCard(openToday = openToday, doneToday = doneToday)
+        }
+        DayExtraRow(
+            label = "الصلاة القادمة",
+            summary = prayerSummary(),
+            expanded = expanded == "prayer",
+            onToggle = { expanded = if (expanded == "prayer") null else "prayer" }
+        ) {
+            PrayerCountdownCard(onOpenPrayerSettings = onOpenPrayerSettings)
+        }
+        DayExtraRow(
+            label = "رفيقك",
+            summary = companionSummary(preferences, tasks),
+            expanded = expanded == "companion",
+            onToggle = { expanded = if (expanded == "companion") null else "companion" }
+        ) {
+            StudyCompanionCard(preferences, tasks)
+        }
+    }
+}
+
+@Composable
+private fun DayExtraRow(
+    label: String,
+    summary: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(FocusSpacing.radiusCard))
+                .background(FocusColors.Surface)
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = FocusColors.onTint(FocusColors.Blue))
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FocusColors.TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "طي" else "عرض",
+                tint = FocusColors.TextSecondary
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) { content() }
+        }
+        Spacer(Modifier.height(10.dp))
+    }
+}
+
+/** ملخص الصلاة القادمة لصف «تفاصيل يومك» — يُحدَّث كل 30 ثانية مثل البطاقة. */
+@Composable
+private fun prayerSummary(): String {
+    val context = LocalContext.current
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000L)
+            tick += 1
+        }
+    }
+    val next = remember(tick) { runCatching { PrayerCalculator.next(context) }.getOrNull() }
+    if (next == null) return "حدّد موقعك لمعرفة مواقيت الصلاة"
+    val minutes = ((next.atMillis - System.currentTimeMillis()) / 60_000L).coerceAtLeast(0)
+    return "${next.name} · ${PrayerCountdownFormat.label(minutes)}"
+}
+
+/** ملخص رسالة الرفيق لصف «تفاصيل يومك» — نفس منطق البطاقة، بلا ازدواج. */
+@Composable
+private fun companionSummary(preferences: FocusPreferences, tasks: List<StudyTask>): String {
+    val session by SessionEngine.active.collectAsState()
+    val today = LocalDate.now()
+    val zone = AppTimeZone.zone(LocalContext.current)
+    val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+    val tomorrowStart = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val completedToday = tasks.count { it.completedAt?.let { at -> at in todayStart until tomorrowStart } == true }
+    val pending = tasks.filter { !it.isDone && it.status != TaskStatus.DONE && it.status != TaskStatus.CANCELLED }
+    val urgent = pending.firstOrNull { it.priority == TaskPriority.URGENT }
+    return companionMessage(
+        sessionActive = session != null,
+        completedToday = completedToday,
+        urgentTitle = urgent?.title,
+        hasPending = pending.isNotEmpty()
+    )
 }
 
 @Composable
@@ -1766,269 +1917,6 @@ private fun RingBadge(progress: Float, label: String) {
 
 @Composable
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-private fun TaskCard(
-
-    task: StudyTask,
-    today: LocalDate,
-
-    typeLabel: String,
-
-    subjectName: String?,
-
-    accent: Color,
-
-    onStart: () -> Unit,
-
-    onEditBlocked: () -> Unit,
-
-    onDelete: () -> Unit,
-    onEdit: () -> Unit,
-    onDuplicate: () -> Unit,
-    onReschedule: (Long?) -> Unit,
-    onSubtasks: () -> Unit,
-    onToggleDone: () -> Unit
-
-) {
-
-    val animated by animateFloatAsState(
-
-        targetValue = task.progress,
-
-        animationSpec = tween(800),
-
-        label = "task-progress"
-
-    )
-
-    val accentText = FocusColors.onTint(accent)
-    val zone = AppTimeZone.zone(LocalContext.current)
-    fun startOfDayAfter(days: Long): Long =
-        today.plusDays(days).atStartOfDay(zone).toInstant().toEpochMilli()
-    val todayStart = startOfDayAfter(0)
-    val tomorrowStart = startOfDayAfter(1)
-    var moreExpanded by remember { mutableStateOf(false) }
-
-    Card(
-
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onStart),
-
-        shape = RoundedCornerShape(FocusSpacing.radiusCard),
-
-        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)
-
-    ) {
-
-        Column {
-
-            Box(
-
-                modifier = Modifier
-
-                    .fillMaxWidth()
-
-                    .height(3.dp)
-
-                    .background(Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.05f))))
-
-            )
-
-            Column(modifier = Modifier.padding(FocusSpacing.card)) {
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-
-                    Box(Modifier.size(9.dp).clip(CircleShape).background(accent))
-
-                    Spacer(Modifier.width(9.dp))
-
-                    Text(
-
-                        text = task.title,
-
-                        style = MaterialTheme.typography.titleMedium,
-
-                        modifier = Modifier.weight(1f),
-
-                        maxLines = 1,
-
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-
-                    )
-
-                    Checkbox(
-                        checked = TaskState.completed(task),
-                        onCheckedChange = { onToggleDone() },
-                        colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
-                    )
-
-                    Box(
-
-                        modifier = Modifier
-
-                            .clip(RoundedCornerShape(10.dp))
-
-                            .background(accent.copy(alpha = 0.22f))
-
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-
-                    ) {
-
-                        Text(
-
-                            text = TaskState.badge(task, today, zone),
-
-                            style = MaterialTheme.typography.labelMedium,
-
-                            color = accentText
-
-                        )
-
-                    }
-
-                }
-
-                Spacer(Modifier.height(FocusSpacing.section))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(FocusSpacing.progressHeight)
-                            .clip(RoundedCornerShape(FocusSpacing.progressHeight))
-                            .background(FocusColors.SurfaceHigh)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(animated.coerceIn(0f, 1f))
-                                .fillMaxSize()
-                                .background(Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.55f))))
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "${(animated * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = accentText
-                    )
-                }
-
-                Spacer(Modifier.height(FocusSpacing.item))
-
-                Text(
-                    text = TaskState.progressText(task),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FocusColors.TextSecondary
-                )
-
-                Spacer(Modifier.height(FocusSpacing.item))
-
-                androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip),
-                    verticalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
-                ) {
-                    MetaChip(
-                        label = (subjectName?.let { "$it · " } ?: "") + typeLabel.ifBlank { task.category.label },
-                        dot = accent
-                    )
-                    MetaChip(label = task.priority.label, dot = priorityColor(task.priority))
-                    MetaChip(label = TaskState.dueText(task, zone))
-                    if (task.recurrence != Recurrence.NONE) {
-                        MetaChip(label = RecurrenceEngine.label(task.recurrence))
-                    }
-                    MetaChip(
-                        label = if (task.blockedPackages.isEmpty()) "بلا تطبيقات محددة"
-                        else "${task.blockedPackages.size} تطبيقًا محجوبًا"
-                    )
-                }
-
-                HorizontalDivider(
-
-                    modifier = Modifier.padding(vertical = 10.dp),
-
-                    color = FocusColors.Outline
-
-                )
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-
-                    FilledTonalButton(
-                        onClick = onStart,
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = accent.copy(alpha = 0.22f),
-                            contentColor = accentText
-                        ),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                    ) {
-                        Text("ابدأ جلسة", fontWeight = FontWeight.SemiBold)
-                    }
-
-                    TextButton(onClick = onEditBlocked) {
-
-                        Text("التطبيقات", color = FocusColors.TextSecondary)
-
-                    }
-
-                    Spacer(Modifier.weight(1f))
-
-                    TextButton(onClick = onDelete) {
-
-                        Text("حذف", color = FocusColors.onTint(FocusColors.Rose))
-
-                    }
-
-                    TextButton(onClick = onEdit) {
-
-                        Text("تعديل", color = FocusColors.onTint(FocusColors.Green))
-
-                    }
-
-                    Box {
-                        TextButton(onClick = { moreExpanded = true }) { Text("المزيد") }
-                        DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
-                            DropdownMenuItem(text = { Text("المهام الفرعية") }, onClick = { moreExpanded = false; onSubtasks() })
-                            DropdownMenuItem(text = { Text("اليوم") }, onClick = { moreExpanded = false; onReschedule(todayStart) }, enabled = !task.isDone)
-                            DropdownMenuItem(text = { Text("غدًا") }, onClick = { moreExpanded = false; onReschedule(tomorrowStart) }, enabled = !task.isDone)
-                            DropdownMenuItem(text = { Text("بعد 3 أيام") }, onClick = { moreExpanded = false; onReschedule(startOfDayAfter(3)) }, enabled = !task.isDone)
-                            DropdownMenuItem(text = { Text("الأسبوع القادم") }, onClick = { moreExpanded = false; onReschedule(startOfDayAfter(7)) }, enabled = !task.isDone)
-                            DropdownMenuItem(text = { Text("بدون موعد") }, onClick = { moreExpanded = false; onReschedule(null) }, enabled = !task.isDone && task.dueAt != null)
-                            DropdownMenuItem(text = { Text("نسخ المهمة") }, onClick = { moreExpanded = false; onDuplicate() })
-                        }
-                    }
-
-                }
-
-            }
-
-        }
-
-    }}
-
-/**
- * Small info pill for the task meta row: type/subject, priority, due date, recurrence and
- * blocked apps. One visual language instead of a long comma-separated sentence.
- */
-@Composable
-private fun MetaChip(label: String, dot: Color? = null) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(FocusSpacing.radiusChip))
-            .background(FocusColors.SurfaceHigh)
-            .padding(horizontal = 9.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (dot != null) {
-            Box(Modifier.size(6.dp).clip(CircleShape).background(dot))
-            Spacer(Modifier.width(5.dp))
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = FocusColors.TextSecondary
-        )
-    }
-}
-
-@Composable
-
 private fun SubtasksDialog(
     task: StudyTask,
     viewModel: TaskListViewModel,
@@ -3991,16 +3879,34 @@ private fun SubjectChooser(subjects: List<StudySubject>, selectedId: Long?, onSe
     var expanded by remember { mutableStateOf(false) }
     val selectedName = subjects.firstOrNull { it.id == selectedId }?.name ?: "بدون مادة"
     Box(Modifier.fillMaxWidth()) {
-        TextButton(onClick = { expanded = true }) {
-            Text("المادة المرتبطة: $selectedName", color = FocusColors.TextSecondary)
+        TextButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "المادة المرتبطة: $selectedName",
+                color = FocusColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("بدون مادة") }, onClick = { onSelect(null); expanded = false })
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(max = 300.dp)
+        ) {
+            DropdownMenuItem(
+                text = { Text("بدون مادة", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                onClick = { onSelect(null); expanded = false }
+            )
             subjects.forEach { subject ->
-                DropdownMenuItem(text = { Text(subject.name) }, onClick = { onSelect(subject.id); expanded = false })
+                DropdownMenuItem(
+                    text = { Text(subject.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    onClick = { onSelect(subject.id); expanded = false }
+                )
             }
             if (subjects.isEmpty()) {
-                DropdownMenuItem(text = { Text("أضف مادة من قسم موادي أولًا", color = FocusColors.TextSecondary) }, onClick = { expanded = false })
+                DropdownMenuItem(
+                    text = { Text("أضف مادة من قسم موادي أولًا", color = FocusColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    onClick = { expanded = false }
+                )
             }
         }
     }
