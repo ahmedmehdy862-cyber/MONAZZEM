@@ -5,16 +5,22 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.graphics.BitmapFactory
 import android.app.TimePickerDialog
 import android.widget.Toast
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -57,6 +63,9 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -588,30 +597,269 @@ internal fun PersonalizationScreen(
     }
 }
 
+/** حد أقصى للصور المرفقة مع كل رسالة دعم أو اقتراح. */
+private const val MAX_SUPPORT_IMAGES = 4
+
+/**
+ * يبني نص الرسالة المُرسلة إلى الفريق عبر [TeamMessages.sendSupport].
+ * الاقتراحات تُوسم بسطر "[اقتراح]" في أول النص لتمييزها عن الشكاوى في صندوق الفريق،
+ * والصور لا تمر عبر هذه القناة إطلاقًا (انظر تعليق [SupportImageAttachments]):
+ * يُضاف سطر واحد فقط بعددها حتى يعرف الفريق أن صورًا ستصله عبر واتساب.
+ */
+private fun buildSupportBody(raw: String, isSuggestion: Boolean, imageCount: Int): String {
+    val tag = if (isSuggestion) "[اقتراح] " else ""
+    val note = if (imageCount > 0) {
+        val countText = if (imageCount == 1) "صورة واحدة" else "$imageCount صور"
+        "\n[أرفق المستخدم $countText؛ الصور لا تصل عبر هذه الرسالة النصية وستُرسل عبر واتساب.]"
+    } else ""
+    return (tag + raw.trim()).take((2000 - note.length).coerceAtLeast(0)) + note
+}
+
+/**
+ * يشارك الصور المرفقة مع دعم واتساب كمرفقات حقيقية (ACTION_SEND_MULTIPLE مع
+ * EXTRA_STREAM ومنح قراءة مؤقت)، لأن قناة الدعم داخل التطبيق نصية فقط.
+ * تُفتح ورقة مشاركة يختار منها المستخدم واتساب؛ فإن لم يكن مثبّتًا ظهرت التطبيقات
+ * الأخرى التي تقبل مشاركة الصور.
+ */
+private fun shareSupportImages(context: Context, imageUris: List<String>, message: String) {
+    val uris = imageUris.map { Uri.parse(it) }
+    if (uris.isEmpty()) return
+    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+        type = "image/*"
+        putExtra(Intent.EXTRA_TEXT, message)
+        putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+        clipData = ClipData("صور الدعم", arrayOf("image/*"), ClipData.Item(uris.first())).apply {
+            uris.drop(1).forEach { addItem(ClipData.Item(it)) }
+        }
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(Intent.createChooser(intent, "إرسال الصور إلى الدعم عبر واتساب")) }
+        .onFailure {
+            Toast.makeText(context, "تعذّر فتح المشاركة. تأكد من تثبيت واتساب وحاول مرة أخرى.", Toast.LENGTH_LONG).show()
+        }
+}
+
+/** يفكّ مصغّرة للصورة (بحد أقصى 256 بكسل للضلع) عبر ContentResolver دون أي إذن تخزين. */
+private fun decodeSupportThumbnail(context: Context, uri: Uri): ImageBitmap? = runCatching {
+    val resolver = context.contentResolver
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    var sample = 1
+    while (bounds.outWidth / sample > 256 || bounds.outHeight / sample > 256) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+        ?: return@runCatching null
+    bitmap.asImageBitmap()
+}.getOrNull()
+
+@Composable
+private fun SupportImageThumbnail(uri: Uri, onRemove: () -> Unit) {
+    val context = LocalContext.current
+    var bitmap by remember(uri) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(uri) {
+        bitmap = withContext(Dispatchers.IO) { decodeSupportThumbnail(context, uri) }
+    }
+    Box(
+        modifier = Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)).background(FocusColors.SurfaceHigh),
+        contentAlignment = Alignment.Center
+    ) {
+        val current = bitmap
+        if (current != null) {
+            Image(
+                bitmap = current,
+                contentDescription = "صورة مرفقة",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Text("…", color = FocusColors.TextMuted)
+        }
+        Box(
+            modifier = Modifier.align(Alignment.TopStart).padding(2.dp).size(22.dp)
+                .clip(CircleShape).background(FocusColors.Surface).clickable { onRemove() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("×", color = FocusColors.Error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+/**
+ * إرفاق الصور في شاشة الدعم — لماذا لا تصل الصور مع الرسالة النصية؟
+ * قناة الدعم الحالية (TeamMessages.sendSupport: POST JSON إلى /api/support) نصية فقط:
+ * الخادم (update-site/api/support.js) يقرأ name/contact/body/version/uid ويتجاهل أي حقل
+ * آخر، ويقصّ النص عند 2000 حرف، ولا توجد في التطبيق أو الخادم أي واجهة رفع صور
+ * (لا multipart ولا حقل base64 ولا تخزين ملفات للمستخدمين). إنشاء خادم رفع جديد
+ * كان سيغيّر القناة نفسها، فبقيت الصور في الجهاز: يُرسل نص الرسالة عبر القناة
+ * مع سطر يذكر عدد الصور، وتُشارك الصور نفسها كمرفقات إلى واتساب الدعم بالزر أدناه.
+ * المنتقي (PickMultipleVisualMedia) هو منتقي صور النظام ولا يحتاج إذن تخزين إضافيًا،
+ * وCoil غير مضمّنة في المشروع فالمصغّرات تُفكّ عبر ContentResolver وBitmapFactory.
+ */
+@Composable
+private fun SupportImageAttachments(
+    images: List<String>,
+    onAddPhotos: () -> Unit,
+    onRemoveImage: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onAddPhotos) { Text("+ إرفاق صور") }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (images.isEmpty()) "حتى $MAX_SUPPORT_IMAGES صور — بلا إذن تخزين"
+                else "${images.size} من $MAX_SUPPORT_IMAGES صور",
+                color = FocusColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        if (images.isNotEmpty()) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                images.forEach { raw ->
+                    SupportImageThumbnail(uri = Uri.parse(raw), onRemove = { onRemoveImage(raw) })
+                }
+            }
+            Text(
+                "الصور لا تُرسل مع رسالتك النصية لأن قناة الدعم نصية فقط؛ بعد الإرسال استخدم زر واتساب أدناه لإرسال الصور نفسها إلى الفريق.",
+                color = FocusColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun SupportMessageForm(
+    bodyLabel: String,
+    body: String,
+    onBodyChange: (String) -> Unit,
+    images: List<String>,
+    onAddPhotos: () -> Unit,
+    onRemoveImage: (String) -> Unit,
+    sending: Boolean,
+    sendLabel: String,
+    result: String,
+    onSend: () -> Unit,
+    onShareImages: () -> Unit
+) {
+    OutlinedTextField(
+        value = body,
+        onValueChange = { onBodyChange(it.take(2000)) },
+        label = { Text(bodyLabel) },
+        minLines = 3,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp)
+    )
+    SupportImageAttachments(images = images, onAddPhotos = onAddPhotos, onRemoveImage = onRemoveImage)
+    Button(
+        onClick = onSend,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp)
+    ) { Text(if (sending) "جارٍ الإرسال…" else sendLabel) }
+    if (result.isNotBlank()) {
+        Text(
+            result,
+            color = if (result.startsWith("وصل")) FocusColors.onTint(FocusColors.Green) else FocusColors.onTint(FocusColors.Rose),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    if (images.isNotEmpty()) {
+        Button(
+            onClick = onShareImages,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp)
+        ) { Text("إرسال الصور المرفقة عبر واتساب") }
+    }
+}
+
+@Composable
+private fun SupportTabButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) FocusColors.Blue else FocusColors.SurfaceHigh)
+            .clickable { onClick() }
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text,
+            color = if (selected) FocusColors.onAccentFill(FocusColors.Blue) else FocusColors.TextSecondary,
+            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.labelLarge
+        )
+    }
+}
+
 @Composable
 internal fun SupportScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     var name by rememberSaveable { mutableStateOf("") }
     var contact by rememberSaveable { mutableStateOf("") }
-    var body by rememberSaveable { mutableStateOf("") }
+    var complaintBody by rememberSaveable { mutableStateOf("") }
+    var suggestionBody by rememberSaveable { mutableStateOf("") }
+    var complaintImages by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var suggestionImages by rememberSaveable { mutableStateOf(listOf<String>()) }
     var sending by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(20.dp)) {
+    var complaintResult by remember { mutableStateOf("") }
+    var suggestionResult by remember { mutableStateOf("") }
+
+    val complaintPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_SUPPORT_IMAGES)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            complaintImages = (complaintImages + uris.map { it.toString() }).distinct().take(MAX_SUPPORT_IMAGES)
+        }
+    }
+    val suggestionPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_SUPPORT_IMAGES)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            suggestionImages = (suggestionImages + uris.map { it.toString() }).distinct().take(MAX_SUPPORT_IMAGES)
+        }
+    }
+
+    fun submit(isSuggestion: Boolean, text: String, images: List<String>, onResult: (Boolean) -> Unit) {
+        if (text.trim().length < 5 || sending) return
+        sending = true
+        scope.launch {
+            val ok = TeamMessages.sendSupport(context, name, contact, buildSupportBody(text, isSuggestion, images.size))
+            sending = false
+            onResult(ok)
+        }
+    }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("رجوع") }
             Spacer(Modifier.width(8.dp))
             Text("الدعم الفني", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                .background(FocusColors.SurfaceHigh).padding(4.dp)
+        ) {
+            SupportTabButton("شكوى", selected = tab == 0, onClick = { tab = 0 }, modifier = Modifier.weight(1f))
+            SupportTabButton("اقترح فكرة", selected = tab == 1, onClick = { tab = 1 }, modifier = Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(12.dp))
         Card(
             colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
             shape = RoundedCornerShape(24.dp)
         ) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("محتاج مساعدة؟", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "راسل فريق مُنظِّم عن مشكلة أو اقتراح، وتقدر أيضًا تراسلنا على واتساب.",
+                    if (tab == 0) "محتاج مساعدة؟" else "عندك فكرة تحسّن مُنظِّم؟",
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold
+                )
+                Text(
+                    if (tab == 0) "راسل فريق مُنظِّم عن مشكلة، وتقدر أيضًا تراسلنا على واتساب."
+                    else "اقترح ميزة أو تحسينًا، وسيصل اقتراحك إلى الفريق موسومًا كاقتراح لا كشكوى.",
                     color = FocusColors.TextSecondary
                 )
                 OutlinedTextField(
@@ -630,35 +878,61 @@ internal fun SupportScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp)
                 )
-                OutlinedTextField(
-                    value = body,
-                    onValueChange = { body = it.take(2000) },
-                    label = { Text("اكتب مشكلتك أو اقتراحك") },
-                    minLines = 3,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp)
-                )
-                Button(
-                    onClick = {
-                        if (body.trim().length >= 5 && !sending) {
-                            sending = true
-                            result = ""
-                            scope.launch {
-                                val ok = TeamMessages.sendSupport(context, name, contact, body)
-                                sending = false
-                                result = if (ok) "وصلت رسالتك إلى الفريق، وسنرد عليك في أقرب وقت." else "تعذر الإرسال الآن. تحقق من الاتصال أو استخدم واتساب."
-                                if (ok) body = ""
+                if (tab == 0) {
+                    SupportMessageForm(
+                        bodyLabel = "اكتب مشكلتك",
+                        body = complaintBody,
+                        onBodyChange = { complaintBody = it },
+                        images = complaintImages,
+                        onAddPhotos = { complaintPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
+                        onRemoveImage = { raw -> complaintImages = complaintImages - raw },
+                        sending = sending,
+                        sendLabel = "إرسال إلى فريق مُنظِّم",
+                        result = complaintResult,
+                        onSend = {
+                            submit(false, complaintBody, complaintImages) { ok ->
+                                complaintResult = if (ok) {
+                                    if (complaintImages.isNotEmpty()) "وصلت شكوتك إلى الفريق. الصور المرفقة لا تصل مع هذه الرسالة النصية — أرسلها عبر واتساب بالزر أدناه."
+                                    else "وصلت رسالتك إلى الفريق، وسنرد عليك في أقرب وقت."
+                                } else "تعذر الإرسال الآن. تحقق من الاتصال أو استخدم واتساب."
+                                if (ok) complaintBody = ""
                             }
+                        },
+                        onShareImages = {
+                            shareSupportImages(
+                                context, complaintImages,
+                                "مرحبًا، هذه صور مرفقة مع شكواي إلى فريق مُنظِّم عبر التطبيق." +
+                                    if (complaintBody.isNotBlank()) "\n" + complaintBody.trim().take(300) else ""
+                            )
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp)
-                ) { Text(if (sending) "جارٍ الإرسال…" else "إرسال إلى فريق مُنظِّم") }
-                if (result.isNotBlank()) {
-                    Text(
-                        result,
-                        color = if (result.startsWith("وصلت")) FocusColors.onTint(FocusColors.Green) else FocusColors.onTint(FocusColors.Rose),
-                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    SupportMessageForm(
+                        bodyLabel = "اكتب اقتراحك",
+                        body = suggestionBody,
+                        onBodyChange = { suggestionBody = it },
+                        images = suggestionImages,
+                        onAddPhotos = { suggestionPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
+                        onRemoveImage = { raw -> suggestionImages = suggestionImages - raw },
+                        sending = sending,
+                        sendLabel = "إرسال الاقتراح",
+                        result = suggestionResult,
+                        onSend = {
+                            submit(true, suggestionBody, suggestionImages) { ok ->
+                                suggestionResult = if (ok) {
+                                    if (suggestionImages.isNotEmpty()) "وصل اقتراحك إلى الفريق، شكرًا لك. الصور المرفقة لا تصل مع هذه الرسالة النصية — أرسلها عبر واتساب بالزر أدناه."
+                                    else "وصل اقتراحك إلى الفريق، شكرًا لك."
+                                } else "تعذر الإرسال الآن. تحقق من الاتصال أو استخدم واتساب."
+                                if (ok) suggestionBody = ""
+                            }
+                        },
+                        onShareImages = {
+                            shareSupportImages(
+                                context, suggestionImages,
+                                "مرحبًا، هذه صور مرفقة مع اقتراحي إلى فريق مُنظِّم عبر التطبيق." +
+                                    if (suggestionBody.isNotBlank()) "\n" + suggestionBody.trim().take(300) else ""
+                            )
+                        }
                     )
                 }
                 Text("أو راسلنا على واتساب مباشرة:", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
@@ -688,7 +962,11 @@ internal fun SupportScreen(onBack: () -> Unit) {
             }
         }
         Spacer(Modifier.height(14.dp))
-        Text("قبل المراسلة: اكتب وصفًا مختصرًا للمشكلة، واذكر الشاشة والخطوات التي أدت إليها.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        Text(
+            if (tab == 0) "قبل المراسلة: اكتب وصفًا مختصرًا للمشكلة، واذكر الشاشة والخطوات التي أدت إليها."
+            else "قبل الإرسال: اشرح الفكرة باختصار، وما المشكلة التي تحلها إن وجدت.",
+            color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
