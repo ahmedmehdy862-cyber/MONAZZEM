@@ -116,7 +116,15 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilterChip
@@ -219,6 +227,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 import java.util.Locale
+
+/** Longest back chain kept between root screens; older steps drop off the far end. */
+private const val MAX_BACK_STACK_ENTRIES = 20
 
 class MainActivity : ComponentActivity() {
 
@@ -669,12 +680,28 @@ private fun AppRoot(
         }
     }
     var sectionsOpen by remember { mutableStateOf(false) }
-    var previousRootTab by rememberSaveable { mutableStateOf(if (openUpdatesInitially) "more" else "today") }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
+    // Real back history (phase 2): the old single `previousRootTab` slot kept only the
+    // last root, so back from a chain like «المزيد ← التخصيص ← التطبيقات الدائمة»
+    // jumped straight to the start. The stack below is capped so it cannot grow
+    // without bound, and it is cleared on every root jump (bottom bar / drawer).
+    var backStack by rememberSaveable { mutableStateOf(listOf<String>()) }
     fun openSecondary(tab: String) {
-        previousRootTab = rootTab
+        if (tab == rootTab) return
+        backStack = (backStack + rootTab).takeLast(MAX_BACK_STACK_ENTRIES)
         rootTab = tab
     }
-    fun returnToPreviousTab() { rootTab = previousRootTab }
+    /** A root jump (bottom bar / drawer): the old chain no longer applies. */
+    fun openRoot(tab: String) {
+        backStack = emptyList()
+        rootTab = tab
+    }
+    fun returnToPreviousTab() {
+        val previous = backStack.lastOrNull()
+        backStack = backStack.dropLast(1)
+        rootTab = previous ?: "today"
+    }
 
     val screen = when {
 
@@ -692,6 +719,10 @@ private fun AppRoot(
 
     // System back must return to the previous screen instead of leaving the app.
     val bottomTabIds = remember(preferences.bottomTabs) { BottomTab.normalize(preferences.bottomTabs) }
+    /** Drawer picks a bottom-bar root when it is one, otherwise a secondary screen. */
+    fun openDrawerDestination(tab: String) {
+        if (tab in bottomTabIds) openRoot(tab) else openSecondary(tab)
+    }
     var quickAddTask by remember { mutableStateOf(0) }
     androidx.activity.compose.BackHandler(
         enabled = screen != "session" && screen != "onboarding" && screen !in bottomTabIds
@@ -699,11 +730,35 @@ private fun AppRoot(
         when {
             pickerTaskId != null -> pickerTaskId = null
             setupTaskId != null -> setupTaskId = null
-            rootTab == "permanent_apps" -> rootTab = "settings"
             else -> returnToPreviousTab()
         }
     }
 
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        // Edge swipe opens the drawer only on main screens, never over a session
+        // or onboarding; the header menu button is the other way in.
+        // The drawer sits on the start side: in this RTL app that is the RIGHT edge.
+        // ModalNavigationDrawer follows LocalLayoutDirection, which MainActivity sets
+        // to Rtl above AppRoot — do not force Ltr here or the drawer flips to the left.
+        gesturesEnabled = screen in bottomTabIds,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerContainerColor = FocusColors.Surface,
+                drawerContentColor = FocusColors.TextPrimary
+            ) {
+                AppDrawerContent(
+                    current = rootTab,
+                    userName = preferences.studentName,
+                    profileLabel = preferences.profile.label,
+                    onSelect = { tab ->
+                        drawerScope.launch { drawerState.close() }
+                        openDrawerDestination(tab)
+                    }
+                )
+            }
+        }
+    ) {
     BrandBackground(animate = !preferences.reduceMotion && session == null) {
 
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -789,6 +844,8 @@ private fun AppRoot(
                 )
                 "goals" -> GoalsScreen(onBack = { returnToPreviousTab() })
                 "life" -> LifeTrackerScreen(onBack = { returnToPreviousTab() }, onOpenTasks = { rootTab = "tasks" })
+                "quran" -> QuranRouteScreen(onBack = { returnToPreviousTab() })
+                "adhkar" -> AdhkarRouteScreen(onBack = { returnToPreviousTab() })
                 "calendar" -> StudyCalendarScreen(
                     onBack = { returnToPreviousTab() },
                     onStartTask = { taskId -> setupTaskId = taskId }
@@ -828,11 +885,12 @@ private fun AppRoot(
                     onEditBlocked = { pickerTaskId = it },
 
                     dashboard = current == "today",
-                    onOpenAllTasks = { rootTab = "tasks" },
+                    onOpenAllTasks = { openRoot("tasks") },
                     onOpenMessages = { openSecondary("messages") },
                     onOpenPrayerSettings = { openSecondary("prayer_times") },
                     preferences = preferences,
                     addRequest = quickAddTask,
+                    onOpenDrawer = { drawerScope.launch { drawerState.open() } },
                     onToggleTheme = {
                         onPreferencesChanged(
                             preferences.copy(
@@ -852,8 +910,9 @@ private fun AppRoot(
                 tabs = bottomTabIds,
                 current = rootTab,
                 onSelect = { tab ->
-                    // Tapping the open section goes back to the head of that section.
-                    if (rootTab != tab) rootTab = tab
+                    // Tapping the open section goes back to the head of that section,
+                    // and a root jump clears the back stack built by secondary screens.
+                    if (rootTab != tab) openRoot(tab)
                 },
                 onOpenSections = { sectionsOpen = true },
                 modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp)
@@ -900,6 +959,7 @@ private fun AppRoot(
         }
 
     }
+    }
 
 }
 
@@ -917,6 +977,7 @@ private fun TasksScreen(
     onOpenPrayerSettings: () -> Unit = {},
     preferences: FocusPreferences,
     addRequest: Int = 0,
+    onOpenDrawer: () -> Unit = {},
     onToggleTheme: () -> Unit = {}
 
 ) {
@@ -1046,6 +1107,14 @@ private fun TasksScreen(
     ) {
 
         Row(verticalAlignment = Alignment.CenterVertically) {
+
+            IconButton(onClick = onOpenDrawer) {
+                Icon(
+                    imageVector = Icons.Filled.Menu,
+                    contentDescription = "القايمة",
+                    tint = FocusColors.TextSecondary
+                )
+            }
 
             FocusLogo(size = 46.dp)
 
@@ -1501,9 +1570,10 @@ private fun MoreSectionsScreen(onOpen: (String) -> Unit) {
     ) {
         Text("المزيد", style = MaterialTheme.typography.headlineSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
-        Text("أدواتك مجمّعة في أربع مجموعات بدل قائمة طويلة.", style = MaterialTheme.typography.bodyMedium, color = FocusColors.TextSecondary)
-        // The rows come from the same catalog as the dock sheet; no second hard-coded directory.
-        SectionsDirectory(onOpen = onOpen)
+        Text("الإعدادات والأدوات الثانوية فقط — باقي الأقسام في القايمة الجانبية.", style = MaterialTheme.typography.bodyMedium, color = FocusColors.TextSecondary)
+        // The rows come from the same catalog as the dock sheet, narrowed to the settings
+        // shelves; the daily and growth sections now live in the side drawer instead.
+        SectionsDirectory(onlyShelves = NavigationCatalog.moreShelves, onOpen = onOpen)
     }
 }
 

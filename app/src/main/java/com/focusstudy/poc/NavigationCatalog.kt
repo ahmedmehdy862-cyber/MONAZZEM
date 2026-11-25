@@ -38,7 +38,8 @@ internal data class SectionGroup(val title: String, val ids: List<String>)
  * The single source of truth for every section a person can open.
  *
  * Ids are deliberately the existing route names: nothing here invents a destination, and every
- * entry is reachable from both the dock sheet and «المزيد». Only the four transient screens
+ * entry is reachable from the dock sheet; «المزيد» shows only [moreShelves] since phase 2.
+ * Only the four transient screens
  * (`onboarding`, `session`, `setup`, `picker`) and the `more` container itself stay outside the
  * directory — they are entered through setup, the dock, or a notification instead.
  */
@@ -57,6 +58,8 @@ internal object NavigationCatalog {
         SectionEntry("goals", BottomTab.GOALS.label, "أهداف بمقياس ومهلة، ومهام ومهارات مرتبطة بها.", BottomTab.GOALS.mark, SectionShelf.GROWTH, BottomTab.GOALS.icon),
         SectionEntry("skills", BottomTab.SKILLS.label, "سجّل المهارات التي تطوّرها ودقائق تدريبك.", BottomTab.SKILLS.mark, SectionShelf.GROWTH, BottomTab.SKILLS.icon),
         SectionEntry("life", BottomTab.LIFE.label, "عاداتك ووردك وصحتك ومالك ومزاجك في مكان واحد.", BottomTab.LIFE.mark, SectionShelf.GROWTH, BottomTab.LIFE.icon),
+        SectionEntry("quran", BottomTab.QURAN.label, "المصحف كاملًا — يفتح على صفحة ورد اليوم.", BottomTab.QURAN.mark, SectionShelf.GROWTH, BottomTab.QURAN.icon),
+        SectionEntry("adhkar", BottomTab.ADHKAR.label, "أذكار الصباح والمساء من حصن المسلم.", BottomTab.ADHKAR.mark, SectionShelf.GROWTH, BottomTab.ADHKAR.icon),
         SectionEntry("subjects", BottomTab.SUBJECTS.label, "نظّم موادك ومحاضراتك.", BottomTab.SUBJECTS.mark, SectionShelf.GROWTH, BottomTab.SUBJECTS.icon),
 
         SectionEntry("settings", BottomTab.SETTINGS.label, "اسمك وهدفك اليومي والمظهر والملف.", BottomTab.SETTINGS.mark, SectionShelf.CUSTOMIZE, BottomTab.SETTINGS.icon),
@@ -70,6 +73,12 @@ internal object NavigationCatalog {
         SectionEntry("support", BottomTab.SUPPORT.label, "تواصل معنا إذا احتجت إلى مساعدة.", BottomTab.SUPPORT.mark, SectionShelf.TEAM, BottomTab.SUPPORT.icon),
         SectionEntry("sync", "المزامنة", "فعّل حسابك واستخدمه في تطبيق الويب.", "☁", SectionShelf.TEAM, Icons.Filled.Cloud)
     )
+
+    /**
+     * Shelves «المزيد» still shows. The daily, growth and planning sections moved to the side
+     * drawer in phase 2, so «المزيد» keeps only settings and secondary tools (9 entries).
+     */
+    val moreShelves: Set<SectionShelf> = setOf(SectionShelf.CUSTOMIZE, SectionShelf.TEAM)
 
     /** Every route the directory can open — a regression test compares this with the old map. */
     fun allRouteIds(): Set<String> = entries.map { it.id }.toSet()

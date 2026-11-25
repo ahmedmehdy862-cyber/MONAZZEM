@@ -27,6 +27,30 @@ class NavigationCatalogTest {
         }
     }
 
+    /** Phase 2: the reader and the adhkar are direct routes, not buried inside «حياتي». */
+    @Test fun quranAndAdhkarAreDirectRoutes() {
+        val routes = NavigationCatalog.allRouteIds()
+        listOf("quran", "adhkar").forEach { id ->
+            assertTrue("missing route: $id", id in routes)
+            assertNotNull(NavigationCatalog.entry(id))
+        }
+        val pinnable = NavigationCatalog.pinnableGroups().flatMap { it.ids }.toSet()
+        assertTrue("quran must be pinnable", "quran" in pinnable)
+        assertTrue("adhkar must be pinnable", "adhkar" in pinnable)
+    }
+
+    /** Phase 2: «المزيد» keeps only the settings shelves; the rest moved to the drawer. */
+    @Test fun moreShowsOnlySettingsShelves() {
+        assertEquals(setOf(SectionShelf.CUSTOMIZE, SectionShelf.TEAM), NavigationCatalog.moreShelves)
+        val moreIds = NavigationCatalog.entries
+            .filter { it.shelf in NavigationCatalog.moreShelves }.map { it.id }
+        assertEquals(
+            listOf("settings", "notifications", "prayer_times", "bottom_bar", "permanent_apps",
+                "messages", "updates", "support", "sync"),
+            moreIds
+        )
+    }
+
     @Test fun directoryHasNoDuplicateRoutes() {
         val ids = NavigationCatalog.entries.map { it.id }
         assertEquals(ids.size, ids.toSet().size)

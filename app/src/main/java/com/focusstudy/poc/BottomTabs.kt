@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Nightlight
 import androidx.compose.material.icons.filled.Note
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Today
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -39,6 +41,13 @@ enum class BottomTab(val id: String, val label: String, val mark: String, val ic
     SUBJECTS("subjects", "موادي", "▤", Icons.Filled.Book),
     GOALS("goals", "أهدافي", "◎", Icons.Filled.Flag),
     LIFE("life", "حياتي", "♥", Icons.Filled.Favorite),
+    /**
+     * Direct routes out of «حياتي» (phase 2): the reader and the adhkar used to live two
+     * levels deep inside the life tracker. They are tabs here so the drawer and the catalog
+     * can point at them with a real icon; [DEFAULT] is unchanged, so nobody's bar moves.
+     */
+    QURAN("quran", "المصحف", "۞", Icons.Filled.MenuBook),
+    ADHKAR("adhkar", "الأذكار", "☀", Icons.Filled.WbSunny),
     MESSAGES("messages", "الرسائل", "✉", Icons.Filled.Email),
     SKILLS("skills", "مهاراتي", "✦", Icons.Filled.Star),
     NOTES("notes", "نوتة", "✎", Icons.Filled.Note),

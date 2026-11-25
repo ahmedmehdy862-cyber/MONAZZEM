@@ -167,10 +167,13 @@ internal fun SectionsSheet(
  *
  * [pinned] enables the pin controls; pass null for a plain navigation list. Search, grouping and
  * ordering are identical in both places, so «المزيد» is no longer a second hard-coded directory.
+ * [onlyShelves] narrows the list: «المزيد» passes the settings shelves only, the dock sheet
+ * passes null and shows the whole directory.
  */
 @Composable
 internal fun SectionsDirectory(
     pinned: List<String>? = null,
+    onlyShelves: Set<SectionShelf>? = null,
     onOpen: (String) -> Unit,
     onTogglePin: (String) -> Unit = {}
 ) {
@@ -188,6 +191,7 @@ internal fun SectionsDirectory(
         modifier = Modifier.fillMaxWidth()
     )
     SectionShelf.entries.forEach { shelf ->
+        if (onlyShelves != null && shelf !in onlyShelves) return@forEach
         val rows = NavigationCatalog.entries
             .filter { it.shelf == shelf }
             .filter { query.isBlank() || it.title.contains(query.trim(), ignoreCase = true) }
