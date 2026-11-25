@@ -663,6 +663,9 @@ private fun AppRoot(
     var rootTab by rememberSaveable {
         mutableStateOf(if (openUpdatesInitially) "updates" else if (openTasksInitially) "tasks" else "today")
     }
+    // The assistant's display name, renameable from its own screen; the drawer row
+    // and the conversation title read this state, not a hard-coded «منظم».
+    var assistantName by remember { mutableStateOf(AssistantStore.loadSettings(context).name) }
     // A reminder tapped while the app is already running: onNewIntent bumps this counter.
     val tasksRequest = NotificationNavigation.openTasksRequest
     LaunchedEffect(tasksRequest) {
@@ -751,6 +754,7 @@ private fun AppRoot(
                     current = rootTab,
                     userName = preferences.studentName,
                     profileLabel = preferences.profile.label,
+                    assistantName = assistantName,
                     onSelect = { tab ->
                         drawerScope.launch { drawerState.close() }
                         openDrawerDestination(tab)
@@ -844,6 +848,13 @@ private fun AppRoot(
                 )
                 "goals" -> GoalsScreen(onBack = { returnToPreviousTab() })
                 "life" -> LifeTrackerScreen(onBack = { returnToPreviousTab() }, onOpenTasks = { rootTab = "tasks" })
+                "assistant" -> AssistantScreen(
+                    onBack = { returnToPreviousTab() },
+                    userName = preferences.studentName,
+                    assistantName = assistantName,
+                    onAssistantNameChanged = { assistantName = it },
+                    onOpenTasks = { openRoot("tasks") }
+                )
                 "quran" -> QuranRouteScreen(onBack = { returnToPreviousTab() })
                 "adhkar" -> AdhkarRouteScreen(onBack = { returnToPreviousTab() })
                 "calendar" -> StudyCalendarScreen(
@@ -891,6 +902,8 @@ private fun AppRoot(
                     preferences = preferences,
                     addRequest = quickAddTask,
                     onOpenDrawer = { drawerScope.launch { drawerState.open() } },
+                    onOpenAssistant = { openSecondary("assistant") },
+                    assistantName = assistantName,
                     onToggleTheme = {
                         onPreferencesChanged(
                             preferences.copy(
@@ -978,6 +991,8 @@ private fun TasksScreen(
     preferences: FocusPreferences,
     addRequest: Int = 0,
     onOpenDrawer: () -> Unit = {},
+    onOpenAssistant: () -> Unit = {},
+    assistantName: String = "منظم",
     onToggleTheme: () -> Unit = {}
 
 ) {
@@ -1210,6 +1225,10 @@ private fun TasksScreen(
             PrayerCountdownCard(onOpenPrayerSettings = onOpenPrayerSettings)
             Spacer(Modifier.height(12.dp))
             StudyCompanionCard(preferences, tasks)
+            Spacer(Modifier.height(12.dp))
+            // Small, local entry point to the assistant; the full Today redesign
+            // is a later phase, so this stays one card and nothing else moves.
+            AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant)
             Spacer(Modifier.height(12.dp))
             HeroCard(totalMinutes = totalMinutes, tasks = tasks, preferences = preferences)
             Spacer(Modifier.height(14.dp))

@@ -53,7 +53,7 @@ internal data class DrawerGroup(val title: String, val ids: List<String>)
 
 /** Curated groups: daily life first, settings and app tools last. */
 internal val AppDrawerGroups: List<DrawerGroup> = listOf(
-    DrawerGroup("يومي", listOf("today", "tasks", "planner", "calendar")),
+    DrawerGroup("يومي", listOf("assistant", "today", "tasks", "planner", "calendar")),
     DrawerGroup("حياتي", listOf("quran", "adhkar", "life")),
     DrawerGroup("تطويري", listOf("goals", "skills", "subjects")),
     DrawerGroup("الإعدادات", listOf("settings", "notifications", "prayer_times", "bottom_bar")),
@@ -73,6 +73,7 @@ internal fun AppDrawerContent(
     userName: String,
     profileLabel: String,
     onSelect: (String) -> Unit,
+    assistantName: String = "منظم",
     modifier: Modifier = Modifier
 ) {
     Column(modifier.verticalScroll(rememberScrollState())) {
@@ -121,8 +122,11 @@ internal fun AppDrawerContent(
             )
             group.ids.forEach { id ->
                 val entry = NavigationCatalog.entry(id) ?: return@forEach
+                // The assistant row shows the name the person calls it by, not the
+                // generic section title — the name is theirs to change in its screen.
+                val rowTitle = if (id == "assistant" && assistantName.isNotBlank()) assistantName else entry.title
                 NavigationDrawerItem(
-                    label = { Text(entry.title) },
+                    label = { Text(rowTitle) },
                     selected = id == current,
                     onClick = { onSelect(id) },
                     icon = { Icon(imageVector = entry.icon, contentDescription = null) },

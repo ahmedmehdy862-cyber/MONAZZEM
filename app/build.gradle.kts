@@ -103,6 +103,12 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.9.4")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("com.batoulapps.adhan:adhan:1.2.1")
+    // Assistant profile PDF import: PDFBox-Android (com.tom-roush:pdfbox-android:2.0.27.0,
+    // verified on Maven Central 2026-11-26; the Android port of Apache PDFBox 2.0.27 —
+    // plain PDFBox needs java.awt and cannot run on Android). Used only for on-device
+    // text extraction; requires PDFBoxResourceLoader.init(context) before first use
+    // (see AssistantPdfImport) and adds roughly 10 MB to the APK.
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Note
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material.icons.filled.WbSunny
@@ -48,6 +49,12 @@ enum class BottomTab(val id: String, val label: String, val mark: String, val ic
      */
     QURAN("quran", "المصحف", "۞", Icons.Filled.MenuBook),
     ADHKAR("adhkar", "الأذكار", "☀", Icons.Filled.WbSunny),
+    /**
+     * The personal assistant «منظم»: a local rule-based companion, not a cloud
+     * service. Pinnable like quran/adhkar; DEFAULT is unchanged, so nobody's
+     * bar moves until they pin it.
+     */
+    ASSISTANT("assistant", "مساعدي", "◉", Icons.Filled.SmartToy),
     MESSAGES("messages", "الرسائل", "✉", Icons.Filled.Email),
     SKILLS("skills", "مهاراتي", "✦", Icons.Filled.Star),
     NOTES("notes", "نوتة", "✎", Icons.Filled.Note),

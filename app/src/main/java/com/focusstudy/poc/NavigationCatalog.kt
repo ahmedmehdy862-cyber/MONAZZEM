@@ -58,6 +58,7 @@ internal object NavigationCatalog {
         SectionEntry("goals", BottomTab.GOALS.label, "أهداف بمقياس ومهلة، ومهام ومهارات مرتبطة بها.", BottomTab.GOALS.mark, SectionShelf.GROWTH, BottomTab.GOALS.icon),
         SectionEntry("skills", BottomTab.SKILLS.label, "سجّل المهارات التي تطوّرها ودقائق تدريبك.", BottomTab.SKILLS.mark, SectionShelf.GROWTH, BottomTab.SKILLS.icon),
         SectionEntry("life", BottomTab.LIFE.label, "عاداتك ووردك وصحتك ومالك ومزاجك في مكان واحد.", BottomTab.LIFE.mark, SectionShelf.GROWTH, BottomTab.LIFE.icon),
+        SectionEntry("assistant", BottomTab.ASSISTANT.label, "مساعدك الشخصي — يفهمك ويتابع معك يومك.", BottomTab.ASSISTANT.mark, SectionShelf.GROWTH, BottomTab.ASSISTANT.icon),
         SectionEntry("quran", BottomTab.QURAN.label, "المصحف كاملًا — يفتح على صفحة ورد اليوم.", BottomTab.QURAN.mark, SectionShelf.GROWTH, BottomTab.QURAN.icon),
         SectionEntry("adhkar", BottomTab.ADHKAR.label, "أذكار الصباح والمساء من حصن المسلم.", BottomTab.ADHKAR.mark, SectionShelf.GROWTH, BottomTab.ADHKAR.icon),
         SectionEntry("subjects", BottomTab.SUBJECTS.label, "نظّم موادك ومحاضراتك.", BottomTab.SUBJECTS.mark, SectionShelf.GROWTH, BottomTab.SUBJECTS.icon),
