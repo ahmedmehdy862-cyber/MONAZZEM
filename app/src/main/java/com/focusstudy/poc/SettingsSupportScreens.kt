@@ -269,6 +269,7 @@ internal fun PersonalizationScreen(
     var avatarPath by rememberSaveable(current.avatarPath) { mutableStateOf(current.avatarPath) }
     var avatarSourcePath by rememberSaveable(current.avatarSourcePath) { mutableStateOf(current.avatarSourcePath) }
     var avatarStyle by rememberSaveable(current.avatarStyle) { mutableIntStateOf(current.avatarStyle) }
+    var avatarMode by rememberSaveable(current.avatarMode) { mutableStateOf(current.avatarMode) }
     var companionStyle by rememberSaveable(current.companionStyle) { mutableStateOf(current.companionStyle) }
     var tone by rememberSaveable(current.tonePreference) { mutableStateOf(current.tonePreference) }
     var reduceMotion by rememberSaveable(current.reduceMotion) { mutableStateOf(current.reduceMotion) }
@@ -312,7 +313,9 @@ internal fun PersonalizationScreen(
                             avatarPath = image.path
                             avatarSourcePath = image.sourcePath
                             avatarStyle = image.style
-                        }
+                        },
+                        mode = avatarMode,
+                        onModeChanged = { avatarMode = it }
                     )
                     Spacer(Modifier.height(10.dp))
                     CompanionStylePicker(companionStyle, onSelect = { companionStyle = it })
@@ -466,6 +469,7 @@ internal fun PersonalizationScreen(
                     avatarPath = avatarPath,
                     avatarSourcePath = avatarSourcePath,
                     avatarStyle = avatarStyle,
+                    avatarMode = avatarMode,
                     companionStyle = companionStyle,
                     reduceMotion = reduceMotion,
                     tonePreference = tone,

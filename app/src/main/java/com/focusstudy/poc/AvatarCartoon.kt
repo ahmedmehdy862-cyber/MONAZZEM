@@ -2,9 +2,12 @@ package com.focusstudy.poc
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 
 /**
  * On-device, deterministic layered cartoon avatar. The photo is used only as a seed: a few sampled
@@ -13,9 +16,33 @@ import android.graphics.RectF
  */
 internal data class AvatarPalette(val skin: Int, val hair: Int, val background: Int, val accent: Int)
 
+/**
+ * عمق الرسم: مسطّح (الكرتوني الحالي) أو بعمق وتظليل («ثلاثي الأبعاد» المنمّق).
+ *
+ * ما يسمى «3D» هنا عمليًا: نفس الشخصية الطبقية المرسومة على الجهاز، لكن
+ * بتدرج شعاعي في الخلفية، وظل تحت الكتفين، وتظليل متدرج على الوجه ولمعان
+ * على الشعر — إيهام بالعمق عبر التظليل لا نموذج ثلاثي الأبعاد حقيقي، لأنه
+ * لا يوجد أصل خارجي (لا شبكة 3D ولا خدمة) في التطبيق.
+ */
+internal enum class AvatarDepth { FLAT, DEPTH }
+
+/** شخصية توضيحية مدمجة تُولَّد على الجهاز من بذرة ثابتة، دون صورة ودون رفع. */
+internal data class PresetCharacter(val name: String, val seed: Long)
+
 internal object CartoonAvatar {
     const val SIZE = 512
     val STYLES = listOf("دافئ", "ليلي", "ألوان مائية", "خطوط واضحة")
+
+    /** أربع شخصيات جاهزة للاختيار دون صورة؛ البذرة تحدد الألوان والتفاصيل. */
+    val PRESETS = listOf(
+        PresetCharacter("ليان", 11L),
+        PresetCharacter("عمر", 29L),
+        PresetCharacter("سارة", 47L),
+        PresetCharacter("يوسف", 83L)
+    )
+
+    fun presetFileName(seed: Long, style: Int, depth: AvatarDepth): String =
+        "avatar_preset_${seed}_${style.coerceIn(0, STYLES.lastIndex)}_${depth.name.lowercase()}.png"
 
     private val styleTints = listOf(0xFFF2A65A.toInt(), 0xFF7D9BEB.toInt(), 0xFFE68FB6.toInt(), 0xFF43BFA0.toInt())
     private val fallbackBase = 0xFFC99A74.toInt()
@@ -78,7 +105,7 @@ internal object CartoonAvatar {
     }
 
     /** Draws the character from a photo seed. Called off the main thread; returns a new bitmap. */
-    fun stylize(source: Bitmap, style: Int): Bitmap {
+    fun stylize(source: Bitmap, style: Int, depth: AvatarDepth = AvatarDepth.FLAT): Bitmap {
         val samples = 32
         val sample = Bitmap.createScaledBitmap(source, samples, samples, true)
         val pixels = IntArray(samples * samples)
@@ -86,10 +113,43 @@ internal object CartoonAvatar {
         val palette = paletteFrom(pixels, style)
         val variation = (seedFor(pixels) and 0x7).toInt()
         if (sample !== source) sample.recycle()
+        return draw(palette, variation, style, depth)
+    }
 
+    /** Draws one of the built-in preset characters from its fixed seed — no photo needed. */
+    fun stylizePreset(seed: Long, style: Int, depth: AvatarDepth = AvatarDepth.FLAT): Bitmap =
+        draw(paletteForSeed(seed, style), (seed % 8).toInt(), style, depth)
+
+    /** لوحة ألوان حتمية من بذرة ثابتة: بكسلات تركيبية بألوان دافئة قريبة من البشرة. */
+    fun paletteForSeed(seed: Long, style: Int): AvatarPalette {
+        val random = kotlin.random.Random(seed)
+        val pixels = IntArray(32 * 32) { i ->
+            val skinish = i % 5 != 0
+            val r = if (skinish) 170 + random.nextInt(70) else 90 + random.nextInt(120)
+            val g = if (skinish) 125 + random.nextInt(55) else 100 + random.nextInt(110)
+            val b = if (skinish) 95 + random.nextInt(45) else 110 + random.nextInt(110)
+            rgb(r, g, b)
+        }
+        return paletteFrom(pixels, style)
+    }
+
+    /** الرسم الطبقي المشترك: الصورة كبذرة أو الشخصية المدمجة ترسمان من هنا. */
+    private fun draw(palette: AvatarPalette, variation: Int, style: Int, depth: AvatarDepth): Bitmap {
         val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
-        canvas.drawColor(palette.background)
+        if (depth == AvatarDepth.DEPTH) {
+            // خلفية متدرجة شعاعيًا: أفتح في الوسط فيتوسط الوجه الضوء.
+            val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = RadialGradient(
+                    256f, 210f, 430f,
+                    intArrayOf(lighten(palette.background, 0.22f), palette.background),
+                    null, Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, SIZE.toFloat(), SIZE.toFloat(), glow)
+        } else {
+            canvas.drawColor(palette.background)
+        }
 
         val wash = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = palette.accent
@@ -107,6 +167,15 @@ internal object CartoonAvatar {
             strokeWidth = if (style == 3) 9f else 4f
         }
 
+        if (depth == AvatarDepth.DEPTH) {
+            // ظل ناعم تحت الكتفين يرفع الشخصية عن الخلفية.
+            val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = darken(palette.background, 0.55f)
+                alpha = 70
+            }
+            canvas.drawOval(RectF(96f, 566f, 416f, 636f), shadow)
+        }
+
         // Shoulders and neck.
         canvas.drawOval(RectF(46f, 338f + variation, 466f, 640f), shirtPaint)
         canvas.drawRect(228f, 300f, 284f, 400f, skinPaint)
@@ -115,6 +184,33 @@ internal object CartoonAvatar {
         val face = RectF(140f, 112f, 372f, 382f)
         canvas.drawOval(face, skinPaint)
         if (style == 3) canvas.drawOval(face, linePaint)
+        if (depth == AvatarDepth.DEPTH) {
+            // تظليل متدرج على الوجه: مضيء من الأعلى، داكن من الأسفل.
+            val shading = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(
+                    0f, face.top, 0f, face.bottom,
+                    intArrayOf(0x55FFFFFF, 0x00000000, 0x66000000),
+                    floatArrayOf(0f, 0.55f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawOval(face, shading)
+            // تحديد خفيف يفصل الوجه عن الخلفية.
+            val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.style = Paint.Style.STROKE
+                color = darken(palette.hair, 0.15f)
+                alpha = 90
+                strokeWidth = 5f
+            }
+            canvas.drawOval(face, edge)
+            // لمعة صغيرة على الخد والشعر توحي بانعكاس الضوء.
+            val gloss = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFFFFFFF.toInt()
+                alpha = 46
+            }
+            canvas.drawCircle(198f, 188f, 20f, gloss)
+            canvas.drawCircle(216f, 138f, 26f, gloss)
+        }
 
         // Hair: four simple, distinct silhouettes.
         val hair = Path()

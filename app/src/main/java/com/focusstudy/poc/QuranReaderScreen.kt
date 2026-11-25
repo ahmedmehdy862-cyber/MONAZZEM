@@ -50,7 +50,9 @@ internal fun QuranReaderScreen(
     wirdFirstPage: Int,
     wirdLastPage: Int,
     wirdDoneToday: Boolean,
+    wirdCompleted: Boolean = false,
     onLogWirdToday: () -> Unit,
+    onRestartWird: (() -> Unit)? = null,
     onBack: () -> Unit
 ) {
     var page by rememberSaveable { mutableStateOf(initialPage.coerceIn(1, 604)) }
@@ -230,7 +232,27 @@ internal fun QuranReaderScreen(
             JumpPanel.NONE -> Unit
         }
         Spacer(Modifier.height(6.dp))
-        if (inWirdRange && !wirdDoneToday) {
+        if (wirdCompleted) {
+            // الختم كامل: لا نطاق وهمي ولا زر تسجيل مختفٍ دون سبب — حالة واضحة
+            // مع خيار إعادة البدء، والصفحة المعروضة مقصوصة أصلًا إلى 604.
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "🎉 ختمت المصحف كاملًا — آخر صفحة 604.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FocusColors.onTint(FocusColors.Green),
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                )
+                if (onRestartWird != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Button(
+                        onClick = onRestartWird,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp)
+                    ) { Text("ابدأ ختمة جديدة من صفحة 2") }
+                }
+            }
+        } else if (inWirdRange && !wirdDoneToday) {
             Button(
                 onClick = onLogWirdToday,
                 modifier = Modifier.fillMaxWidth(),

@@ -1,5 +1,7 @@
 package com.focusstudy.poc
 
+import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -23,12 +25,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -57,6 +63,32 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** مفاتيح أقسام «حياتي» الثمانية، بترتيب ظهورها في القائمة. */
+private enum class LifeSectionKey {
+    HABITS, WIRD, TASKS, HEALTH, MONEY, MOOD, QURAN, ADHKAR
+}
+
+/**
+ * القسم المفتوح في «حياتي» محفوظ في SharedPreferences فيبقى بعد الخروج من
+ * الشاشة؛ قيمة null تعني كل الأقسام مطوية. الافتراضي: العادات مفتوحة.
+ */
+private object LifeSectionPrefs {
+    private const val FILE = "life_tracker_ui"
+    private const val KEY_EXPANDED = "expanded_section"
+
+    fun loadExpanded(context: Context): LifeSectionKey? {
+        val raw = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(KEY_EXPANDED, LifeSectionKey.HABITS.name) ?: return LifeSectionKey.HABITS
+        if (raw.isBlank()) return null
+        return runCatching { LifeSectionKey.valueOf(raw) }.getOrDefault(LifeSectionKey.HABITS)
+    }
+
+    fun saveExpanded(context: Context, key: LifeSectionKey?) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putString(KEY_EXPANDED, key?.name ?: "").apply()
+    }
+}
 
 /** كل ما تعرضه شاشة «حياتي» في تحميل واحد، فيُعاد تحميلها كاملة بعد كل تسجيل. */
 private data class LifeUiState(
@@ -100,17 +132,19 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
     var adhkarMorning by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var quranIndex by remember { mutableStateOf<QuranIndex?>(null) }
     var quranLoadFailed by remember { mutableStateOf(false) }
+    var quranRetry by remember { mutableStateOf(0) }
     var adhkarIndex by remember { mutableStateOf<AdhkarIndex?>(null) }
     var adhkarLoadFailed by remember { mutableStateOf(false) }
+    var adhkarRetry by remember { mutableStateOf(0) }
     fun refresh() { version++ }
 
-    LaunchedEffect(quranPage) {
+    LaunchedEffect(quranPage, quranRetry) {
         if (quranPage != null && quranIndex == null && !quranLoadFailed) {
             quranIndex = withContext(Dispatchers.IO) { QuranData.loadIndex(context) }
             if (quranIndex == null) quranLoadFailed = true
         }
     }
-    LaunchedEffect(adhkarMorning) {
+    LaunchedEffect(adhkarMorning, adhkarRetry) {
         if (adhkarMorning != null && adhkarIndex == null && !adhkarLoadFailed) {
             adhkarIndex = withContext(Dispatchers.IO) { QuranData.loadAdhkar(context) }
             if (adhkarIndex == null) adhkarLoadFailed = true
@@ -162,8 +196,10 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
         loading = false
     }
 
-    val wirdFirstPage = state.wirdSettings.startPage + state.wirdTotalPages
-    val wirdLastPage = wirdFirstPage + state.wirdSettings.pagesPerDay - 1
+    // نطاق ورد اليوم مقصوص عند 604 مع كشف الختم الكامل (انظر [wirdRange]).
+    val wird = wirdRange(state.wirdSettings, state.wirdTotalPages)
+    val wirdFirstPage = wird.firstPage
+    val wirdLastPage = wird.lastPage
     val logWirdToday: () -> Unit = {
         scope.launch {
             runCatching {
@@ -172,6 +208,17 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
                     state.wirdSettings.pagesPerDay,
                     state.wirdSettings.surah
                 )
+            }
+            refresh()
+        }
+    }
+    // إعادة البدء بعد الختم الكامل: تصفير العدّاد وبداية جديدة من صفحة 2
+    // (بداية سورة البقرة)، مع بقاء عدد صفحات اليوم كما اختاره المستخدم.
+    val restartWird: () -> Unit = {
+        scope.launch {
+            runCatching {
+                life.resetWird()
+                life.saveWirdSettings(state.wirdSettings.copy(surah = "البقرة", startPage = 2))
             }
             refresh()
         }
@@ -186,18 +233,28 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
                 wirdFirstPage = wirdFirstPage,
                 wirdLastPage = wirdLastPage,
                 wirdDoneToday = state.wirdDoneToday,
+                wirdCompleted = wird.completed,
                 onLogWirdToday = logWirdToday,
+                onRestartWird = restartWird,
                 onBack = { quranPage = null }
             )
         } else {
             Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
                 TextButton(onClick = { quranPage = null }) { Text("رجوع") }
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Column(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
                         if (quranLoadFailed) "تعذّر تحميل المصحف." else "جارٍ تحميل المصحف…",
                         style = MaterialTheme.typography.bodyMedium,
                         color = FocusColors.TextSecondary
                     )
+                    if (quranLoadFailed) {
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { quranLoadFailed = false; quranRetry++ }) { Text("إعادة المحاولة") }
+                    }
                 }
             }
         }
@@ -214,12 +271,20 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
         } else {
             Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
                 TextButton(onClick = { adhkarMorning = null }) { Text("رجوع") }
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Column(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
                         if (adhkarLoadFailed) "تعذّر تحميل الأذكار." else "جارٍ تحميل الأذكار…",
                         style = MaterialTheme.typography.bodyMedium,
                         color = FocusColors.TextSecondary
                     )
+                    if (adhkarLoadFailed) {
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { adhkarLoadFailed = false; adhkarRetry++ }) { Text("إعادة المحاولة") }
+                    }
                 }
             }
         }
@@ -248,6 +313,45 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
             return@Column
         }
 
+        // التخفيف (المرحلة 5): الأقسام الثمانية مجموعات قابلة للطي، واحدة مفتوحة
+        // في المرة، وكل مجموعة مطوية تعرض سطر ملخص واحدًا. لا يُحذف أي قسم ولا
+        // أي وظيفة — التخفيف تنظيم عرض فقط، والمحتوى كاملًا داخل كل مجموعة.
+        var expandedSection by remember { mutableStateOf(LifeSectionPrefs.loadExpanded(context)) }
+        fun toggleSection(key: LifeSectionKey) {
+            expandedSection = if (expandedSection == key) null else key
+            LifeSectionPrefs.saveExpanded(context, expandedSection)
+        }
+
+        val habitsDoneToday = state.habits.count { state.habitDays[it.id]?.contains(todayKey) == true }
+        val tasksDoneToday = state.tasksDueToday.count { it.status == TaskStatus.DONE || it.isDone }
+        val healthRecorded = listOf(
+            state.healthToday?.weight != null,
+            state.healthToday?.sleepHours != null,
+            (state.healthToday?.waterCups ?: 0) > 0,
+            (state.healthToday?.exerciseMinutes ?: 0) > 0
+        ).count { it }
+        val incomeMonth = state.transactions.filter { it.kind == MoneyKind.INCOME }.sumOf { it.amount }
+        val expenseMonth = state.transactions.filter { it.kind == MoneyKind.EXPENSE }.sumOf { it.amount }
+        val moodToday = state.moodToday
+        val sectionSummaries = mapOf(
+            LifeSectionKey.HABITS to if (state.habits.isEmpty()) "لا عادات بعد — أضف أول عادة"
+            else "أنجزت $habitsDoneToday من ${state.habits.size} اليوم",
+            LifeSectionKey.WIRD to if (wird.completed) "ختمت المصحف كاملًا 🎉"
+            else "ورد اليوم: صفحات $wirdFirstPage–$wirdLastPage · ${if (state.wirdDoneToday) "تم تسجيله ✓" else "لم يُسجَّل بعد"}",
+            LifeSectionKey.TASKS to if (state.tasksDueToday.isEmpty()) "لا مهام مجدولة لليوم"
+            else "أنجزت $tasksDoneToday من ${state.tasksDueToday.size} اليوم" +
+                if (state.overdueTasks.isNotEmpty()) " · متأخرة ${state.overdueTasks.size}" else "",
+            LifeSectionKey.HEALTH to if (state.healthToday == null) "لم تسجّل صحة اليوم بعد"
+            else "سجّلت $healthRecorded من 4 عناصر اليوم",
+            LifeSectionKey.MONEY to if (state.transactions.isEmpty()) "لا معاملات هذا الشهر"
+            else "دخل ${formatAmount(incomeMonth)} · مصروف ${formatAmount(expenseMonth)}",
+            LifeSectionKey.MOOD to if (moodToday == null) "لم تسجّل مزاج اليوم بعد"
+            else "مزاجك اليوم: ${MOOD_LABELS[moodToday - 1]}",
+            LifeSectionKey.QURAN to if (wird.completed) "ختمت المصحف كاملًا 🎉"
+            else "افتح المصحف على صفحة اليوم ($wirdFirstPage)",
+            LifeSectionKey.ADHKAR to "أذكار الصباح والمساء · مسار مباشر في القايمة الجانبية"
+        )
+
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f),
@@ -266,14 +370,24 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
                         "المصحف" to 8,
                         "الأذكار" to 9
                     ),
-                    onSelect = { index -> scope.launch { listState.animateScrollToItem(index) } }
+                    onSelect = { index ->
+                        // الشريحة تفتح قسمها أيضًا، لا تمرّر إليه فقط.
+                        LifeSectionKey.entries.getOrNull(index - 2)?.let { key ->
+                            expandedSection = key
+                            LifeSectionPrefs.saveExpanded(context, key)
+                        }
+                        scope.launch { listState.animateScrollToItem(index) }
+                    }
                 )
             }
             item {
                 HabitsSection(
                     state = state,
                     today = today,
-                    onToggle = { habit, done ->
+                    expanded = expandedSection == LifeSectionKey.HABITS,
+                    onToggle = { toggleSection(LifeSectionKey.HABITS) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.HABITS),
+                    onToggleHabit = { habit, done ->
                         scope.launch {
                             runCatching { life.setHabitDone(habit.id, todayKey, done) }
                             refresh()
@@ -296,18 +410,25 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
             item {
                 WirdSection(
                     state = state,
+                    expanded = expandedSection == LifeSectionKey.WIRD,
+                    onToggle = { toggleSection(LifeSectionKey.WIRD) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.WIRD),
                     onSaveSettings = { settings ->
                         scope.launch {
                             runCatching { life.saveWirdSettings(settings) }
                             refresh()
                         }
                     },
-                    onLogToday = logWirdToday
+                    onLogToday = logWirdToday,
+                    onRestartWird = restartWird
                 )
             }
             item {
                 TasksSection(
                     state = state,
+                    expanded = expandedSection == LifeSectionKey.TASKS,
+                    onToggle = { toggleSection(LifeSectionKey.TASKS) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.TASKS),
                     onToggleTask = { task, done ->
                         scope.launch {
                             runCatching {
@@ -326,6 +447,9 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
                 HealthSection(
                     state = state,
                     todayKey = todayKey,
+                    expanded = expandedSection == LifeSectionKey.HEALTH,
+                    onToggle = { toggleSection(LifeSectionKey.HEALTH) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.HEALTH),
                     onSave = { log ->
                         scope.launch {
                             runCatching { life.saveHealthLog(log) }
@@ -361,6 +485,9 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
             item {
                 MoneySection(
                     state = state,
+                    expanded = expandedSection == LifeSectionKey.MONEY,
+                    onToggle = { toggleSection(LifeSectionKey.MONEY) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.MONEY),
                     onAdd = { kind, amount, category, note ->
                         scope.launch {
                             runCatching { life.addTransaction(kind, amount, category, note, todayKey) }
@@ -379,6 +506,9 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
                 MoodSection(
                     state = state,
                     today = today,
+                    expanded = expandedSection == LifeSectionKey.MOOD,
+                    onToggle = { toggleSection(LifeSectionKey.MOOD) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.MOOD),
                     onSelect = { mood ->
                         scope.launch {
                             runCatching { life.logMood(todayKey, mood) }
@@ -391,46 +521,68 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
                 QuranSection(
                     firstPage = wirdFirstPage,
                     lastPage = wirdLastPage,
-                    onOpenReader = { quranPage = wirdFirstPage }
+                    completed = wird.completed,
+                    expanded = expandedSection == LifeSectionKey.QURAN,
+                    onToggle = { toggleSection(LifeSectionKey.QURAN) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.QURAN),
+                    onOpenReader = { quranPage = wirdFirstPage },
+                    onRestartWird = restartWird
                 )
             }
             item {
-                AdhkarSection(onOpen = { morning -> adhkarMorning = morning })
+                AdhkarSection(
+                    expanded = expandedSection == LifeSectionKey.ADHKAR,
+                    onToggle = { toggleSection(LifeSectionKey.ADHKAR) },
+                    summary = sectionSummaries.getValue(LifeSectionKey.ADHKAR),
+                    onOpen = { morning -> adhkarMorning = morning }
+                )
             }
         }
     }
 }
 
-/** حلقة التقدم اليومية: متوسط إنجاز العادات والورد والمهام والصحة والمزاج. */
+/**
+ * حلقة التقدم اليومية (المرحلة 5): متوسط نسب الإنجاز الفعلية للمجالات، لا
+ * متوسط الإنجاز الكامل — فتسوية المجالات بالتساوي كانت مضللة (تسجيل وزن
+ * واحد = إنجاز صحة كامل). كل مجال نسبة 0..1:
+ *   العادات = المنجزة / الكل (يُستبعد المجال إن لم توجد عادات)
+ *   الورد   = صفحات اليوم المنجزة / المطلوبة (1 إن سُجّل، 0 إن لم يُسجَّل)
+ *   الصحة  = متوسط العناصر المسجلة اليوم من 4 (وزن / نوم / ماء / تمرين)
+ *   المهام  = المنجزة / الكل المستحقة اليوم (يُستبعد المجال إن لم توجد مهام)
+ *   المزاج  = 1 إن سُجّل، 0 إن لم يُسجَّل
+ * الإنجاز = مجموع النسب / عدد المجالات الداخلة، بأوزان متساوية على النسب.
+ */
 @Composable
 private fun DailyProgressCard(state: LifeUiState, todayKey: String) {
-    var done = 0f
-    var total = 0f
+    val ratios = mutableListOf<Pair<String, Float>>()
     var habitsDone = 0
     if (state.habits.isNotEmpty()) {
-        total += 1f
         habitsDone = state.habits.count { state.habitDays[it.id]?.contains(todayKey) == true }
-        done += habitsDone.toFloat() / state.habits.size
+        ratios += "العادات $habitsDone/${state.habits.size}" to
+            habitsDone.toFloat() / state.habits.size
     }
-    total += 1f
-    if (state.wirdDoneToday) done += 1f
+    val wirdRatio = if (state.wirdDoneToday) 1f else 0f
+    ratios += (if (state.wirdDoneToday) "الورد ✓" else "الورد ✗") to wirdRatio
     val tasksDone = state.tasksDueToday.count { it.status == TaskStatus.DONE || it.isDone }
     if (state.tasksDueToday.isNotEmpty()) {
-        total += 1f
-        done += tasksDone.toFloat() / state.tasksDueToday.size
+        ratios += "المهام $tasksDone/${state.tasksDueToday.size}" to
+            tasksDone.toFloat() / state.tasksDueToday.size
     }
-    total += 1f
-    if (state.healthToday != null) done += 1f
-    total += 1f
-    if (state.moodToday != null) done += 1f
-    val progress = (done / total).coerceIn(0f, 1f)
+    val healthItems = listOf(
+        state.healthToday?.weight != null,
+        state.healthToday?.sleepHours != null,
+        (state.healthToday?.waterCups ?: 0) > 0,
+        (state.healthToday?.exerciseMinutes ?: 0) > 0
+    )
+    val healthRecorded = healthItems.count { it }
+    val healthRatio = healthRecorded / 4f
+    ratios += "الصحة $healthRecorded/4" to healthRatio
+    val moodRatio = if (state.moodToday != null) 1f else 0f
+    ratios += (if (state.moodToday != null) "المزاج ✓" else "المزاج ✗") to moodRatio
+    val progress = (ratios.sumOf { it.second.toDouble() } / ratios.size).toFloat().coerceIn(0f, 1f)
     val percent = (progress * 100).toInt()
-    val parts = buildList {
-        if (state.habits.isNotEmpty()) add("العادات $habitsDone/${state.habits.size}")
-        add(if (state.wirdDoneToday) "الورد ✓" else "الورد ✗")
-        if (state.tasksDueToday.isNotEmpty()) add("المهام $tasksDone/${state.tasksDueToday.size}")
-        add(if (state.healthToday != null) "الصحة ✓" else "الصحة ✗")
-        add(if (state.moodToday != null) "المزاج ✓" else "المزاج ✗")
+    val parts = ratios.map { (label, ratio) ->
+        "$label ${(ratio * 100).toInt()}٪"
     }
 
     Card(
@@ -500,12 +652,18 @@ private fun SectionChips(sections: List<Pair<String, Int>>, onSelect: (Int) -> U
     }
 }
 
-/** بطاقة قسم موحدة: عنوان وعلامة ووصف قصير ثم المحتوى. */
+/**
+ * بطاقة قسم موحدة قابلة للطي: العنوان وسطر ملخص واحد وهي مطوية، والمحتوى
+ * الكامل عند فتحها. النقر على رأس البطاقة يطويها أو يفتحها.
+ */
 @Composable
 private fun LifeSectionCard(
     title: String,
     mark: String,
     subtitle: String,
+    summary: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
@@ -516,7 +674,10 @@ private fun LifeSectionCard(
             Modifier.fillMaxWidth().padding(FocusSpacing.card),
             verticalArrangement = Arrangement.spacedBy(FocusSpacing.item)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle)
+            ) {
                 Text(
                     mark,
                     style = MaterialTheme.typography.titleMedium,
@@ -531,13 +692,25 @@ private fun LifeSectionCard(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        subtitle,
+                        if (expanded) subtitle else summary,
                         style = MaterialTheme.typography.bodySmall,
-                        color = FocusColors.TextSecondary
+                        color = FocusColors.TextSecondary,
+                        maxLines = if (expanded) 2 else 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "طي القسم" else "فتح القسم",
+                    tint = FocusColors.TextSecondary
+                )
             }
-            content()
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(FocusSpacing.item)
+                ) { content() }
+            }
         }
     }
 }
@@ -568,7 +741,10 @@ private fun LifeNumberField(
 private fun HabitsSection(
     state: LifeUiState,
     today: LocalDate,
-    onToggle: (Habit, Boolean) -> Unit,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
+    onToggleHabit: (Habit, Boolean) -> Unit,
     onAdd: (String) -> Unit,
     onDelete: (Habit) -> Unit
 ) {
@@ -576,7 +752,14 @@ private fun HabitsSection(
     var confirmDelete by remember { mutableStateOf<Habit?>(null) }
     val todayKey = today.toString()
 
-    LifeSectionCard(title = "العادات", mark = "✓", subtitle = "عاداتك اليومية وسلسلة التزامك") {
+    LifeSectionCard(
+        title = "العادات",
+        mark = "✓",
+        subtitle = "عاداتك اليومية وسلسلة التزامك",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = name,
@@ -614,7 +797,7 @@ private fun HabitsSection(
                 ) {
                     Checkbox(
                         checked = doneToday,
-                        onCheckedChange = { onToggle(habit, it) },
+                        onCheckedChange = { onToggleHabit(habit, it) },
                         colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
                     )
                     Column(Modifier.weight(1f)) {
@@ -701,8 +884,12 @@ private fun habitStreak(doneDays: Set<String>, today: LocalDate): Int {
 @Composable
 private fun WirdSection(
     state: LifeUiState,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
     onSaveSettings: (WirdSettings) -> Unit,
-    onLogToday: () -> Unit
+    onLogToday: () -> Unit,
+    onRestartWird: () -> Unit
 ) {
     val settings = state.wirdSettings
     var surah by remember(settings) { mutableStateOf(settings.surah) }
@@ -710,28 +897,56 @@ private fun WirdSection(
     var pagesPerDay by remember(settings) { mutableStateOf(settings.pagesPerDay.toString()) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
 
-    val firstPage = settings.startPage + state.wirdTotalPages
-    val lastPage = firstPage + settings.pagesPerDay - 1
+    val range = wirdRange(settings, state.wirdTotalPages)
+    val firstPage = range.firstPage
+    val lastPage = range.lastPage
     val pagesText = if (settings.pagesPerDay <= 1) "صفحة $firstPage" else "صفحات $firstPage–$lastPage"
 
-    LifeSectionCard(title = "الورد اليومي", mark = "☾", subtitle = "وردك من القرآن، صفحة بصفحة") {
-        Text(
-            "ورد اليوم: $pagesText من سورة ${settings.surah}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = FocusColors.TextPrimary
-        )
-        Text(
-            "إجمالي ما قرأت: ${state.wirdTotalPages} صفحة",
-            style = MaterialTheme.typography.bodySmall,
-            color = FocusColors.TextSecondary
-        )
-        Button(
-            onClick = onLogToday,
-            enabled = !state.wirdDoneToday,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Text(if (state.wirdDoneToday) "تم تسجيل ورد اليوم ✓" else "سجّلت قراءة اليوم")
+    LifeSectionCard(
+        title = "الورد اليومي",
+        mark = "☾",
+        subtitle = "وردك من القرآن، صفحة بصفحة",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
+        if (range.completed) {
+            Text(
+                "🎉 ختمت المصحف كاملًا — من صفحة ${settings.startPage} حتى صفحة 604.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FocusColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "إجمالي ما قرأت في هذه الختمة: ${state.wirdTotalPages} صفحة.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Button(
+                onClick = onRestartWird,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("ابدأ ختمة جديدة من صفحة 2") }
+            TextButton(onClick = { showSettings = true }) { Text("أو اختر بداية جديدة") }
+        } else {
+            Text(
+                "ورد اليوم: $pagesText من سورة ${settings.surah}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FocusColors.TextPrimary
+            )
+            Text(
+                "إجمالي ما قرأت: ${state.wirdTotalPages} صفحة",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Button(
+                onClick = onLogToday,
+                enabled = !state.wirdDoneToday,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(if (state.wirdDoneToday) "تم تسجيل ورد اليوم ✓" else "سجّلت قراءة اليوم")
+            }
         }
         TextButton(onClick = { showSettings = !showSettings }) {
             Text(if (showSettings) "إخفاء الإعدادات" else "تعديل إعدادات الورد")
@@ -784,10 +999,20 @@ private fun WirdSection(
 @Composable
 private fun TasksSection(
     state: LifeUiState,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
     onToggleTask: (StudyTask, Boolean) -> Unit,
     onOpenTasks: () -> Unit
 ) {
-    LifeSectionCard(title = "المهام", mark = "✓", subtitle = "مهام اليوم من خطة مُنظِّم") {
+    LifeSectionCard(
+        title = "المهام",
+        mark = "✓",
+        subtitle = "مهام اليوم من خطة مُنظِّم",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
         if (state.overdueTasks.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -825,6 +1050,9 @@ private fun TasksSection(
 private fun HealthSection(
     state: LifeUiState,
     todayKey: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
     onSave: (HealthLog) -> Unit,
     onSaveProfile: (FitnessProfile) -> Unit,
     onAddCalorie: (String, Int) -> Unit,
@@ -837,7 +1065,14 @@ private fun HealthSection(
     var water by remember(saved) { mutableStateOf(saved?.waterCups?.toString() ?: "") }
     var exercise by remember(saved) { mutableStateOf(saved?.exerciseMinutes?.toString() ?: "") }
 
-    LifeSectionCard(title = "الصحة", mark = "♥", subtitle = "سجّل يومك الصحي") {
+    LifeSectionCard(
+        title = "الصحة",
+        mark = "♥",
+        subtitle = "سجّل يومك الصحي",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             LifeNumberField(
                 value = weight,
@@ -910,6 +1145,9 @@ private fun HealthSection(
 @Composable
 private fun MoneySection(
     state: LifeUiState,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
     onAdd: (MoneyKind, Double, String, String) -> Unit,
     onDelete: (MoneyTransaction) -> Unit
 ) {
@@ -922,7 +1160,14 @@ private fun MoneySection(
     val income = state.transactions.filter { it.kind == MoneyKind.INCOME }.sumOf { it.amount }
     val expense = state.transactions.filter { it.kind == MoneyKind.EXPENSE }.sumOf { it.amount }
 
-    LifeSectionCard(title = "المال", mark = "◈", subtitle = "دخلك ومصروفك هذا الشهر") {
+    LifeSectionCard(
+        title = "المال",
+        mark = "◈",
+        subtitle = "دخلك ومصروفك هذا الشهر",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(FocusSpacing.item)) {
             MoneySummary(label = "الدخل", amount = income, color = FocusColors.Green)
             MoneySummary(label = "المصروف", amount = expense, color = FocusColors.Rose)
@@ -1078,9 +1323,23 @@ private val MOOD_FACES = listOf("😞", "😐", "🙂", "😄", "🤩")
 private val MOOD_LABELS = listOf("سيئ", "عادي", "جيد", "سعيد", "رائع")
 
 @Composable
-private fun MoodSection(state: LifeUiState, today: LocalDate, onSelect: (Int) -> Unit) {
+private fun MoodSection(
+    state: LifeUiState,
+    today: LocalDate,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
+    onSelect: (Int) -> Unit
+) {
     val moodToday = state.moodToday
-    LifeSectionCard(title = "المزاج", mark = "☺", subtitle = "كيف كان يومك؟") {
+    LifeSectionCard(
+        title = "المزاج",
+        mark = "☺",
+        subtitle = "كيف كان يومك؟",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             MOOD_FACES.forEachIndexed { index, face ->
                 val mood = index + 1
@@ -1418,18 +1677,53 @@ private fun FitnessProfileForm(profile: FitnessProfile?, onSave: (FitnessProfile
 
 /** قسم المصحف: يفتح القارئ على صفحة ورد اليوم. */
 @Composable
-private fun QuranSection(firstPage: Int, lastPage: Int, onOpenReader: () -> Unit) {
-    LifeSectionCard(title = "المصحف", mark = "۞", subtitle = "اقرأ وردك من المصحف مباشرة") {
+private fun QuranSection(
+    firstPage: Int,
+    lastPage: Int,
+    completed: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
+    onOpenReader: () -> Unit,
+    onRestartWird: () -> Unit
+) {
+    LifeSectionCard(
+        title = "المصحف",
+        mark = "۞",
+        subtitle = "اقرأ وردك من المصحف مباشرة",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
+        if (completed) {
+            Text(
+                "🎉 ختمت المصحف كاملًا — آخر صفحة 604.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FocusColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold
+            )
+            Button(
+                onClick = onRestartWird,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("ابدأ ختمة جديدة من صفحة 2") }
+        } else {
+            Text(
+                "ورد اليوم: صفحات $firstPage–$lastPage من مصحف المدينة (604 صفحات).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = FocusColors.TextPrimary
+            )
+            Button(
+                onClick = onOpenReader,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("افتح المصحف على صفحة اليوم") }
+        }
         Text(
-            "ورد اليوم: صفحات $firstPage–$lastPage من مصحف المدينة (604 صفحات).",
-            style = MaterialTheme.typography.bodyMedium,
-            color = FocusColors.TextPrimary
+            "له مسار مباشر في القايمة الجانبية (المصحف) دون المرور بـ«حياتي».",
+            style = MaterialTheme.typography.bodySmall,
+            color = FocusColors.TextSecondary
         )
-        Button(
-            onClick = onOpenReader,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp)
-        ) { Text("افتح المصحف على صفحة اليوم") }
         Text(
             "النص العثماني: مشروع تنزيل (Tanzil.net) — رخصة CC Attribution 3.0.",
             style = MaterialTheme.typography.bodySmall,
@@ -1440,8 +1734,20 @@ private fun QuranSection(firstPage: Int, lastPage: Int, onOpenReader: () -> Unit
 
 /** قسم الأذكار: أذكار الصباح والمساء مع عدّاد. */
 @Composable
-private fun AdhkarSection(onOpen: (Boolean) -> Unit) {
-    LifeSectionCard(title = "الأذكار", mark = "✦", subtitle = "أذكار الصباح والمساء مع عدّاد") {
+private fun AdhkarSection(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    summary: String,
+    onOpen: (Boolean) -> Unit
+) {
+    LifeSectionCard(
+        title = "الأذكار",
+        mark = "✦",
+        subtitle = "أذكار الصباح والمساء مع عدّاد",
+        summary = summary,
+        expanded = expanded,
+        onToggle = onToggle
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onOpen(true) },
@@ -1454,6 +1760,11 @@ private fun AdhkarSection(onOpen: (Boolean) -> Unit) {
                 shape = RoundedCornerShape(16.dp)
             ) { Text("أذكار المساء") }
         }
+        Text(
+            "له مسار مباشر في القايمة الجانبية (الأذكار) دون المرور بـ«حياتي»، وتقدّمك محفوظ في كل مرة.",
+            style = MaterialTheme.typography.bodySmall,
+            color = FocusColors.TextSecondary
+        )
         Text(
             "المصدر: حصن المسلم من أذكار الكتاب والسنة — سعيد بن علي بن وهف القحطاني (hisnmuslim.com)",
             style = MaterialTheme.typography.bodySmall,

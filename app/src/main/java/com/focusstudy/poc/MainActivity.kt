@@ -796,6 +796,10 @@ private fun AppRoot(
                     userName = preferences.studentName,
                     profileLabel = preferences.profile.label,
                     assistantName = assistantName,
+                    avatarPath = preferences.avatarPath,
+                    avatarSourcePath = preferences.avatarSourcePath,
+                    avatarMode = preferences.avatarMode,
+                    companionStyle = preferences.companionStyle,
                     onSelect = { tab ->
                         drawerScope.launch { drawerState.close() }
                         openDrawerDestination(tab)
@@ -930,7 +934,8 @@ private fun AppRoot(
                 "planner" -> StudyPlannerScreen(
                     dailyGoal = preferences.dailyGoalMinutes,
                     onBack = { returnToPreviousTab() },
-                    onStartTask = { taskId -> setupTaskId = taskId }
+                    onStartTask = { taskId -> setupTaskId = taskId },
+                    profile = preferences.profile
                 )
                 "analytics" -> StudyAnalyticsScreen(onBack = { returnToPreviousTab() })
 
@@ -949,6 +954,8 @@ private fun AppRoot(
                     onOpenDrawer = { drawerScope.launch { drawerState.open() } },
                     onOpenAssistant = { openSecondary("assistant") },
                     assistantName = assistantName,
+                    onOpenSkills = { openSecondary("skills") },
+                    onOpenGoals = { openSecondary("goals") },
                     onToggleTheme = {
                         onPreferencesChanged(
                             preferences.copy(
@@ -1038,7 +1045,9 @@ private fun TasksScreen(
     onOpenDrawer: () -> Unit = {},
     onOpenAssistant: () -> Unit = {},
     assistantName: String = "منظم",
-    onToggleTheme: () -> Unit = {}
+    onToggleTheme: () -> Unit = {},
+    onOpenSkills: () -> Unit = {},
+    onOpenGoals: () -> Unit = {}
 
 ) {
 
@@ -1294,6 +1303,17 @@ private fun TasksScreen(
             Spacer(Modifier.height(12.dp))
             AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant)
             Spacer(Modifier.height(12.dp))
+            // الشخصية (المرحلة 5): أثر عملي في الرئيسية حسب «التخصيص».
+            if (preferences.profile == UserProfile.STUDENT) {
+                LectureScheduleCard()
+                Spacer(Modifier.height(12.dp))
+                SubjectProgressCard(subjects = subjectState.subjects, tasks = tasks)
+                Spacer(Modifier.height(12.dp))
+            }
+            if (preferences.profile == UserProfile.GRADUATE) {
+                GraduateSkillsCard(onOpenSkills = onOpenSkills, onOpenGoals = onOpenGoals)
+                Spacer(Modifier.height(12.dp))
+            }
             DayExtrasSection(
                 preferences = preferences,
                 tasks = tasks,
@@ -1314,7 +1334,10 @@ private fun TasksScreen(
                 AccessibilityWarningCard(onEnable = { openAccessibilitySettings(context) })
             }
             Spacer(Modifier.height(12.dp))
-            TeamMessageBanner(onOpenAll = onOpenMessages)
+            // الموظف (المرحلة 5): بانر الفريق مخفي في وضع العمل المختصر.
+            if (preferences.profile != UserProfile.PROFESSIONAL) {
+                TeamMessageBanner(onOpenAll = onOpenMessages)
+            }
             Spacer(Modifier.height(12.dp))
             }
         } else {
@@ -1357,6 +1380,11 @@ private fun TasksScreen(
             color = FocusColors.TextSecondary
         )
         Spacer(Modifier.height(10.dp))
+        // الشخصية (المرحلة 5): الطالب يرى تقدّم مواده فوق قائمته.
+        if (preferences.profile == UserProfile.STUDENT) {
+            SubjectProgressCard(subjects = subjectState.subjects, tasks = tasks)
+            Spacer(Modifier.height(10.dp))
+        }
         TaskListControls(
             query = taskQuery,
             onQueryChange = { taskQuery = it },
@@ -1783,21 +1811,25 @@ private fun DayExtrasSection(
         ) {
             DailyIntentionCard(openToday = openToday, doneToday = doneToday)
         }
-        DayExtraRow(
-            label = "الصلاة القادمة",
-            summary = prayerSummary(),
-            expanded = expanded == "prayer",
-            onToggle = { expanded = if (expanded == "prayer") null else "prayer" }
-        ) {
-            PrayerCountdownCard(onOpenPrayerSettings = onOpenPrayerSettings)
-        }
-        DayExtraRow(
-            label = "رفيقك",
-            summary = companionSummary(preferences, tasks),
-            expanded = expanded == "companion",
-            onToggle = { expanded = if (expanded == "companion") null else "companion" }
-        ) {
-            StudyCompanionCard(preferences, tasks)
+        // الموظف (المرحلة 5): وضع عمل مختصر بلا صلاة وبلا رفيق في شاشة اليوم.
+        // النية تبقى، والإخفاء عرض فقط — الإعدادات والتنبيهات كما هي.
+        if (preferences.profile != UserProfile.PROFESSIONAL) {
+            DayExtraRow(
+                label = "الصلاة القادمة",
+                summary = prayerSummary(),
+                expanded = expanded == "prayer",
+                onToggle = { expanded = if (expanded == "prayer") null else "prayer" }
+            ) {
+                PrayerCountdownCard(onOpenPrayerSettings = onOpenPrayerSettings)
+            }
+            DayExtraRow(
+                label = "رفيقك",
+                summary = companionSummary(preferences, tasks),
+                expanded = expanded == "companion",
+                onToggle = { expanded = if (expanded == "companion") null else "companion" }
+            ) {
+                StudyCompanionCard(preferences, tasks)
+            }
         }
     }
 }

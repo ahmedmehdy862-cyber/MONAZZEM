@@ -32,7 +32,12 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask: (Long) -> Unit) {
+internal fun StudyPlannerScreen(
+    dailyGoal: Int,
+    onBack: () -> Unit,
+    onStartTask: (Long) -> Unit,
+    profile: UserProfile = UserProfile.GENERAL
+) {
     val vm: TaskListViewModel = viewModel()
     val state by vm.state.collectAsState()
     val version by SessionEngine.tasksVersion.collectAsState()
@@ -54,7 +59,7 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
             Text("الخطة الأسبوعية", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(8.dp))
-        Text("خطة أسبوعك الذكية: كتل زمنية مقترحة من مهامك ومواعيدك الفعلية — رتّب أسبوعك كاملًا، لا يومك فقط. خصصنا حدًا يوميًا قدره $dailyGoal دقيقة، مع تقسيم الجلسات إلى فترات قصيرة.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        Text("خطة أسبوعك الذكية: كتل زمنية مقترحة من مهامك ومواعيدك الفعلية — رتّب أسبوعك كاملًا، لا يومك فقط. خصصنا حدًا يوميًا قدره $dailyGoal دقيقة، مع تقسيم الجلسات إلى فترات قصيرة." + if (profile == UserProfile.GRADUATE) " كتل يومك بمواعيد فعلية تتابعية تبدأ 09:00 مع استراحة 10 دقائق بين الكتل." else "", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
         Text("${fresh.size} جلسة مقترحة · $totalMinutes دقيقة هذا الأسبوع · $openCount مهام مفتوحة", color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(10.dp))
@@ -92,16 +97,21 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
             }
         } else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             fresh.groupBy { it.date }.forEach { (date, blocks) ->
+                // الخريج: كل كتلة بوقت بدء/نهاية فعلي (تتابعي من 09:00)، لا تاريخ فقط.
+                val windows = if (profile == UserProfile.GRADUATE) planDayWindows(blocks) else null
                 item(key = "day-$date") {
                     Text(date.format(formatter), modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 }
-                items(blocks, key = { "${date}-${it.task.id}" }) { block ->
+                items(blocks.withIndex().toList(), key = { (index, block) -> "${date}-${block.task.id}-$index" }) { (index, block) ->
+                    val window = windows?.getOrNull(index)
+                    val timeText = window?.let { "${formatMinuteOfDay(it.second)}–${formatMinuteOfDay(it.third)}" }
                     Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
                         UnifiedTaskCard(
                             task = block.task,
                             today = today,
                             density = TaskCardDensity.COMPACT,
                             subtitle = "${block.minutes} دقيقة · ${block.task.priority.label}" +
+                                (if (timeText != null) " · $timeText" else "") +
                                 if (block.minutes >= 45) " · استراحة 10 دقائق بعد الجلسة" else "",
                             onStart = { onStartTask(block.task.id) }
                         )

@@ -195,6 +195,24 @@ data class WirdSettings(
     val pagesPerDay: Int = 2
 )
 
+/** نطاق ورد اليوم بعد قصّه عند نهاية المصحف، مع كشف الختم الكامل. */
+data class WirdRange(val firstPage: Int, val lastPage: Int, val completed: Boolean)
+
+/**
+ * نطاق ورد اليوم من الإعدادات وإجمالي الصفحات المقروءة.
+ *
+ * القاعدة: أول صفحة = صفحة البداية + ما قُرئ، مقصوصة إلى 604 كحد أقصى؛ والختم
+ * كامل عندما يتجاوز مجموع البداية وما قُرئ صفحة 604، أي عندما لا تبقى صفحة
+ * لم تُقرأ من صفحة البداية حتى نهاية المصحف. عند الختم لا يوجد نطاق وهمي
+ * (مثل «صفحات 606–607»): آخر صفحة 604، ويعرض المستدعي حالة الختم بدل النطاق.
+ */
+fun wirdRange(settings: WirdSettings, totalPages: Int): WirdRange {
+    val completed = settings.startPage + totalPages > 604
+    val first = (settings.startPage + totalPages).coerceAtMost(604)
+    val last = if (completed) 604 else (first + settings.pagesPerDay - 1).coerceAtMost(604)
+    return WirdRange(first, last, completed)
+}
+
 /** تسجيل صحي ليوم واحد؛ الوزن والنوم اختياريان، والماء والرياضة صفر عند عدم التسجيل. */
 data class HealthLog(
     val day: String,

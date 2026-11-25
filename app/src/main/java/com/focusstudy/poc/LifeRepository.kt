@@ -23,6 +23,9 @@ class LifeRepository private constructor(private val db: StudyDb) {
 
     suspend fun saveWirdSettings(settings: WirdSettings) = io { db.saveWirdSettings(settings) }
 
+    /** يصفّر عدّاد الورد لبدء ختمة جديدة (انظر [StudyDb.resetWirdLogs]). */
+    suspend fun resetWird() = io { db.resetWirdLogs() }
+
     suspend fun logWird(day: String, pages: Int, surah: String): Boolean =
         io { db.logWird(day, pages, surah) }
 

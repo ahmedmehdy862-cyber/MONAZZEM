@@ -1,8 +1,11 @@
 package com.focusstudy.poc
 
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,12 +47,13 @@ internal fun QuranRouteScreen(onBack: () -> Unit) {
 
     var index by remember { mutableStateOf<QuranIndex?>(null) }
     var loadFailed by remember { mutableStateOf(false) }
+    var retry by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf(WirdSettings()) }
     var totalPages by remember { mutableStateOf(0) }
     var doneToday by remember { mutableStateOf(false) }
     var version by remember { mutableStateOf(0) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(retry) {
         withContext(Dispatchers.IO) {
             index = QuranData.loadIndex(context)
             if (index == null) loadFailed = true
@@ -63,8 +67,19 @@ internal fun QuranRouteScreen(onBack: () -> Unit) {
         }
     }
 
-    val wirdFirstPage = settings.startPage + totalPages
-    val wirdLastPage = wirdFirstPage + settings.pagesPerDay - 1
+    // نطاق ورد اليوم مقصوص عند 604 مع كشف الختم الكامل (انظر [wirdRange]).
+    val wird = wirdRange(settings, totalPages)
+    val wirdFirstPage = wird.firstPage
+    val wirdLastPage = wird.lastPage
+    val restartWird: () -> Unit = {
+        scope.launch {
+            runCatching {
+                life.resetWird()
+                life.saveWirdSettings(settings.copy(surah = "البقرة", startPage = 2))
+            }
+            version++
+        }
+    }
     val loaded = index
     if (loaded != null) {
         QuranReaderScreen(
@@ -73,23 +88,33 @@ internal fun QuranRouteScreen(onBack: () -> Unit) {
             wirdFirstPage = wirdFirstPage,
             wirdLastPage = wirdLastPage,
             wirdDoneToday = doneToday,
+            wirdCompleted = wird.completed,
             onLogWirdToday = {
                 scope.launch {
                     runCatching { life.logWird(todayKey, settings.pagesPerDay, settings.surah) }
                     version++
                 }
             },
+            onRestartWird = restartWird,
             onBack = onBack
         )
     } else {
         Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
             TextButton(onClick = onBack) { Text("رجوع") }
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.weight(1f).fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text(
                     if (loadFailed) "تعذّر تحميل المصحف." else "جارٍ تحميل المصحف…",
                     style = MaterialTheme.typography.bodyMedium,
                     color = FocusColors.TextSecondary
                 )
+                if (loadFailed) {
+                    Spacer(Modifier.height(12.dp))
+                    androidx.compose.material3.Button(onClick = { loadFailed = false; retry++ }) { Text("إعادة المحاولة") }
+                }
             }
         }
     }
@@ -104,9 +129,10 @@ internal fun AdhkarRouteScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var index by remember { mutableStateOf<AdhkarIndex?>(null) }
     var loadFailed by remember { mutableStateOf(false) }
+    var retry by remember { mutableStateOf(0) }
     val initialMorning = remember { LocalTime.now(AppTimeZone.zone(context)).hour < 12 }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(retry) {
         withContext(Dispatchers.IO) {
             index = QuranData.loadAdhkar(context)
             if (index == null) loadFailed = true
@@ -119,12 +145,20 @@ internal fun AdhkarRouteScreen(onBack: () -> Unit) {
     } else {
         Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
             TextButton(onClick = onBack) { Text("رجوع") }
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.weight(1f).fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text(
                     if (loadFailed) "تعذّر تحميل الأذكار." else "جارٍ تحميل الأذكار…",
                     style = MaterialTheme.typography.bodyMedium,
                     color = FocusColors.TextSecondary
                 )
+                if (loadFailed) {
+                    Spacer(Modifier.height(12.dp))
+                    androidx.compose.material3.Button(onClick = { loadFailed = false; retry++ }) { Text("إعادة المحاولة") }
+                }
             }
         }
     }

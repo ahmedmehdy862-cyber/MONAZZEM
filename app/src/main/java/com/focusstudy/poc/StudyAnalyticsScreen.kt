@@ -65,7 +65,7 @@ internal fun StudyAnalyticsScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(10.dp))
         Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
             Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                AvatarPortrait(avatarPrefs.avatarPath, avatarPrefs.studentName, avatarPrefs.companionStyle, 52.dp)
+                AvatarPortrait(avatarPrefs.avatarPath, avatarPrefs.studentName, avatarPrefs.companionStyle, 52.dp, mode = avatarPrefs.avatarMode, sourcePath = avatarPrefs.avatarSourcePath)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("وسامك هذا الأسبوع", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

@@ -26,6 +26,17 @@ enum class UserProfile(val key: String, val label: String, val hint: String) {
     }
 }
 
+/** كيف تُعرض الصورة الشخصية: كرتوني مسطّح، أو «ثلاثي الأبعاد»، أو الصورة كما هي. */
+enum class AvatarMode(val key: String, val label: String) {
+    CARTOON("cartoon", "كرتوني"),
+    DEPTH_3D("depth3d", "ثلاثي الأبعاد"),
+    PHOTO("photo", "صورتي كما هي");
+
+    companion object {
+        fun from(key: String?): AvatarMode = entries.firstOrNull { it.key == key } ?: CARTOON
+    }
+}
+
 data class FocusPreferences(
     val studentName: String = "",
     val dailyGoalMinutes: Int = 120,
@@ -44,6 +55,8 @@ data class FocusPreferences(
     val avatarSourcePath: String = "",
     /** Selected on-device cartoon style (0–3). */
     val avatarStyle: Int = 0,
+    /** كيف تُعرض الصورة الشخصية: كرتوني / ثلاثي الأبعاد / الصورة كما هي. */
+    val avatarMode: AvatarMode = AvatarMode.CARTOON,
     val companionStyle: Int = 0,
     val generalNotificationsEnabled: Boolean = true,
     /**
@@ -96,6 +109,7 @@ data class FocusPreferences(
                 avatarPath = prefs.getString("avatar_path", "").orEmpty(),
                 avatarSourcePath = prefs.getString("avatar_source_path", "").orEmpty(),
                 avatarStyle = prefs.getInt("avatar_style", 0).coerceIn(0, CartoonAvatar.STYLES.lastIndex),
+                avatarMode = AvatarMode.from(prefs.getString("avatar_mode", "cartoon")),
                 companionStyle = prefs.getInt("companion_style", 0).coerceIn(0, 3),
                 generalNotificationsEnabled = prefs.getBoolean("general_notifications_enabled", prefs.getBoolean("daily_reminder_enabled", true)),
                 // First run after the split: inherit the old shared switch, so a person who had
@@ -143,6 +157,7 @@ data class FocusPreferences(
                 .putString("avatar_path", value.avatarPath)
                 .putString("avatar_source_path", value.avatarSourcePath)
                 .putInt("avatar_style", value.avatarStyle.coerceIn(0, CartoonAvatar.STYLES.lastIndex))
+                .putString("avatar_mode", value.avatarMode.key)
                 .putInt("companion_style", value.companionStyle.coerceIn(0, 3))
                 .putBoolean("general_notifications_enabled", value.generalNotificationsEnabled)
                 .putBoolean("team_messages_enabled", value.teamMessagesEnabled)

@@ -63,9 +63,10 @@ internal val AppDrawerGroups: List<DrawerGroup> = listOf(
 /**
  * Drawer sheet content, hosted by a [androidx.compose.material3.ModalDrawerSheet] in MainActivity.
  *
- * The header is the person's profile card: name, profile and a photo slot. The slot shows a
- * neutral person mark for now — it is reserved for the cartoon / 3D character photo feature
- * planned for a later phase, which is deliberately not built here.
+ * The header is the person's profile card: name, profile and their avatar — the
+ * cartoon / 3D character (or their photo as-is) chosen in «التخصيص», drawn
+ * on-device from [CartoonAvatar]. When no avatar is chosen, a neutral person
+ * mark is shown instead.
  */
 @Composable
 internal fun AppDrawerContent(
@@ -74,22 +75,36 @@ internal fun AppDrawerContent(
     profileLabel: String,
     onSelect: (String) -> Unit,
     assistantName: String = "منظم",
+    avatarPath: String = "",
+    avatarSourcePath: String = "",
+    avatarMode: AvatarMode = AvatarMode.CARTOON,
+    companionStyle: Int = 0,
     modifier: Modifier = Modifier
 ) {
     Column(modifier.verticalScroll(rememberScrollState())) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Placeholder for the future cartoon / 3D avatar: a neutral mark, no feature yet.
-                Box(
-                    Modifier.size(56.dp).clip(CircleShape).background(FocusColors.SurfaceHigh),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(32.dp),
-                        tint = FocusColors.TextSecondary
+                if (avatarPath.isNotBlank() || (avatarMode == AvatarMode.PHOTO && avatarSourcePath.isNotBlank())) {
+                    AvatarPortrait(
+                        avatarPath = avatarPath,
+                        name = userName,
+                        styleIndex = companionStyle,
+                        size = 56.dp,
+                        mode = avatarMode,
+                        sourcePath = avatarSourcePath
                     )
+                } else {
+                    Box(
+                        Modifier.size(56.dp).clip(CircleShape).background(FocusColors.SurfaceHigh),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp),
+                            tint = FocusColors.TextSecondary
+                        )
+                    }
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -108,7 +123,12 @@ internal fun AppDrawerContent(
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "مكان الصورة الكرتونية — يأتي في مرحلة لاحقة.",
+                text = when (avatarMode) {
+                    AvatarMode.DEPTH_3D -> "شخصيتك ثلاثية الأبعاد — بدّلها من «التخصيص»."
+                    AvatarMode.PHOTO -> "صورتك الشخصية — بدّلها من «التخصيص»."
+                    AvatarMode.CARTOON -> if (avatarPath.isBlank()) "أضف صورتك الكرتونية من «التخصيص»."
+                    else "شخصيتك الكرتونية — بدّلها من «التخصيص»."
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = FocusColors.TextMuted
             )

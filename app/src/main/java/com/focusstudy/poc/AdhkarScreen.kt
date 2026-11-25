@@ -19,32 +19,51 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.LocalDate
 
 /**
  * أذكار الصباح والمساء من حصن المسلم (الفصل 27: أذكار الصباح والمساء).
  *
  * القائمة واحدة للصباح والمساء كما في الكتاب، والتقدم يُحفَظ منفصلًا لكل فترة
  * داخل الجلسة. النقر على الذكر يُنقص عدّاده حتى يكتمل.
+ *
+ * التقدم محفوظ محليًا في [AdhkarProgressStore] (التاريخ + العدّادات المتبقية)
+ * فيُستعاد عند فتح الشاشة ولو خرج المستخدم منها، ويُصفَّر مع يوم جديد.
  */
 @Composable
 internal fun AdhkarScreen(index: AdhkarIndex, initialMorning: Boolean, onBack: () -> Unit) {
     var morning by rememberSaveable { mutableStateOf(initialMorning) }
-    var morningLeft by rememberSaveable { mutableStateOf<List<Int>?>(null) }
-    var eveningLeft by rememberSaveable { mutableStateOf<List<Int>?>(null) }
+    val context = LocalContext.current
+    val todayKey = remember { LocalDate.now().toString() }
+    val progressStore = remember(context) { AdhkarProgressStore(context) }
+    val savedProgress = remember(progressStore, todayKey) {
+        progressStore.load(todayKey, index.items.size)
+    }
+    var morningLeft by remember { mutableStateOf(savedProgress?.morning) }
+    var eveningLeft by remember { mutableStateOf(savedProgress?.evening) }
 
     val defaults = index.items.map { it.repeat }
     val left = if (morning) (morningLeft ?: defaults) else (eveningLeft ?: defaults)
     fun setLeft(next: List<Int>) {
         if (morning) morningLeft = next else eveningLeft = next
+    }
+    // كل تغيير في العدّادات يُحفظ فورًا، فيبقى التقدم بعد الخروج من الشاشة.
+    LaunchedEffect(morningLeft, eveningLeft) {
+        if (morningLeft != null || eveningLeft != null) {
+            progressStore.save(todayKey, morningLeft ?: defaults, eveningLeft ?: defaults)
+        }
     }
     val doneCount = left.count { it == 0 }
 

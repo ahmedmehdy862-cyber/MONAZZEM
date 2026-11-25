@@ -1729,12 +1729,31 @@ class StudyDb private constructor(context: Context) :
         require(settings.surah.isNotBlank()) { "اسم السورة مطلوب" }
         require(settings.startPage >= 1) { "صفحة البداية يجب أن تكون 1 أو أكثر" }
         require(settings.pagesPerDay in 1..30) { "عدد صفحات اليوم بين 1 و 30" }
-        writableDatabase.execSQL(
-            "INSERT INTO wird_settings(id, surah, start_page, pages_per_day) VALUES(1, ?, ?, ?) " +
-                "ON CONFLICT(id) DO UPDATE SET surah=excluded.surah, start_page=excluded.start_page, " +
-                "pages_per_day=excluded.pages_per_day",
-            arrayOf<Any?>(settings.surah.trim(), settings.startPage, settings.pagesPerDay)
-        )
+        // تغيير السورة أو صفحة البداية يعني وردًا جديدًا: العدّاد العام عابر للسور
+        // كان يستمر من إجمالي السورة السابقة، فيبدأ العد من صفحة البداية الجديدة.
+        // تغيير عدد صفحات اليوم وحده لا يصفّر شيئًا — إنه إيقاع فقط، لا بداية جديدة.
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val old = wirdSettings()
+            if (old.surah != settings.surah.trim() || old.startPage != settings.startPage) {
+                db.delete("wird_logs", null, null)
+            }
+            db.execSQL(
+                "INSERT INTO wird_settings(id, surah, start_page, pages_per_day) VALUES(1, ?, ?, ?) " +
+                    "ON CONFLICT(id) DO UPDATE SET surah=excluded.surah, start_page=excluded.start_page, " +
+                    "pages_per_day=excluded.pages_per_day",
+                arrayOf<Any?>(settings.surah.trim(), settings.startPage, settings.pagesPerDay)
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** يصفّر عدّاد الورد (حذف سجل الصفحات) لبدء ختمة جديدة؛ الإعدادات نفسها لا تتغير. */
+    fun resetWirdLogs() {
+        writableDatabase.delete("wird_logs", null, null)
     }
 
     /** يسجّل ورد يوم واحد فقط؛ الإرجاع false إن كان اليوم مسجّلًا بالفعل فلا يتضاعف العد. */
