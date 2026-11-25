@@ -226,9 +226,13 @@ private fun homeFemalePlan(): WorkoutPlan = WorkoutPlan(
 
 /** الخطة الأسبوعية حسب المكان والجنس. */
 fun workoutPlan(place: WorkoutPlace, gender: FitnessGender): WorkoutPlan =
-    when (place to gender) {
-        WorkoutPlace.GYM to FitnessGender.MALE -> gymMalePlan()
-        WorkoutPlace.GYM to FitnessGender.FEMALE -> gymFemalePlan()
-        WorkoutPlace.HOME to FitnessGender.MALE -> homeMalePlan()
-        WorkoutPlace.HOME to FitnessGender.FEMALE -> homeFemalePlan()
+    when (place) {
+        WorkoutPlace.GYM -> when (gender) {
+            FitnessGender.MALE -> gymMalePlan()
+            FitnessGender.FEMALE -> gymFemalePlan()
+        }
+        WorkoutPlace.HOME -> when (gender) {
+            FitnessGender.MALE -> homeMalePlan()
+            FitnessGender.FEMALE -> homeFemalePlan()
+        }
     }
