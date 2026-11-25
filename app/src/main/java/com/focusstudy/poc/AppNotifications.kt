@@ -20,8 +20,9 @@ import androidx.core.content.ContextCompat
  * Android will not raise a heads-up banner for a channel created at IMPORTANCE_DEFAULT, and the
  * importance of an existing channel cannot be lowered or raised later. That is why the alert
  * channels below have new ids: upgrading the app creates them correctly even on a device that
- * already has the old, quiet channels. Low-priority channels (focus session, session summary)
- * deliberately stay outside this helper and remain silent.
+ * already has the old, quiet channels. The low-priority focus-session channel deliberately
+ * stays outside this helper and remains silent. (The old `session_summary` channel was removed
+ * in phase 4: it was created but nothing ever posted on it.)
  *
  * The channel *sound* can be changed after creation, unlike importance. `soundKey` is the id the
  * admin dashboard uses to choose a sound per notification type, stored privately on the server and
@@ -40,15 +41,9 @@ internal data class AlertChannel(
 
 internal object AppNotifications {
 
-    val PRAYER = AlertChannel(
-        id = "prayer_adhan_v3",
-        name = "الأذان ومواقيت الصلاة",
-        description = "صوت أذان كامل وظهور عاجل على الشاشة عند دخول وقت الصلاة.",
-        soundRes = R.raw.adhan_local,
-        soundKey = NotificationSounds.PRAYER,
-        category = NotificationCompat.CATEGORY_ALARM,
-        alarmSound = true
-    )
+    private const val MIGRATION_PREFS = "notification_channel_migrations"
+    private const val TEAM_UPDATE_DEFAULTED = "team_update_default_v1"
+
     /**
      * Part 7 splits prayer alerts in two channels. Their volume/importance and visibility are
      * permanently high; only the sound can change, and the per-prayer adhan/tone choice is applied
@@ -86,19 +81,27 @@ internal object AppNotifications {
         soundRes = R.raw.notification_chime,
         soundKey = NotificationSounds.EXAM
     )
+    /**
+     * Team and update messages are ordinary, not urgent: they arrive at DEFAULT importance (no
+     * heads-up banner) since phase 4. Their ids stay unchanged — [downgradeTeamAndUpdateChannels]
+     * deletes and recreates them once on existing devices, because re-creating a channel with
+     * the same id otherwise keeps its old importance.
+     */
     val TEAM = AlertChannel(
         id = "team_alerts_v3",
-        name = "رسائل الفريق العاجلة",
-        description = "تنبيه فوري بصوت مميز عند وصول رسالة جديدة من الفريق.",
+        name = "رسائل الفريق",
+        description = "رسالة من الفريق عند وصول إعلان أو تحديث.",
         soundRes = R.raw.notification_chime,
-        soundKey = NotificationSounds.TEAM
+        soundKey = NotificationSounds.TEAM,
+        highPriority = false
     )
     val UPDATE = AlertChannel(
         id = "update_alerts_v3",
         name = "تحديثات مُنظِّم",
         description = "إشعار واضح عند توفر إصدار جديد.",
         soundRes = R.raw.notification_chime,
-        soundKey = NotificationSounds.UPDATE
+        soundKey = NotificationSounds.UPDATE,
+        highPriority = false
     )
     val DAILY = AlertChannel(
         id = "daily_encouragement_v3",
@@ -127,8 +130,40 @@ internal object AppNotifications {
         highPriority = false
     )
 
-    /** All channels whose sound the dashboard may change. */
-    val ALL: List<AlertChannel> = listOf(PRAYER, PRAYER_AT, PRAYER_BEFORE, TASK, EXAM, TEAM, UPDATE, DAILY, DHIKR)
+    /**
+     * All channels whose sound the dashboard may change. The old `prayer_adhan_v3` channel is
+     * gone from this list since phase 4: nothing ever posted on it (the v4 channels carry the
+     * adhan), so it is no longer created. It may still appear in system settings on devices
+     * that had it, idle, until Android removes it.
+     */
+    val ALL: List<AlertChannel> = listOf(PRAYER_AT, PRAYER_BEFORE, TASK, EXAM, TEAM, UPDATE, DAILY, DHIKR)
+
+    /**
+     * One-time downgrade of the team and update channels from HIGH to DEFAULT (phase 4).
+     *
+     * Android cannot change an existing channel's importance in place: creating a channel with
+     * an id that already exists silently keeps the old importance. Each channel is therefore
+     * deleted and created again with the same id, so the person keeps one channel per kind and
+     * the new importance applies. A channel the person blocked in system settings
+     * (IMPORTANCE_NONE) is left untouched — deleting and recreating it would silently unblock
+     * messages they asked not to receive. A one-time flag keeps this from running on every
+     * reschedule; deleting also drops any per-channel customisation (sound, vibration) on those
+     * two channels only, which the in-app sound choices re-apply through [ensure].
+     */
+    fun downgradeTeamAndUpdateChannels(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val prefs = context.getSharedPreferences(MIGRATION_PREFS, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(TEAM_UPDATE_DEFAULTED, false)) return
+        val manager = manager(context)
+        listOf(TEAM, UPDATE).forEach { channel ->
+            val existing = runCatching { manager.getNotificationChannel(channel.id) }.getOrNull()
+            if (existing != null && existing.importance != NotificationManager.IMPORTANCE_NONE) {
+                runCatching { manager.deleteNotificationChannel(channel.id) }
+                ensure(context, channel)
+            }
+        }
+        prefs.edit().putBoolean(TEAM_UPDATE_DEFAULTED, true).apply()
+    }
     /** Playback channel is created separately: it must stay silent whatever the dashboard selects. */
     fun ensurePlaybackChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -169,7 +204,7 @@ internal object AppNotifications {
 
     /** The two adhan channels follow the voice chosen on the device, even for the default choice. */
     private fun defaultSoundRes(context: Context, channel: AlertChannel): Int =
-        if (channel.id == PRAYER.id || channel.id == PRAYER_AT.id) {
+        if (channel.id == PRAYER_AT.id) {
             PrayerAdhanSounds.resource(PrayerAlertPrefs.load(context).voice)
         } else channel.soundRes
 

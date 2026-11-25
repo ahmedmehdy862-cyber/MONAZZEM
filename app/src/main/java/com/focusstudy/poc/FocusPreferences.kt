@@ -46,6 +46,13 @@ data class FocusPreferences(
     val avatarStyle: Int = 0,
     val companionStyle: Int = 0,
     val generalNotificationsEnabled: Boolean = true,
+    /**
+     * رسائل الفريق لها مفتاحها المستقل منذ المرحلة 4. قبلها كان مفتاح «رسائل الفريق» هو نفسه
+     * `generalNotificationsEnabled` الذي تشترطه رسالتا الصباح/المساء، فإيقاف الفريق كان يُسكت
+     * التشجيع دون أن يُقال ذلك. `generalNotificationsEnabled` نفسه بقي مخزّنًا للتوافق فقط
+     * ولم يعد يتحكم في أي إرسال.
+     */
+    val teamMessagesEnabled: Boolean = true,
     val morningMessageEnabled: Boolean = true,
     val eveningMessageEnabled: Boolean = true,
     val morningMessageHour: Int = 8,
@@ -91,6 +98,9 @@ data class FocusPreferences(
                 avatarStyle = prefs.getInt("avatar_style", 0).coerceIn(0, CartoonAvatar.STYLES.lastIndex),
                 companionStyle = prefs.getInt("companion_style", 0).coerceIn(0, 3),
                 generalNotificationsEnabled = prefs.getBoolean("general_notifications_enabled", prefs.getBoolean("daily_reminder_enabled", true)),
+                // First run after the split: inherit the old shared switch, so a person who had
+                // silenced team messages does not get them back without asking.
+                teamMessagesEnabled = prefs.getBoolean("team_messages_enabled", prefs.getBoolean("general_notifications_enabled", true)),
                 morningMessageEnabled = prefs.getBoolean("morning_message_enabled", true),
                 eveningMessageEnabled = prefs.getBoolean("evening_message_enabled", true),
                 morningMessageHour = prefs.getInt("morning_message_hour", 8).coerceIn(6, 11),
@@ -135,6 +145,7 @@ data class FocusPreferences(
                 .putInt("avatar_style", value.avatarStyle.coerceIn(0, CartoonAvatar.STYLES.lastIndex))
                 .putInt("companion_style", value.companionStyle.coerceIn(0, 3))
                 .putBoolean("general_notifications_enabled", value.generalNotificationsEnabled)
+                .putBoolean("team_messages_enabled", value.teamMessagesEnabled)
                 .putBoolean("morning_message_enabled", value.morningMessageEnabled)
                 .putBoolean("evening_message_enabled", value.eveningMessageEnabled)
                 .putInt("morning_message_hour", value.morningMessageHour.coerceIn(6, 11))

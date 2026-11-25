@@ -904,7 +904,7 @@ class StudyDb private constructor(context: Context) :
 
     fun lastNonCriticalDelivery(): Long? =
         readableDatabase.rawQuery(
-            "SELECT MAX(delivered_at) FROM notification_log WHERE delivered_at IS NOT NULL AND kind IN ('task_due','task_overdue','companion','pledge')",
+            "SELECT MAX(delivered_at) FROM notification_log WHERE delivered_at IS NOT NULL AND kind IN ('task_due','task_overdue','companion','pledge','dhikr','daily','wird','skill')",
             null
         ).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
 

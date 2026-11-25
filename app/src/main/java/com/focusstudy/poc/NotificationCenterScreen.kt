@@ -1,10 +1,9 @@
 package com.focusstudy.poc
 
-import android.content.Context
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -53,26 +52,37 @@ import kotlinx.coroutines.withContext
 /**
  * One place for everything that can interrupt the person.
  *
- * Each kind of notification has a switch, the system permission has a status, and one button sends a
- * real notification so «الإشعارات لا تصل» becomes something the phone answers, not a guess.
+ * Phase 4 made this the single notification settings screen: every notification control that
+ * used to live in «التخصيص» (density, lead time, quiet hours, morning/evening hours) or in
+ * «مواقيت الصلاة» (the dhikr switch, the prayer master switch) moved here, and those screens
+ * now only link back here. Each kind of notification has a switch, the system permission has a
+ * status, and the test button and the diagnostic log are visible on the screen itself — the old
+ * long-press on the title that hid them is gone.
  */
 @Composable
 internal fun NotificationCenterScreen(
     preferences: FocusPreferences,
     onBack: () -> Unit,
     onSave: (FocusPreferences) -> Unit,
-    onRequestNotifications: () -> Unit
+    onRequestNotifications: () -> Unit,
+    onOpenPrayerSettings: () -> Unit = {},
+    onOpenPersonalization: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var allowed by remember { mutableStateOf(AppNotifications.canPost(context)) }
     var exactAlarms by remember { mutableStateOf(NotificationMaintenance.canScheduleExact(context)) }
     var diagnostics by remember { mutableStateOf(emptyList<NotificationRecord>()) }
     var sent by remember { mutableStateOf(false) }
-    // Test and diagnostic surfaces are for verification only; keep them off the normal screen.
-    var showAdvanced by remember { mutableStateOf(false) }
+    // Dhikr, wird and skill reminders live in their own preference files; this revision makes
+    // the section reread them after each change without rebuilding the whole screen.
+    var localRevision by remember { mutableStateOf(0) }
     // Prayer switches live in their own preferences file; this revision makes the section reread
     // them after each change without rebuilding the whole screen.
     var prayerRevision by remember { mutableStateOf(0) }
+    val dhikrEnabled = remember(localRevision) { DhikrPrefs.enabled(context) }
+    val wirdSettings = remember(localRevision) { WirdPrefs.load(context) }
+    val skillSettings = remember(localRevision) { SkillReminderPrefs.load(context) }
+    var wirdRange by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // The permission dialog is async: re-check when the activity resumes instead of immediately
     // after the request click, which used to leave the card stuck on "denied". A later grant of
@@ -105,6 +115,14 @@ internal fun NotificationCenterScreen(
                     .take(6)
             }.getOrDefault(emptyList())
         }
+        wirdRange = withContext(Dispatchers.IO) {
+            runCatching {
+                val db = StudyDb.get(context.applicationContext)
+                val settings = db.wirdSettings()
+                val first = settings.startPage + db.wirdTotalPages()
+                first to first + settings.pagesPerDay - 1
+            }.getOrNull()
+        }
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -114,8 +132,7 @@ internal fun NotificationCenterScreen(
             Text(
                 "الإشعارات",
                 style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.combinedClickable(onLongClick = { showAdvanced = !showAdvanced }) {}
+                fontWeight = FontWeight.Bold
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -134,56 +151,242 @@ internal fun NotificationCenterScreen(
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
                     Text("ماذا يصلك؟", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
-                    PreferenceSwitchRow(
-                        "تذكير المهام",
-                        "عدد المهام المتأخرة وأقرب خطوة، ويتوقف أثناء جلسة التركيز.",
-                        preferences.smartRemindersEnabled
-                    ) { onSave(preferences.copy(smartRemindersEnabled = it)) }
+                    // One task-reminder mode at a time (phase 4): smart and classic used to run
+                    // together on the same tasks when both switches were on. A single choice
+                    // makes that impossible; the classic nudge is the mode when smart is off.
+                    Text("نمط تذكير المهام", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+                    Text(
+                        "الذكية: تذكير واحد لكل مهمة قبل موعدها، يتأجل في الصلاة والجلسة والهدوء. الكلاسيكية: نغزة كل ساعتين من 9 صباحًا إلى 9 مساءً. تفعيل أحدهما يوقف الآخر حتى لا تصلك تذكيرات مكررة لنفس المهمة.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = preferences.smartRemindersEnabled,
+                            onClick = {
+                                val updated = preferences.copy(smartRemindersEnabled = true, legacyReminders = false)
+                                onSave(updated)
+                                StudyNotificationScheduler.update(context, updated)
+                            },
+                            label = { Text("تذكيرات ذكية") }
+                        )
+                        FilterChip(
+                            selected = !preferences.smartRemindersEnabled,
+                            onClick = {
+                                val updated = preferences.copy(smartRemindersEnabled = false, legacyReminders = true)
+                                onSave(updated)
+                                StudyNotificationScheduler.update(context, updated)
+                            },
+                            label = { Text("كلاسيكية (كل ساعتين)") }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
                     PreferenceSwitchRow(
                         "رسالة الصباح",
                         "نية اليوم وما ينتظرك، في الساعة التي تختارها.",
                         preferences.morningMessageEnabled
                     ) { onSave(preferences.copy(morningMessageEnabled = it)) }
+                    if (preferences.morningMessageEnabled) {
+                        TextButton(onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                onSave(preferences.copy(morningMessageHour = hour.coerceIn(6, 11)))
+                            }, preferences.morningMessageHour, 0, true).show()
+                        }) { Text("موعد رسالة الصباح · ${hhmm(preferences.morningMessageHour, 0)}") }
+                    }
                     PreferenceSwitchRow(
                         "رسالة المساء",
                         "مراجعة قصيرة لما أنجزته ودعوة لتجهيز الغد.",
                         preferences.eveningMessageEnabled
                     ) { onSave(preferences.copy(eveningMessageEnabled = it)) }
+                    if (preferences.eveningMessageEnabled) {
+                        TextButton(onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                onSave(preferences.copy(eveningMessageHour = hour.coerceIn(17, 23)))
+                            }, preferences.eveningMessageHour, 0, true).show()
+                        }) { Text("موعد رسالة المساء · ${hhmm(preferences.eveningMessageHour, 0)}") }
+                    }
+                    Text(
+                        "رسالة المساء تُدفع تلقائيًا خارج ±15 دقيقة حول أذان العشاء حتى لا تتكدس معه ومع أذكار ما بعد العشاء.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("كثافة التنبيه اليومي", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+                    Text(
+                        "الحد الأقصى للتنبيهات غير العاجلة في اليوم: ${preferences.notificationDensity.label} (${preferences.notificationDensity.dailyBudget}).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        NotificationDensity.entries.forEach { option ->
+                            FilterChip(
+                                selected = preferences.notificationDensity == option,
+                                onClick = { onSave(preferences.copy(notificationDensity = option)) },
+                                label = { Text(option.label) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("التذكير قبل الموعد", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(15, 30, 60).forEach { minutes ->
+                            FilterChip(
+                                selected = preferences.leadMinutes == minutes,
+                                onClick = { onSave(preferences.copy(leadMinutes = minutes)) },
+                                label = { Text("$minutes د") }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     PreferenceSwitchRow(
                         "احترام ساعات الهدوء",
-                        "يؤجّل تذكيرات المهام والامتحانات والرفيق فقط؛ الأذان لا يتأثر.",
+                        "يؤجّل تذكيرات المهام والامتحانات والأذكار والرسائل والورد؛ الأذان لا يتأثر.",
                         preferences.quietHoursEnabled
                     ) { onSave(preferences.copy(quietHoursEnabled = it)) }
+                    if (preferences.quietHoursEnabled) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = {
+                                TimePickerDialog(context, { _, hour, _ ->
+                                    onSave(preferences.copy(quietStartHour = hour))
+                                }, preferences.quietStartHour, 0, true).show()
+                            }) { Text("من ${hhmm(preferences.quietStartHour, 0)}") }
+                            TextButton(onClick = {
+                                TimePickerDialog(context, { _, hour, _ ->
+                                    onSave(preferences.copy(quietEndHour = hour))
+                                }, preferences.quietEndHour, 0, true).show()
+                            }) { Text("إلى ${hhmm(preferences.quietEndHour, 0)}") }
+                        }
+                    }
                     Text(
                         if (preferences.quietHoursEnabled) {
-                            "مفعّلة: لا تصل تذكيرات المهام والامتحانات بين ${preferences.quietStartHour} و${preferences.quietEndHour}. الأذان يظهر في وقت الصلاة."
+                            "مفعّلة: لا تصل التذكيرات غير العاجلة بين ${hhmm(preferences.quietStartHour, 0)} و${hhmm(preferences.quietEndHour, 0)}، بل تتأجل إلى نهاية الهدوء. الأذان يظهر في وقت الصلاة دائمًا."
                         } else {
-                            "معطّلة: كل الإشعارات — المهام والامتحانات والرسائل — تعمل في أي ساعة، بما فيها ساعات الهدوء."
+                            "معطّلة: كل التنبيهات تعمل في أي ساعة، بما فيها ساعات الهدوء."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = if (preferences.quietHoursEnabled) FocusColors.TextSecondary else FocusColors.Green
                     )
                     PreferenceSwitchRow(
                         "رسائل الفريق",
-                        "إعلانات وتحديثات الخدمة بدون تحديث التطبيق.",
-                        preferences.generalNotificationsEnabled
-                    ) { onSave(preferences.copy(generalNotificationsEnabled = it)) }
+                        "إعلانات وتحديثات الخدمة بدون تحديث التطبيق. مفتاح مستقل: إيقافه لا يُسكت رسالتي الصباح والمساء.",
+                        preferences.teamMessagesEnabled
+                    ) { onSave(preferences.copy(teamMessagesEnabled = it)) }
                 }
             }
             Spacer(Modifier.height(12.dp))
-            if (showAdvanced) {
-                Spacer(Modifier.height(12.dp))
-                TestCard(sent, allowed) {
-                    StudyNotificationScheduler.notifyTest(context)
-                    sent = true
+            Card(
+                colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("الأذكار والورد والمهارات", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    PreferenceSwitchRow(
+                        "تذكيرات الأذكار",
+                        "أربع وقفات قصيرة: بعد الفجر والظهر والمغرب والعشاء، أو في ٧:٠٠ و١٢:٣٠ و٦:٠٠ و٩:٣٠ إن لم يكن موقع محفوظ. تحترم ساعات الهدوء والميزانية اليومية.",
+                        dhikrEnabled
+                    ) {
+                        DhikrPrefs.setEnabled(context, it)
+                        DhikrReminderScheduler.schedule(context)
+                        localRevision++
+                    }
+                    TextButton(onClick = { DhikrReminderScheduler.notifyTest(context) }) { Text("جرّب تذكير الأذكار") }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
+                    Spacer(Modifier.height(8.dp))
+                    PreferenceSwitchRow(
+                        "تذكير الورد",
+                        "صفحتان يوميًا من سورة البقرة، في وقتين تختارهما. النقر على التذكير يفتح المصحف على صفحة ورد اليوم، وإن سجّلت الورد فلا يصلك التذكير.",
+                        wirdSettings.enabled
+                    ) {
+                        WirdPrefs.save(context, wirdSettings.copy(enabled = it))
+                        WirdReminderScheduler.schedule(context)
+                        localRevision++
+                    }
+                    val range = wirdRange
+                    if (range != null) {
+                        Text(
+                            "ورد اليوم: صفحات ${range.first}–${range.second}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FocusColors.TextSecondary
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                WirdPrefs.save(context, wirdSettings.copy(morningHour = hour, morningMinute = minute))
+                                WirdReminderScheduler.schedule(context)
+                                localRevision++
+                            }, wirdSettings.morningHour, wirdSettings.morningMinute, true).show()
+                        }) { Text("التذكير الأول · ${hhmm(wirdSettings.morningHour, wirdSettings.morningMinute)}") }
+                        TextButton(onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                WirdPrefs.save(context, wirdSettings.copy(eveningHour = hour, eveningMinute = minute))
+                                WirdReminderScheduler.schedule(context)
+                                localRevision++
+                            }, wirdSettings.eveningHour, wirdSettings.eveningMinute, true).show()
+                        }) { Text("التذكير الثاني · ${hhmm(wirdSettings.eveningHour, wirdSettings.eveningMinute)}") }
+                    }
+                    TextButton(onClick = { WirdReminderScheduler.notifyTest(context) }) { Text("جرّب تذكير الورد") }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
+                    Spacer(Modifier.height(8.dp))
+                    PreferenceSwitchRow(
+                        "تذكير المهارات والأهداف",
+                        "تذكير يومي واحد يذكّرك بمهارة أو هدف تتابعه. متوقف افتراضيًا.",
+                        skillSettings.enabled
+                    ) {
+                        SkillReminderPrefs.save(context, skillSettings.copy(enabled = it))
+                        SkillReminderScheduler.schedule(context)
+                        localRevision++
+                    }
+                    if (skillSettings.enabled) {
+                        TextButton(onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                SkillReminderPrefs.save(context, skillSettings.copy(hour = hour, minute = minute))
+                                SkillReminderScheduler.schedule(context)
+                                localRevision++
+                            }, skillSettings.hour, skillSettings.minute, true).show()
+                        }) { Text("الموعد · ${hhmm(skillSettings.hour, skillSettings.minute)}") }
+                    }
+                    TextButton(onClick = { SkillReminderScheduler.notifyTest(context) }) { Text("جرّب تذكير المهارات") }
                 }
-                Spacer(Modifier.height(12.dp))
-                DiagnosticCard(diagnostics)
             }
+            Spacer(Modifier.height(12.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("إعدادات أخرى", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "مواقيت الصلاة والموقع وطريقة الحساب في شاشة الصلاة، وباقي التخصيص (المظهر والنبرة والهدف اليومي) في شاشة التخصيص.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onOpenPrayerSettings) { Text("مواقيت الصلاة") }
+                        TextButton(onClick = onOpenPersonalization) { Text("التخصيص") }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            TestCard(sent, allowed) {
+                StudyNotificationScheduler.notifyTest(context)
+                sent = true
+            }
+            Spacer(Modifier.height(12.dp))
+            DiagnosticCard(diagnostics)
             Spacer(Modifier.height(24.dp))
         }
     }
 }
+
+private fun hhmm(hour: Int, minute: Int): String =
+    String.format(java.util.Locale.US, "%02d:%02d", hour, minute)
 
 /**
  * Part 7: one compact section for the two prayer alerts of every prayer. All values are private
@@ -195,7 +398,6 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
     val context = LocalContext.current
     val settings = remember(revision) { PrayerAlertPrefs.load(context) }
     val master = remember(revision) { PrayerPrefs.enabled(context) }
-    var showTests by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { PrayerAdhanSounds.stopPreview() } }
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
@@ -207,8 +409,7 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
                 "الصلاة",
                 style = MaterialTheme.typography.titleSmall,
                 color = FocusColors.TextPrimary,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.combinedClickable(onLongClick = { showTests = !showTests }) {}
+                fontWeight = FontWeight.SemiBold
             )
             Text(
                 "تنبيه عند دخول الوقت وتنبيه قبله، لكل واحد مفتاحه وصوته. يُجدول الأسبوع القادم كاملًا حتى لو لم تفتح التطبيق.",
@@ -322,16 +523,14 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
             Spacer(Modifier.height(8.dp))
-            if (showTests) {
-                Text("جرّب الآن", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.AT) }) {
-                        Text("تنبيه وقت الصلاة")
-                    }
-                    OutlinedButton(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.BEFORE) }) {
-                        Text("تنبيه قبل الصلاة")
-                    }
+            Text("جرّب الآن", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.AT) }) {
+                    Text("تنبيه وقت الصلاة")
+                }
+                OutlinedButton(onClick = { PrayerNotificationScheduler.notifyTest(context, PrayerAlertType.BEFORE) }) {
+                    Text("تنبيه قبل الصلاة")
                 }
             }
         }

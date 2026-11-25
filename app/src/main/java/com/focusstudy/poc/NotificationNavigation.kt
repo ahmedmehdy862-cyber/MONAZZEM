@@ -18,6 +18,18 @@ internal object NotificationNavigation {
     var openUpdatesRequest by mutableStateOf(0)
         private set
 
+    /** The wird reminder opens the reader on today's wird page. */
+    var openQuranRequest by mutableStateOf(0)
+        private set
+
+    /** The skills/goals reminder opens the skills screen. */
+    var openSkillsRequest by mutableStateOf(0)
+        private set
+
+    /** The redesigned prayer alert opens the prayer-times screen. */
+    var openPrayerTimesRequest by mutableStateOf(0)
+        private set
+
     var requestedTaskId by mutableStateOf<Long?>(null)
         private set
 
@@ -27,6 +39,18 @@ internal object NotificationNavigation {
 
     fun requestUpdates() {
         openUpdatesRequest += 1
+    }
+
+    fun requestQuran() {
+        openQuranRequest += 1
+    }
+
+    fun requestSkills() {
+        openSkillsRequest += 1
+    }
+
+    fun requestPrayerTimes() {
+        openPrayerTimesRequest += 1
     }
 
     fun requestTask(taskId: Long) {

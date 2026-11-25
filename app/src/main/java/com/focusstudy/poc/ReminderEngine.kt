@@ -1,13 +1,11 @@
 package com.focusstudy.poc
 
 import android.app.AlarmManager
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -46,8 +44,6 @@ internal object ReminderEngine {
     const val EXTRA_REMINDER_ID = "reminder_id"
     const val EXTRA_KIND = "reminder_kind"
 
-    private const val CHANNEL_SUMMARY = "session_summary"
-
     private const val MAX_ALARMS = 30
     private const val NOTIFICATION_BASE_ID = 7300
     private const val DEFER_PREFIX = "deferred|"
@@ -57,13 +53,12 @@ internal object ReminderEngine {
         // Task and exam alerts use the new high-priority channels so they appear on screen.
         AppNotifications.ensure(context, AppNotifications.TASK)
         AppNotifications.ensure(context, AppNotifications.EXAM)
-        if (Build.VERSION.SDK_INT < 26) return
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_SUMMARY, "ملخص الجلسة", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "ما وصلك أثناء جلسة التركيز، بعد انتهائها"
-            }
-        )
+        // Phase 4 removed the `session_summary` channel: it was created here but nothing ever
+        // posted on it, and wiring a real post-session summary would duplicate the reminders the
+        // engine already releases when a session ends. Deleting the creation is the safe choice;
+        // the channel may still appear idle in system settings on devices that had it.
+        // Team/update channels drop from HIGH to DEFAULT here, once, via delete-and-recreate.
+        AppNotifications.downgradeTeamAndUpdateChannels(context)
     }
 
     /** Rebuilds the whole schedule from the database; safe to call after any task change. */
@@ -418,9 +413,6 @@ internal object ReminderEngine {
         in 3..10 -> "$days أيام"
         else -> "$days يومًا"
     }
-
-    private fun DeferReason.key(): String = name.lowercase()
-    private fun DropReason.key(): String = name.lowercase()
 
     private const val DAY = 24 * 60 * 60 * 1000L
 }

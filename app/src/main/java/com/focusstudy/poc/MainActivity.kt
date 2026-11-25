@@ -392,6 +392,18 @@ class MainActivity : ComponentActivity() {
 
         }
 
+        if (intent.getBooleanExtra(WirdReminderScheduler.EXTRA_OPEN_QURAN, false)) {
+
+            NotificationNavigation.requestQuran()
+
+        }
+
+        if (intent.getBooleanExtra(SkillReminderScheduler.EXTRA_OPEN_SKILLS, false)) {
+
+            NotificationNavigation.requestSkills()
+
+        }
+
         val taskId = intent.getLongExtra(ReminderEngine.EXTRA_TASK_ID, 0L)
 
         if (taskId > 0L) NotificationNavigation.requestTask(taskId)
@@ -405,6 +417,18 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra(StudyNotificationScheduler.EXTRA_OPEN_TASKS, false) == true) {
 
             NotificationNavigation.requestTasks()
+
+        }
+
+        if (intent?.getBooleanExtra(WirdReminderScheduler.EXTRA_OPEN_QURAN, false) == true) {
+
+            NotificationNavigation.requestQuran()
+
+        }
+
+        if (intent?.getBooleanExtra(SkillReminderScheduler.EXTRA_OPEN_SKILLS, false) == true) {
+
+            NotificationNavigation.requestSkills()
 
         }
 
@@ -584,7 +608,6 @@ private fun AppRoot(
 
     val context = LocalContext.current
     LaunchedEffect(
-        preferences.generalNotificationsEnabled,
         preferences.morningMessageEnabled,
         preferences.eveningMessageEnabled,
         preferences.morningMessageHour,
@@ -595,6 +618,8 @@ private fun AppRoot(
     LaunchedEffect(Unit) {
         PrayerReminderScheduler.schedule(context)
         DhikrReminderScheduler.schedule(context)
+        WirdReminderScheduler.schedule(context)
+        SkillReminderScheduler.schedule(context)
         // One cached GPS fix is enough until the day changes or the user moves a meaningful
         // distance. The check is offline, permission-gated and never blocks the UI.
         if (ContextCompat.checkSelfPermission(
@@ -678,6 +703,18 @@ private fun AppRoot(
     val updatesRequest = NotificationNavigation.openUpdatesRequest
     LaunchedEffect(updatesRequest) {
         if (updatesRequest > 0) rootTab = "updates"
+    }
+    val quranRequest = NotificationNavigation.openQuranRequest
+    LaunchedEffect(quranRequest) {
+        if (quranRequest > 0) rootTab = "quran"
+    }
+    val skillsRequest = NotificationNavigation.openSkillsRequest
+    LaunchedEffect(skillsRequest) {
+        if (skillsRequest > 0) rootTab = "skills"
+    }
+    val prayerTimesRequest = NotificationNavigation.openPrayerTimesRequest
+    LaunchedEffect(prayerTimesRequest) {
+        if (prayerTimesRequest > 0) rootTab = "prayer_times"
     }
     val requestedTaskId = NotificationNavigation.requestedTaskId
     LaunchedEffect(requestedTaskId) {
@@ -848,7 +885,9 @@ private fun AppRoot(
                     preferences = preferences,
                     onBack = { returnToPreviousTab() },
                     onSave = onPreferencesChanged,
-                    onRequestNotifications = onRequestNotifications
+                    onRequestNotifications = onRequestNotifications,
+                    onOpenPrayerSettings = { openSecondary("prayer_times") },
+                    onOpenPersonalization = { openSecondary("settings") }
                 )
                 "goals" -> GoalsScreen(onBack = { returnToPreviousTab() })
                 "life" -> LifeTrackerScreen(onBack = { returnToPreviousTab() }, onOpenTasks = { rootTab = "tasks" })
@@ -869,7 +908,8 @@ private fun AppRoot(
                 "prayer_times" -> PrayerTimesScreen(
                     onBack = { returnToPreviousTab() },
                     timezoneId = preferences.timezoneId,
-                    onTimeZoneChanged = { id -> onPreferencesChanged(preferences.copy(timezoneId = id)) }
+                    onTimeZoneChanged = { id -> onPreferencesChanged(preferences.copy(timezoneId = id)) },
+                    onOpenNotifications = { openSecondary("notifications") }
                 )
                 "updates" -> AppUpdatesScreen(onBack = { returnToPreviousTab() })
                 "settings" -> PersonalizationScreen(
@@ -877,7 +917,8 @@ private fun AppRoot(
                     onBack = { returnToPreviousTab() },
                     onSave = onPreferencesChanged,
                     onRequestNotifications = onRequestNotifications,
-                    onManagePermanentApps = { openSecondary("permanent_apps") }
+                    onManagePermanentApps = { openSecondary("permanent_apps") },
+                    onOpenNotifications = { openSecondary("notifications") }
                 )
                 "permanent_apps" -> PermanentAppsScreen(
                     selectedPackages = preferences.permanentBlockedPackages,

@@ -72,6 +72,13 @@ internal object PrayerWindows {
         return windowContaining(todayMoments(context, now), now, margins(context))
     }
 
+    /**
+     * Today's five prayer instants for the evening-spacing rule, or empty when no location is
+     * saved (then spacing cannot be computed and the caller's fixed times stand as they are).
+     */
+    fun todayPrayerMillis(context: Context, now: Long = System.currentTimeMillis()): List<Long> =
+        todayMoments(context, now).map { it.atMillis }
+
     /** First instant at or after [from] that is outside every prayer window today. */
     fun nextFreeStart(context: Context, from: Long): Long {
         if (!PrayerPrefs.enabled(context)) return from

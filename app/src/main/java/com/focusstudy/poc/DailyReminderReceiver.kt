@@ -28,27 +28,32 @@ internal object StudyNotificationScheduler {
 
     fun update(context: Context, preferences: FocusPreferences) {
         cancelLegacyReminder(context)
-        // The smart reminder engine owns task notifications unless the user asks for the classic cadence.
-        if (preferences.smartRemindersEnabled && !preferences.legacyReminders) {
+        // One task-reminder mode at a time: smart on means the engine owns task notifications and
+        // the classic two-hour nudge stays cancelled; smart off means the classic cadence runs.
+        // The old `legacyReminders` flag is no longer consulted here — the notification screen now
+        // offers a single mode choice, so the two flags can never disagree again.
+        if (preferences.smartRemindersEnabled) {
             (context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(
                 pendingIntent(context, ACTION_TASK_NUDGE, TASK_REQUEST)
             )
         } else {
             scheduleNextTaskNudge(context)
         }
+        // Morning/evening messages have their own switches now: turning team messages off used
+        // to silence them through the shared `generalNotificationsEnabled` flag without saying so.
         scheduleDaily(
             context,
             ACTION_MORNING,
             MORNING_REQUEST,
             preferences.morningMessageHour,
-            preferences.generalNotificationsEnabled && preferences.morningMessageEnabled
+            preferences.morningMessageEnabled
         )
         scheduleDaily(
             context,
             ACTION_EVENING,
             EVENING_REQUEST,
             preferences.eveningMessageHour,
-            preferences.generalNotificationsEnabled && preferences.eveningMessageEnabled
+            preferences.eveningMessageEnabled
         )
     }
 
@@ -76,12 +81,32 @@ internal object StudyNotificationScheduler {
         val pendingIntent = pendingIntent(context, action, requestCode)
         if (!enabled) {
             alarmManager.cancel(pendingIntent)
+            alarmManager.cancel(pendingIntent(context, action, deferredRequestCode(requestCode)))
             return
         }
         val now = ZonedDateTime.now()
         var next = now.withHour(hour.coerceIn(0, 23)).withMinute(0).withSecond(0).withNano(0)
         if (!next.isAfter(now)) next = next.plusDays(1)
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.toInstant().toEpochMilli(), pendingIntent)
+        // The evening message at 20:00 can sit within ±15 minutes of the Isha adhan; push it to
+        // the end of the spacing window instead of stacking it on the adhan (same for Fajr vs.
+        // the morning message when the user picks an early hour).
+        val atMillis = NotificationPolicy.adjustOutsidePrayerWindows(
+            next.toInstant().toEpochMilli(),
+            PrayerWindows.todayPrayerMillis(context.applicationContext)
+        )
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent)
+    }
+
+    /** A deferred retry keeps its own request code so the daily reschedule never cancels it. */
+    private fun deferredRequestCode(requestCode: Int): Int = requestCode + 100
+
+    private fun scheduleDeferred(context: Context, action: String, requestCode: Int, atMillis: Long) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        NotificationMaintenance.schedule(
+            context, alarmManager, atMillis,
+            pendingIntent(context, action, deferredRequestCode(requestCode)),
+            kind = "daily"
+        )
     }
 
     private fun schedule(context: Context, action: String, requestCode: Int, atMillis: Long) {
@@ -174,31 +199,52 @@ internal object StudyNotificationScheduler {
 
     private fun showEncouragement(context: Context, morning: Boolean) {
         val prefs = FocusPreferences.load(context)
-        val enabled = prefs.generalNotificationsEnabled &&
-            if (morning) prefs.morningMessageEnabled else prefs.eveningMessageEnabled
+        // Each message has its own switch; the old shared `generalNotificationsEnabled` gate is
+        // gone, so silencing team messages no longer silences the morning/evening messages.
+        val enabled = if (morning) prefs.morningMessageEnabled else prefs.eveningMessageEnabled
         if (!enabled || !notificationsAllowed(context)) return
-        val name = prefs.studentName.trim().ifBlank { "يا بطل" }
-        val today = java.time.LocalDate.now()
-        val open = StudyDb.get(context).tasks().filter {
-            !it.isDone && it.status != TaskStatus.DONE && it.status != TaskStatus.CANCELLED
+        val now = System.currentTimeMillis()
+        // The shared policy gate: quiet hours, the daily budget, the 45-minute gap, an active
+        // focus session and the prayer window. A deferred message is re-alarmed at the instant
+        // the policy names instead of being lost.
+        when (val decision = NotificationDelivery.decide(context, enabled, now)) {
+            ReminderDecision.Send -> {
+                val today = java.time.LocalDate.now()
+                val open = StudyDb.get(context).tasks().filter {
+                    !it.isDone && it.status != TaskStatus.DONE && it.status != TaskStatus.CANCELLED
+                }
+                val dueToday = open.filter { it.dueAt?.let { end -> java.time.Instant.ofEpochMilli(end).atZone(java.time.ZoneId.systemDefault()).toLocalDate() == today } == true }
+                val message = ReminderCopy.encouragement(
+                    name = prefs.studentName.trim(),
+                    morning = morning,
+                    dueToday = dueToday.size,
+                    open = open.size,
+                    dayOfYear = today.dayOfYear
+                )
+                post(
+                    context,
+                    channel = AppNotifications.DAILY,
+                    notificationId = if (morning) MORNING_NOTIFICATION_ID else EVENING_NOTIFICATION_ID,
+                    title = if (morning) "صباح الخير ☀️" else "مساء التقدم 🌙",
+                    message = message,
+                    avatarPath = prefs.avatarPath,
+                    openTasks = true
+                )
+                NotificationDelivery.logSent(context, "daily", now, now)
+            }
+            is ReminderDecision.Defer -> {
+                NotificationDelivery.logNotSent(context, "daily", now, decision, now)
+                scheduleDeferred(
+                    context,
+                    if (morning) ACTION_MORNING else ACTION_EVENING,
+                    if (morning) MORNING_REQUEST else EVENING_REQUEST,
+                    decision.until
+                )
+            }
+            is ReminderDecision.Drop -> {
+                NotificationDelivery.logNotSent(context, "daily", now, decision, now)
+            }
         }
-        val dueToday = open.filter { it.dueAt?.let { end -> java.time.Instant.ofEpochMilli(end).atZone(java.time.ZoneId.systemDefault()).toLocalDate() == today } == true }
-        val message = ReminderCopy.encouragement(
-            name = prefs.studentName.trim(),
-            morning = morning,
-            dueToday = dueToday.size,
-            open = open.size,
-            dayOfYear = today.dayOfYear
-        )
-        post(
-            context,
-            channel = AppNotifications.DAILY,
-            notificationId = if (morning) MORNING_NOTIFICATION_ID else EVENING_NOTIFICATION_ID,
-            title = if (morning) "صباح الخير ☀️" else "مساء التقدم 🌙",
-            message = message,
-            avatarPath = prefs.avatarPath,
-            openTasks = true
-        )
     }
 
     private fun notificationsAllowed(context: Context): Boolean = AppNotifications.canPost(context)

@@ -252,4 +252,41 @@ class NotificationPolicyTest {
         assertFalse(PrayerWindows.isInsideQuietHours(12 * 60, 23 * 60, 7 * 60))
         assertFalse(PrayerWindows.isInsideQuietHours(12 * 60, 12 * 60, 12 * 60))
     }
+
+    // Phase 4: the ±15-minute evening spacing rule around every adhan.
+    @Test
+    fun `spacing pushes a reminder inside the adhan window to its end`() {
+        val isha = now + 10 * minute
+        assertEquals(
+            isha + 15 * minute,
+            NotificationPolicy.adjustOutsidePrayerWindows(now, listOf(isha))
+        )
+    }
+
+    @Test
+    fun `spacing leaves a reminder outside the adhan window alone`() {
+        val isha = now + 10 * minute
+        assertEquals(now, NotificationPolicy.adjustOutsidePrayerWindows(now, listOf(isha + 2 * hour)))
+        assertEquals(
+            now + 16 * minute,
+            NotificationPolicy.adjustOutsidePrayerWindows(now + 16 * minute, listOf(isha))
+        )
+    }
+
+    @Test
+    fun `spacing pushes forward only and walks through two windows`() {
+        val first = now + 10 * minute
+        val second = first + 20 * minute
+        // Lands in the first window, is pushed to its end, and that instant sits inside the
+        // second window, so it walks on to the second window's end instead of stopping.
+        assertEquals(
+            second + 15 * minute,
+            NotificationPolicy.adjustOutsidePrayerWindows(now, listOf(first, second))
+        )
+    }
+
+    @Test
+    fun `spacing with no prayer times changes nothing`() {
+        assertEquals(now, NotificationPolicy.adjustOutsidePrayerWindows(now, emptyList()))
+    }
 }

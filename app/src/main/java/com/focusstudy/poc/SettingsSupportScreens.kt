@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.graphics.BitmapFactory
-import android.app.TimePickerDialog
 import android.widget.Toast
 import android.Manifest
 import android.content.pm.PackageManager
@@ -76,7 +75,8 @@ private const val SUPPORT_USERNAME = "techsup402"
 internal fun PrayerTimesScreen(
     onBack: () -> Unit,
     timezoneId: String = "",
-    onTimeZoneChanged: (String) -> Unit = {}
+    onTimeZoneChanged: (String) -> Unit = {},
+    onOpenNotifications: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -87,8 +87,6 @@ internal fun PrayerTimesScreen(
     var method by rememberSaveable { mutableStateOf(PrayerPrefs.method(context)) }
     var asrSchool by rememberSaveable { mutableStateOf(PrayerPrefs.asrSchool(context)) }
     var city by rememberSaveable { mutableStateOf(PrayerPrefs.cityName(context)) }
-    var enabled by rememberSaveable { mutableStateOf(PrayerPrefs.enabled(context)) }
-    var dhikrEnabled by rememberSaveable { mutableStateOf(DhikrPrefs.enabled(context)) }
     var timezone by rememberSaveable(timezoneId) { mutableStateOf(timezoneId.ifBlank { AppTimeZone.deviceId() }) }
     var message by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
@@ -105,11 +103,6 @@ internal fun PrayerTimesScreen(
             } else message = "تعذر تحديد الموقع الآن. أدخل الإحداثيات يدويًا أو حاول قرب نافذة."
         } else message = "لم يُمنح إذن الموقع. يمكنك إدخال الإحداثيات يدويًا."
     }
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) NotificationMaintenance.rescheduleAll(context.applicationContext)
-        else NotificationMaintenance.log(context, NotificationMaintenance.PERMISSION_DENIED)
-    }
-    val hasLocation = PrayerPrefs.latitude(context).isFinite() && PrayerPrefs.longitude(context).isFinite()
     val prayers = remember(refresh) { runCatching { PrayerCalculator.today(context) }.getOrNull() }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -233,57 +226,26 @@ internal fun PrayerTimesScreen(
                 }
             }
             item {
-                PreferenceCard("تذكير الصلاة", "تنبيه اختياري لكل صلاة قادمة. يعمل محليًا، ويُعاد ضبطه بعد إعادة تشغيل الجهاز.") {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = enabled, onCheckedChange = { checked ->
-                            enabled = checked && hasLocation
-                            if (checked && !hasLocation) message = "احفظ موقعك أولًا لتفعيل التذكير."
-                            else if (checked) {
-                                PrayerPrefs.setEnabled(context, true); PrayerReminderScheduler.schedule(context)
-                                if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            } else { PrayerPrefs.setEnabled(context, false); PrayerReminderScheduler.schedule(context) }
-                        })
-                        Text("ذكّرني عند دخول وقت الصلاة", color = FocusColors.TextPrimary)
-                    }
-                    if (enabled && !hasLocation) Text("احفظ موقعًا صالحًا لتبدأ التنبيهات.", color = FocusColors.TextSecondary)
+                // Phase 4: the prayer master switch used to live here as a duplicate of the one
+                // in the notification center's prayer card. It now lives only there.
+                PreferenceCard("تنبيهات الصلاة", "المفتاح الرئيسي للمواقيت والتنبيهات، والتنبيه قبل كل صلاة، وصوت الأذان — كلها في شاشة الإشعارات.") {
                     Text(
                         "عند وقت الصلاة يظهر تنبيه عاجل على الشاشة ويُشغَّل الأذان محليًا من التطبيق، حتى والهاتف مقفل.",
                         style = MaterialTheme.typography.bodySmall,
                         color = FocusColors.TextSecondary
                     )
-                    TextButton(onClick = {
-                        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-                            androidx.core.content.ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.POST_NOTIFICATIONS
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        else PrayerReminderScheduler.notifyTest(context)
-                    }) { Text("جرّب صوت الأذان وظهور التنبيه") }
+                    TextButton(onClick = onOpenNotifications) { Text("فتح شاشة الإشعارات") }
                 }
             }
             item {
+                // Phase 4: the dhikr switch and its test button moved to the notification center.
                 PreferenceCard("تذكيرات الأذكار", "أربع وقفات قصيرة: بعد الفجر والظهر والمغرب والعشاء، أو في ٧:٠٠ و١٢:٣٠ و٦:٠٠ و٩:٣٠ إن لم يكن موقع محفوظ. كلها تُحسب في المنطقة الزمنية المحفوظة.") {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = dhikrEnabled, onCheckedChange = { checked ->
-                            dhikrEnabled = checked
-                            DhikrPrefs.setEnabled(context, checked)
-                            DhikrReminderScheduler.schedule(context)
-                        })
-                        Text("فعّل تذكيرات الأذكار", color = FocusColors.TextPrimary)
-                    }
                     Text(
-                        "النصوص قصيرة ومحفوظة داخل التطبيق، والصوت مضبوط لكل نوع إشعار. لا تُرسل الأذكار ولا أوقاتها إلى أي خادم.",
+                        "مفتاح الأذكار وزر التجربة في شاشة الإشعارات، مع باقي التذكيرات. النصوص قصيرة ومحفوظة داخل التطبيق، ولا تُرسل الأذكار ولا أوقاتها إلى أي خادم.",
                         style = MaterialTheme.typography.bodySmall,
                         color = FocusColors.TextSecondary
                     )
-                    TextButton(onClick = {
-                        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-                            androidx.core.content.ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.POST_NOTIFICATIONS
-                            ) != PackageManager.PERMISSION_GRANTED
-                        ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        else DhikrReminderScheduler.notifyTest(context)
-                    }) { Text("جرّب تذكير الأذكار") }
+                    TextButton(onClick = onOpenNotifications) { Text("فتح شاشة الإشعارات") }
                 }
             }
         }
@@ -296,7 +258,8 @@ internal fun PersonalizationScreen(
     onBack: () -> Unit,
     onSave: (FocusPreferences) -> Unit,
     onRequestNotifications: () -> Unit,
-    onManagePermanentApps: () -> Unit
+    onManagePermanentApps: () -> Unit,
+    onOpenNotifications: () -> Unit = {}
 ) {
     var name by rememberSaveable(current.studentName) { mutableStateOf(current.studentName) }
     var goal by rememberSaveable(current.dailyGoalMinutes) { mutableStateOf(current.dailyGoalMinutes.toFloat()) }
@@ -307,22 +270,10 @@ internal fun PersonalizationScreen(
     var avatarSourcePath by rememberSaveable(current.avatarSourcePath) { mutableStateOf(current.avatarSourcePath) }
     var avatarStyle by rememberSaveable(current.avatarStyle) { mutableIntStateOf(current.avatarStyle) }
     var companionStyle by rememberSaveable(current.companionStyle) { mutableStateOf(current.companionStyle) }
-    var generalNotifications by rememberSaveable(current.generalNotificationsEnabled) { mutableStateOf(current.generalNotificationsEnabled) }
-    var morningEnabled by rememberSaveable(current.morningMessageEnabled) { mutableStateOf(current.morningMessageEnabled) }
-    var eveningEnabled by rememberSaveable(current.eveningMessageEnabled) { mutableStateOf(current.eveningMessageEnabled) }
-    var morningHour by rememberSaveable(current.morningMessageHour) { mutableStateOf(current.morningMessageHour) }
-    var eveningHour by rememberSaveable(current.eveningMessageHour) { mutableStateOf(current.eveningMessageHour) }
     var tone by rememberSaveable(current.tonePreference) { mutableStateOf(current.tonePreference) }
     var reduceMotion by rememberSaveable(current.reduceMotion) { mutableStateOf(current.reduceMotion) }
     var themeMode by rememberSaveable(current.themeMode) { mutableStateOf(current.themeMode) }
     var profile by rememberSaveable(current.profile) { mutableStateOf(current.profile) }
-    var density by rememberSaveable(current.notificationDensity) { mutableStateOf(current.notificationDensity) }
-    var smartReminders by rememberSaveable(current.smartRemindersEnabled) { mutableStateOf(current.smartRemindersEnabled) }
-    var quietHours by rememberSaveable(current.quietHoursEnabled) { mutableStateOf(current.quietHoursEnabled) }
-    var quietStart by rememberSaveable(current.quietStartHour) { mutableStateOf(current.quietStartHour) }
-    var quietEnd by rememberSaveable(current.quietEndHour) { mutableStateOf(current.quietEndHour) }
-    var lead by rememberSaveable(current.leadMinutes) { mutableStateOf(current.leadMinutes) }
-    var legacyReminders by rememberSaveable(current.legacyReminders) { mutableStateOf(current.legacyReminders) }
     val context = LocalContext.current
     val notificationsAllowed = android.os.Build.VERSION.SDK_INT < 33 ||
         androidx.core.content.ContextCompat.checkSelfPermission(
@@ -383,27 +334,13 @@ internal fun PersonalizationScreen(
                 }
             }
             item {
-                PreferenceCard(title = "الإشعارات", description = "تحكم في الرسائل العامة. تنبيهات المهام أساسية ولا يمكن إيقافها من هنا.") {
-                    PreferenceSwitchRow("الرسائل العامة", "يمكنك إيقافها دون التأثير على متابعة المهام.", generalNotifications) { generalNotifications = it }
-                    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh), shape = RoundedCornerShape(16.dp)) {
-                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                            Text("🔔 تنبيهات المهام · مفعّلة دائمًا", color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
-                            Text("كل ساعتين من 9 صباحًا إلى 9 مساءً عند وجود مهام مفتوحة، وتتوقف خلال جلسة التركيز.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                // Phase 4: every notification control moved to the notification center screen;
+                // this card is only a link there, so nothing is controlled twice.
+                PreferenceCard(title = "الإشعارات والتذكيرات", description = "كل إعدادات الإشعارات في مكان واحد: الرسائل، ساعات الهدوء، الكثافة، التذكيرات الذكية، الأذكار، الورد.") {
                     if (!notificationsAllowed) {
                         Text("اسمح بإشعارات مُنظِّم من أندرويد حتى تصلك تنبيهات المهام.", color = FocusColors.onTint(FocusColors.Amber), style = MaterialTheme.typography.bodySmall)
                     }
-                    if (generalNotifications) {
-                        PreferenceSwitchRow("رسالة صباحية", "تشجيع باسمك في بداية اليوم.", morningEnabled) { morningEnabled = it }
-                        if (morningEnabled) TextButton(onClick = {
-                            TimePickerDialog(context, { _, hour, _ -> morningHour = hour.coerceIn(6, 11) }, morningHour, 0, false).show()
-                        }) { Text("الموعد · ${String.format(java.util.Locale.US, "%02d:00", morningHour)}") }
-                        PreferenceSwitchRow("رسالة مسائية", "مراجعة لطيفة في نهاية اليوم.", eveningEnabled) { eveningEnabled = it }
-                        if (eveningEnabled) TextButton(onClick = {
-                            TimePickerDialog(context, { _, hour, _ -> eveningHour = hour.coerceIn(17, 23) }, eveningHour, 0, false).show()
-                        }) { Text("الموعد · ${String.format(java.util.Locale.US, "%02d:00", eveningHour)}") }
-                    }
+                    TextButton(onClick = onOpenNotifications) { Text("فتح شاشة الإشعارات") }
                 }
             }
             item {
@@ -477,49 +414,6 @@ internal fun PersonalizationScreen(
                 }
             }
             item {
-                PreferenceCard(
-                    title = "الإشعارات الذكية",
-                    description = "تذكير واحد لكل مهمة قبل موعدها، يتأجل تلقائيًا في الصلاة والجلسة وساعات الهدوء."
-                ) {
-                    PreferenceSwitchRow("التذكيرات الذكية", "بديل تذكير الساعتين؛ يعرض سبب كل تذكير ويتعلم من تجاهلك.", smartReminders) { smartReminders = it }
-                    if (smartReminders) {
-                        Text("كثافة التنبيه اليومي: ${density.label} (${density.dailyBudget} كحد أقصى)", color = FocusColors.TextSecondary)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            NotificationDensity.entries.forEach { option ->
-                                FilterChip(
-                                    selected = density == option,
-                                    onClick = { density = option },
-                                    label = { Text(option.label) }
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Text("التذكير قبل الموعد", color = FocusColors.TextSecondary)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(15, 30, 60).forEach { minutes ->
-                                FilterChip(
-                                    selected = lead == minutes,
-                                    onClick = { lead = minutes },
-                                    label = { Text("$minutes د") }
-                                )
-                            }
-                        }
-                        PreferenceSwitchRow("ساعات الهدوء", "لا تصل التنبيهات غير العاجلة في هذه الساعات.", quietHours) { quietHours = it }
-                        if (quietHours) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = {
-                                    TimePickerDialog(context, { _, hour, _ -> quietStart = hour }, quietStart, 0, true).show()
-                                }) { Text("من ${String.format(java.util.Locale.US, "%02d:00", quietStart)}") }
-                                TextButton(onClick = {
-                                    TimePickerDialog(context, { _, hour, _ -> quietEnd = hour }, quietEnd, 0, true).show()
-                                }) { Text("إلى ${String.format(java.util.Locale.US, "%02d:00", quietEnd)}") }
-                            }
-                        }
-                    }
-                    PreferenceSwitchRow("التنبيهات الكلاسيكية", "تذكير كل ساعتين من 9 صباحًا إلى 9 مساءً كما كان.", legacyReminders) { legacyReminders = it }
-                }
-            }
-            item {
                 PreferenceCard(title = "التطبيقات الثابتة", description = "تُضاف تلقائيًا لكل جلسة، ويمكنك اختيار تطبيقات أخرى لكل مهمة.") {
                     Text("${current.permanentBlockedPackages.size} تطبيق محفوظ", color = FocusColors.TextSecondary)
                     Spacer(Modifier.height(8.dp))
@@ -560,32 +454,21 @@ internal fun PersonalizationScreen(
                         context, android.Manifest.permission.POST_NOTIFICATIONS
                     ) != android.content.pm.PackageManager.PERMISSION_GRANTED
                 ) onRequestNotifications()
+                // Notification fields are no longer saved from here: they live only in the
+                // notification center screen now, so this copy keeps their stored values.
                 onSave(current.copy(
                     studentName = name.trim(),
                     dailyGoalMinutes = goal.toInt(),
                     defaultSessionMinutes = session.toInt(),
                     accentIndex = accent,
                     textScale = textScale,
-                    dailyReminderEnabled = generalNotifications,
                     remindersPerDay = 1,
                     avatarPath = avatarPath,
                     avatarSourcePath = avatarSourcePath,
                     avatarStyle = avatarStyle,
                     companionStyle = companionStyle,
                     reduceMotion = reduceMotion,
-                    generalNotificationsEnabled = generalNotifications,
-                    morningMessageEnabled = morningEnabled,
-                    eveningMessageEnabled = eveningEnabled,
-                    morningMessageHour = morningHour,
-                    eveningMessageHour = eveningHour,
                     tonePreference = tone,
-                    notificationDensity = density,
-                    smartRemindersEnabled = smartReminders,
-                    quietHoursEnabled = quietHours,
-                    quietStartHour = quietStart,
-                    quietEndHour = quietEnd,
-                    leadMinutes = lead,
-                    legacyReminders = legacyReminders,
                     themeMode = themeMode,
                     profile = profile
                 ))

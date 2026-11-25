@@ -69,6 +69,32 @@ internal object NotificationPolicy {
     const val IGNORED_THRESHOLD = 3
 
     /**
+     * قاعدة الفاصل حول الأذان (±15 دقيقة).
+     *
+     * المساء مزدحم بطبيعته: تنبيه «قبل العشاء» ثم أذان العشاء (شاشة كاملة) ثم أذكار ما بعد
+     * العشاء ثم رسالة المساء، وكلها قد تقع في نحو نصف ساعة. أي تنبيه غير صلاة يُجدول داخل نافذة
+     * [prayerMillis] ± [marginMinutes] يُدفع إلى نهايتها (وقت الصلاة + الهامش) بدل إلغائه،
+     * فيصل متأخرًا قليلًا ولا يتكدس مع الأذان. تنبيهات «قبل الصلاة» نفسها معفاة لأنها جزء من
+     * منظومة الصلاة، والأذان نفسه لا يُؤجَّل أبدًا. الدفع للأمام فقط، فلا يعود تنبيه إلى الماضي.
+     */
+    const val PRAYER_SPACING_MINUTES = 15
+
+    fun adjustOutsidePrayerWindows(
+        desiredMillis: Long,
+        prayerMillis: List<Long>,
+        marginMinutes: Int = PRAYER_SPACING_MINUTES
+    ): Long {
+        var adjusted = desiredMillis
+        val margin = marginMinutes * 60_000L
+        prayerMillis.sorted().forEach { prayerAt ->
+            if (adjusted in (prayerAt - margin)..(prayerAt + margin)) {
+                adjusted = prayerAt + margin
+            }
+        }
+        return adjusted
+    }
+
+    /**
      * Only an explicit swipe/ignore counts. An empty action means the app showed the notification
      * but has no recorded answer; counting it used to drop reminders after three normal deliveries.
      */
@@ -131,3 +157,7 @@ internal object NotificationPolicy {
         return delta in 0..(24 * 60 * 60 * 1000L)
     }
 }
+
+/** Short reason codes for the diagnostic log; shared so every sender spells them the same way. */
+internal fun DeferReason.key(): String = name.lowercase()
+internal fun DropReason.key(): String = name.lowercase()

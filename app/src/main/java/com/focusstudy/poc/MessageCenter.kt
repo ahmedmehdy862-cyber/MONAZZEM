@@ -325,6 +325,9 @@ internal object TeamNotifier {
 
     fun notify(context: Context, message: TeamMessage): Boolean {
         if (!AppNotifications.canPost(context)) return false
+        // The team switch is independent since phase 4: it gates only team messages, and
+        // morning/evening messages have their own switches.
+        if (!FocusPreferences.load(context.applicationContext).teamMessagesEnabled) return false
         val intent = PendingIntent.getActivity(
             context,
             0,
