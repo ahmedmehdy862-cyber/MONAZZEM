@@ -48,6 +48,7 @@ internal object NavigationCatalog {
 
         SectionEntry("goals", BottomTab.GOALS.label, "أهداف بمقياس ومهلة، ومهام ومهارات مرتبطة بها.", BottomTab.GOALS.mark, SectionShelf.GROWTH),
         SectionEntry("skills", BottomTab.SKILLS.label, "سجّل المهارات التي تطوّرها ودقائق تدريبك.", BottomTab.SKILLS.mark, SectionShelf.GROWTH),
+        SectionEntry("life", BottomTab.LIFE.label, "عاداتك ووردك وصحتك ومالك ومزاجك في مكان واحد.", BottomTab.LIFE.mark, SectionShelf.GROWTH),
         SectionEntry("subjects", BottomTab.SUBJECTS.label, "نظّم موادك ومحاضراتك.", BottomTab.SUBJECTS.mark, SectionShelf.GROWTH),
 
         SectionEntry("settings", BottomTab.SETTINGS.label, "اسمك وهدفك اليومي والمظهر والملف.", BottomTab.SETTINGS.mark, SectionShelf.CUSTOMIZE),

@@ -1,0 +1,1031 @@
+package com.focusstudy.poc
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.launch
+
+/** كل ما تعرضه شاشة «حياتي» في تحميل واحد، فيُعاد تحميلها كاملة بعد كل تسجيل. */
+private data class LifeUiState(
+    val habits: List<Habit> = emptyList(),
+    val habitDays: Map<Long, Set<String>> = emptyMap(),
+    val wirdSettings: WirdSettings = WirdSettings(),
+    val wirdDoneToday: Boolean = false,
+    val wirdTotalPages: Int = 0,
+    val healthToday: HealthLog? = null,
+    val transactions: List<MoneyTransaction> = emptyList(),
+    val moodToday: Int? = null,
+    val moods30: List<MoodLog> = emptyList(),
+    val tasksDueToday: List<StudyTask> = emptyList(),
+    val overdueTasks: List<StudyTask> = emptyList()
+)
+
+/**
+ * تتبع الحياة «حياتي»: عادات، ورد قرآني، مهام اليوم، صحة، مال، مزاج.
+ *
+ * قسم المهام هنا عرض فقط لنظام المهام القائم: يقرأ مهام اليوم والمتأخر منها من
+ * [TaskRepository] ويبدّل حالتها، ولا ينشئ أي نظام مهام موازٍ.
+ */
+@Composable
+internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
+    val context = LocalContext.current
+    val life = remember { LifeRepository.get(context) }
+    val tasksRepo = remember { TaskRepository.get(context) }
+    val scope = rememberCoroutineScope()
+    val today = rememberCurrentDate()
+    val todayKey = today.toString()
+    val monthPrefix = today.format(DateTimeFormatter.ofPattern("yyyy-MM"))
+    val listState = rememberLazyListState()
+
+    var version by remember { mutableStateOf(0) }
+    var loading by remember { mutableStateOf(true) }
+    var state by remember { mutableStateOf(LifeUiState()) }
+    fun refresh() { version++ }
+
+    LaunchedEffect(version) {
+        loading = true
+        val habits = runCatching { life.habits() }.getOrDefault(emptyList())
+        val since60 = today.minusDays(60).toString()
+        val days = habits.associate { habit ->
+            habit.id to runCatching { life.habitDoneDays(habit.id, since60) }.getOrDefault(emptySet())
+        }
+        val settings = runCatching { life.wirdSettings() }.getOrDefault(WirdSettings())
+        val doneToday = runCatching { life.wirdLoggedToday(todayKey) }.getOrDefault(false)
+        val total = runCatching { life.wirdTotalPages() }.getOrDefault(0)
+        val health = runCatching { life.healthLog(todayKey) }.getOrDefault(null)
+        val txs = runCatching { life.transactionsForMonth(monthPrefix) }.getOrDefault(emptyList())
+        val mood = runCatching { life.moodFor(todayKey) }.getOrDefault(null)
+        val moods = runCatching { life.moodLogsSince(today.minusDays(29).toString()) }.getOrDefault(emptyList())
+        val allTasks = runCatching { tasksRepo.tasks() }.getOrDefault(emptyList())
+        val zone = ZoneId.systemDefault()
+        val dueToday = allTasks.filter { task ->
+            task.dueAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() } == today
+        }
+        val overdue = DayPlan.build(allTasks, today)
+            .firstOrNull { it.bucket == DayBucket.OVERDUE }?.tasks.orEmpty()
+        state = LifeUiState(
+            habits = habits,
+            habitDays = days,
+            wirdSettings = settings,
+            wirdDoneToday = doneToday,
+            wirdTotalPages = total,
+            healthToday = health,
+            transactions = txs,
+            moodToday = mood,
+            moods30 = moods,
+            tasksDueToday = dueToday,
+            overdueTasks = overdue
+        )
+        loading = false
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("رجوع") }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("حياتي", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    ArabicDate.format(today),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FocusColors.TextSecondary
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+
+        if (loading) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Text("جارٍ تحميل حياتك…", style = MaterialTheme.typography.bodyMedium, color = FocusColors.TextSecondary)
+            }
+            return@Column
+        }
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(FocusSpacing.section)
+        ) {
+            item { DailyProgressCard(state = state, todayKey = todayKey) }
+            item {
+                SectionChips(
+                    sections = listOf(
+                        "العادات" to 2,
+                        "الورد" to 3,
+                        "المهام" to 4,
+                        "الصحة" to 5,
+                        "المال" to 6,
+                        "المزاج" to 7
+                    ),
+                    onSelect = { index -> scope.launch { listState.animateScrollToItem(index) } }
+                )
+            }
+            item {
+                HabitsSection(
+                    state = state,
+                    today = today,
+                    onToggle = { habit, done ->
+                        scope.launch {
+                            runCatching { life.setHabitDone(habit.id, todayKey, done) }
+                            refresh()
+                        }
+                    },
+                    onAdd = { name ->
+                        scope.launch {
+                            runCatching { life.addHabit(name) }
+                            refresh()
+                        }
+                    },
+                    onDelete = { habit ->
+                        scope.launch {
+                            runCatching { life.deleteHabit(habit.id) }
+                            refresh()
+                        }
+                    }
+                )
+            }
+            item {
+                WirdSection(
+                    state = state,
+                    onSaveSettings = { settings ->
+                        scope.launch {
+                            runCatching { life.saveWirdSettings(settings) }
+                            refresh()
+                        }
+                    },
+                    onLogToday = {
+                        scope.launch {
+                            runCatching {
+                                life.logWird(
+                                    todayKey,
+                                    state.wirdSettings.pagesPerDay,
+                                    state.wirdSettings.surah
+                                )
+                            }
+                            refresh()
+                        }
+                    }
+                )
+            }
+            item {
+                TasksSection(
+                    state = state,
+                    onToggleTask = { task, done ->
+                        scope.launch {
+                            runCatching {
+                                tasksRepo.setStatus(
+                                    task.id,
+                                    if (done) TaskStatus.DONE else TaskStatus.TODO
+                                )
+                            }
+                            refresh()
+                        }
+                    },
+                    onOpenTasks = onOpenTasks
+                )
+            }
+            item {
+                HealthSection(
+                    state = state,
+                    todayKey = todayKey,
+                    onSave = { log ->
+                        scope.launch {
+                            runCatching { life.saveHealthLog(log) }
+                            refresh()
+                        }
+                    }
+                )
+            }
+            item {
+                MoneySection(
+                    state = state,
+                    onAdd = { kind, amount, category, note ->
+                        scope.launch {
+                            runCatching { life.addTransaction(kind, amount, category, note, todayKey) }
+                            refresh()
+                        }
+                    },
+                    onDelete = { transaction ->
+                        scope.launch {
+                            runCatching { life.deleteTransaction(transaction.id) }
+                            refresh()
+                        }
+                    }
+                )
+            }
+            item {
+                MoodSection(
+                    state = state,
+                    today = today,
+                    onSelect = { mood ->
+                        scope.launch {
+                            runCatching { life.logMood(todayKey, mood) }
+                            refresh()
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+/** حلقة التقدم اليومية: متوسط إنجاز العادات والورد والمهام والصحة والمزاج. */
+@Composable
+private fun DailyProgressCard(state: LifeUiState, todayKey: String) {
+    var done = 0f
+    var total = 0f
+    var habitsDone = 0
+    if (state.habits.isNotEmpty()) {
+        total += 1f
+        habitsDone = state.habits.count { state.habitDays[it.id]?.contains(todayKey) == true }
+        done += habitsDone.toFloat() / state.habits.size
+    }
+    total += 1f
+    if (state.wirdDoneToday) done += 1f
+    val tasksDone = state.tasksDueToday.count { it.status == TaskStatus.DONE || it.isDone }
+    if (state.tasksDueToday.isNotEmpty()) {
+        total += 1f
+        done += tasksDone.toFloat() / state.tasksDueToday.size
+    }
+    total += 1f
+    if (state.healthToday != null) done += 1f
+    total += 1f
+    if (state.moodToday != null) done += 1f
+    val progress = (done / total).coerceIn(0f, 1f)
+    val percent = (progress * 100).toInt()
+    val parts = buildList {
+        if (state.habits.isNotEmpty()) add("العادات $habitsDone/${state.habits.size}")
+        add(if (state.wirdDoneToday) "الورد ✓" else "الورد ✗")
+        if (state.tasksDueToday.isNotEmpty()) add("المهام $tasksDone/${state.tasksDueToday.size}")
+        add(if (state.healthToday != null) "الصحة ✓" else "الصحة ✗")
+        add(if (state.moodToday != null) "المزاج ✓" else "المزاج ✗")
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard)
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(FocusSpacing.card),
+            verticalArrangement = Arrangement.spacedBy(FocusSpacing.item)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "إنجاز اليوم",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = FocusColors.TextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    "$percent٪",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = FocusColors.onTint(FocusColors.Teal),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Box(
+                Modifier.fillMaxWidth()
+                    .height(FocusSpacing.progressHeight)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(FocusColors.SurfaceHigh)
+            ) {
+                Box(
+                    Modifier.fillMaxWidth(progress)
+                        .height(FocusSpacing.progressHeight)
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(FocusColors.Teal)
+                )
+            }
+            Text(
+                parts.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionChips(sections: List<Pair<String, Int>>, onSelect: (Int) -> Unit) {
+    val scrollState = rememberScrollState()
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(scrollState),
+        horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
+    ) {
+        sections.forEach { (label, index) ->
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = FocusColors.onTint(FocusColors.Teal),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(FocusSpacing.radiusChip))
+                    .background(FocusColors.SurfaceHigh)
+                    .clickable { onSelect(index) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        }
+    }
+}
+
+/** بطاقة قسم موحدة: عنوان وعلامة ووصف قصير ثم المحتوى. */
+@Composable
+private fun LifeSectionCard(
+    title: String,
+    mark: String,
+    subtitle: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard)
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(FocusSpacing.card),
+            verticalArrangement = Arrangement.spacedBy(FocusSpacing.item)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    mark,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = FocusColors.onTint(FocusColors.Teal)
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = FocusColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                }
+            }
+            content()
+        }
+    }
+}
+
+/** حقل رقمي موحد لأقسام الصحة والمال والورد. */
+@Composable
+private fun LifeNumberField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    keyboardType: KeyboardType,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { onValueChange(it.take(8)) },
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp)
+    )
+}
+
+@Composable
+private fun HabitsSection(
+    state: LifeUiState,
+    today: LocalDate,
+    onToggle: (Habit, Boolean) -> Unit,
+    onAdd: (String) -> Unit,
+    onDelete: (Habit) -> Unit
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf<Habit?>(null) }
+    val todayKey = today.toString()
+
+    LifeSectionCard(title = "العادات", mark = "✓", subtitle = "عاداتك اليومية وسلسلة التزامك") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it.take(48) },
+                label = { Text("عادة جديدة (مثال: رياضة، قراءة)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(14.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onAdd(name.trim())
+                        name = ""
+                    }
+                },
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("أضف") }
+        }
+        if (state.habits.isEmpty()) {
+            Text(
+                "لا عادات بعد — أضف أول عادة وابدأ سلسلتك.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+        }
+        state.habits.forEach { habit ->
+            val doneDays = state.habitDays[habit.id].orEmpty()
+            val doneToday = todayKey in doneDays
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = FocusSpacing.rowMinHeight)
+                ) {
+                    Checkbox(
+                        checked = doneToday,
+                        onCheckedChange = { onToggle(habit, it) },
+                        colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            habit.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = FocusColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "السلسلة: ${habitStreak(doneDays, today)} يوم",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FocusColors.TextSecondary
+                        )
+                    }
+                    TextButton(onClick = { confirmDelete = habit }) {
+                        Text("حذف", color = FocusColors.onTint(FocusColors.Rose))
+                    }
+                }
+                HabitWeekRow(doneDays = doneDays, today = today)
+                if (confirmDelete == habit) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "احذف «${habit.name}» مع سجلها؟",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FocusColors.TextSecondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { onDelete(habit); confirmDelete = null }) {
+                            Text("تأكيد الحذف", color = FocusColors.onTint(FocusColors.Rose))
+                        }
+                        TextButton(onClick = { confirmDelete = null }) { Text("إلغاء") }
+                    }
+                }
+                HorizontalDivider(
+                    color = FocusColors.Outline.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+/** شبكة آخر 7 أيام: دائرة مملوءة لكل يوم أُنجزت فيه العادة. */
+@Composable
+private fun HabitWeekRow(doneDays: Set<String>, today: LocalDate) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        (6 downTo 0).forEach { back ->
+            val day = today.minusDays(back.toLong())
+            val done = day.toString() in doneDays
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier.size(26.dp)
+                        .clip(CircleShape)
+                        .background(if (done) FocusColors.Teal else FocusColors.SurfaceHigh),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "${day.dayOfMonth}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (done) Color.White else FocusColors.TextSecondary
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** أيام متتالية من الإنجاز تنتهي اليوم، أو أمس إن لم يُسجَّل اليوم بعد. */
+private fun habitStreak(doneDays: Set<String>, today: LocalDate): Int {
+    var count = 0
+    var day = if (today.toString() in doneDays) today else today.minusDays(1)
+    while (day.toString() in doneDays) {
+        count++
+        day = day.minusDays(1)
+    }
+    return count
+}
+
+@Composable
+private fun WirdSection(
+    state: LifeUiState,
+    onSaveSettings: (WirdSettings) -> Unit,
+    onLogToday: () -> Unit
+) {
+    val settings = state.wirdSettings
+    var surah by remember(settings) { mutableStateOf(settings.surah) }
+    var startPage by remember(settings) { mutableStateOf(settings.startPage.toString()) }
+    var pagesPerDay by remember(settings) { mutableStateOf(settings.pagesPerDay.toString()) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    val firstPage = settings.startPage + state.wirdTotalPages
+    val lastPage = firstPage + settings.pagesPerDay - 1
+    val pagesText = if (settings.pagesPerDay <= 1) "صفحة $firstPage" else "صفحات $firstPage–$lastPage"
+
+    LifeSectionCard(title = "الورد اليومي", mark = "☾", subtitle = "وردك من القرآن، صفحة بصفحة") {
+        Text(
+            "ورد اليوم: $pagesText من سورة ${settings.surah}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = FocusColors.TextPrimary
+        )
+        Text(
+            "إجمالي ما قرأت: ${state.wirdTotalPages} صفحة",
+            style = MaterialTheme.typography.bodySmall,
+            color = FocusColors.TextSecondary
+        )
+        Button(
+            onClick = onLogToday,
+            enabled = !state.wirdDoneToday,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Text(if (state.wirdDoneToday) "تم تسجيل ورد اليوم ✓" else "سجّلت قراءة اليوم")
+        }
+        TextButton(onClick = { showSettings = !showSettings }) {
+            Text(if (showSettings) "إخفاء الإعدادات" else "تعديل إعدادات الورد")
+        }
+        if (showSettings) {
+            OutlinedTextField(
+                value = surah,
+                onValueChange = { surah = it.take(32) },
+                label = { Text("السورة") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LifeNumberField(
+                    value = startPage,
+                    onValueChange = { startPage = it.filter { ch -> ch.isDigit() } },
+                    label = "صفحة البداية",
+                    keyboardType = KeyboardType.Number,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                LifeNumberField(
+                    value = pagesPerDay,
+                    onValueChange = { pagesPerDay = it.filter { ch -> ch.isDigit() } },
+                    label = "صفحات اليوم",
+                    keyboardType = KeyboardType.Number,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Button(
+                onClick = {
+                    val start = startPage.toIntOrNull()?.coerceAtLeast(1) ?: settings.startPage
+                    val perDay = pagesPerDay.toIntOrNull()?.coerceIn(1, 30) ?: settings.pagesPerDay
+                    onSaveSettings(
+                        WirdSettings(
+                            surah = surah.trim().ifBlank { settings.surah },
+                            startPage = start,
+                            pagesPerDay = perDay
+                        )
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("حفظ الإعدادات") }
+        }
+    }
+}
+
+@Composable
+private fun TasksSection(
+    state: LifeUiState,
+    onToggleTask: (StudyTask, Boolean) -> Unit,
+    onOpenTasks: () -> Unit
+) {
+    LifeSectionCard(title = "المهام", mark = "✓", subtitle = "مهام اليوم من خطة مُنظِّم") {
+        if (state.overdueTasks.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "لديك ${state.overdueTasks.size} مهمة متأخرة عن موعدها.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FocusColors.onTint(FocusColors.Rose),
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onOpenTasks) { Text("عرضها") }
+            }
+        }
+        if (state.tasksDueToday.isEmpty()) {
+            Text(
+                "لا مهام مجدولة لليوم.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+        }
+        state.tasksDueToday.forEach { task ->
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = FocusSpacing.rowMinHeight)
+                ) {
+                    Checkbox(
+                        checked = task.status == TaskStatus.DONE || task.isDone,
+                        onCheckedChange = { onToggleTask(task, it) },
+                        colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            task.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = FocusColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            DayPlan.timeLabel(task),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FocusColors.TextSecondary
+                        )
+                    }
+                }
+                HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.6f))
+            }
+        }
+        TextButton(onClick = onOpenTasks) { Text("افتح مهامي") }
+    }
+}
+
+@Composable
+private fun HealthSection(
+    state: LifeUiState,
+    todayKey: String,
+    onSave: (HealthLog) -> Unit
+) {
+    val saved = state.healthToday
+    var weight by remember(saved) { mutableStateOf(saved?.weight?.toString() ?: "") }
+    var sleep by remember(saved) { mutableStateOf(saved?.sleepHours?.toString() ?: "") }
+    var water by remember(saved) { mutableStateOf(saved?.waterCups?.toString() ?: "") }
+    var exercise by remember(saved) { mutableStateOf(saved?.exerciseMinutes?.toString() ?: "") }
+
+    LifeSectionCard(title = "الصحة", mark = "♥", subtitle = "سجّل يومك الصحي") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LifeNumberField(
+                value = weight,
+                onValueChange = { weight = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                label = "الوزن (كجم)",
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            LifeNumberField(
+                value = sleep,
+                onValueChange = { sleep = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                label = "النوم (ساعات)",
+                keyboardType = KeyboardType.Decimal,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LifeNumberField(
+                value = water,
+                onValueChange = { water = it.filter { ch -> ch.isDigit() } },
+                label = "أكواب الماء",
+                keyboardType = KeyboardType.Number,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            LifeNumberField(
+                value = exercise,
+                onValueChange = { exercise = it.filter { ch -> ch.isDigit() } },
+                label = "الرياضة (دقيقة)",
+                keyboardType = KeyboardType.Number,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Button(
+            onClick = {
+                onSave(
+                    HealthLog(
+                        day = todayKey,
+                        weight = weight.toDoubleOrNull(),
+                        sleepHours = sleep.toDoubleOrNull(),
+                        waterCups = water.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                        exerciseMinutes = exercise.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                    )
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp)
+        ) { Text(if (saved == null) "حفظ سجل اليوم" else "تحديث سجل اليوم") }
+        if (saved != null) {
+            Text(
+                "تم تسجيل صحة اليوم ✓",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.onTint(FocusColors.Green)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MoneySection(
+    state: LifeUiState,
+    onAdd: (MoneyKind, Double, String, String) -> Unit,
+    onDelete: (MoneyTransaction) -> Unit
+) {
+    var amount by rememberSaveable { mutableStateOf("") }
+    var category by rememberSaveable { mutableStateOf("") }
+    var note by rememberSaveable { mutableStateOf("") }
+    var kind by rememberSaveable { mutableStateOf(MoneyKind.EXPENSE) }
+    var confirmDelete by remember { mutableStateOf<MoneyTransaction?>(null) }
+
+    val income = state.transactions.filter { it.kind == MoneyKind.INCOME }.sumOf { it.amount }
+    val expense = state.transactions.filter { it.kind == MoneyKind.EXPENSE }.sumOf { it.amount }
+
+    LifeSectionCard(title = "المال", mark = "◈", subtitle = "دخلك ومصروفك هذا الشهر") {
+        Row(horizontalArrangement = Arrangement.spacedBy(FocusSpacing.item)) {
+            MoneySummary(label = "الدخل", amount = income, color = FocusColors.Green)
+            MoneySummary(label = "المصروف", amount = expense, color = FocusColors.Rose)
+            MoneySummary(label = "الباقي", amount = income - expense, color = FocusColors.TextPrimary)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "النوع:",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Spacer(Modifier.width(8.dp))
+            MoneyKind.entries.forEach { entry ->
+                KindChip(
+                    label = entry.label,
+                    selected = kind == entry,
+                    onSelect = { kind = entry }
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+        }
+        LifeNumberField(
+            value = amount,
+            onValueChange = { amount = it.filter { ch -> ch.isDigit() || ch == '.' } },
+            label = "المبلغ",
+            keyboardType = KeyboardType.Decimal,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = category,
+            onValueChange = { category = it.take(24) },
+            label = { Text("التصنيف (مثال: طعام، مواصلات)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp)
+        )
+        OutlinedTextField(
+            value = note,
+            onValueChange = { note = it.take(64) },
+            label = { Text("ملاحظة (اختياري)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp)
+        )
+        Button(
+            onClick = {
+                val value = amount.toDoubleOrNull()
+                if (value != null && value > 0) {
+                    onAdd(kind, value, category, note)
+                    amount = ""
+                    category = ""
+                    note = ""
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp)
+        ) { Text("أضف") }
+        if (state.transactions.isEmpty()) {
+            Text(
+                "لا معاملات هذا الشهر بعد.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+        }
+        state.transactions.forEach { transaction ->
+            Column(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (transaction.kind == MoneyKind.INCOME) "+" else "−",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (transaction.kind == MoneyKind.INCOME) FocusColors.onTint(FocusColors.Green) else FocusColors.onTint(FocusColors.Rose)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            transaction.category.ifBlank { transaction.kind.label },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = FocusColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            transaction.day + if (transaction.note.isNotBlank()) " · ${transaction.note}" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FocusColors.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text(
+                        formatAmount(transaction.amount),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FocusColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(onClick = { confirmDelete = transaction }) {
+                        Text("حذف", color = FocusColors.onTint(FocusColors.Rose))
+                    }
+                }
+                if (confirmDelete == transaction) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "احذف هذه المعاملة؟",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FocusColors.TextSecondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { onDelete(transaction); confirmDelete = null }) {
+                            Text("تأكيد الحذف", color = FocusColors.onTint(FocusColors.Rose))
+                        }
+                        TextButton(onClick = { confirmDelete = null }) { Text("إلغاء") }
+                    }
+                }
+                HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.6f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.MoneySummary(label: String, amount: Double, color: Color) {
+    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+        Text(
+            formatAmount(amount),
+            style = MaterialTheme.typography.titleSmall,
+            color = color,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun KindChip(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelMedium,
+        color = if (selected) Color.White else FocusColors.TextSecondary,
+        modifier = Modifier
+            .clip(RoundedCornerShape(FocusSpacing.radiusChip))
+            .background(if (selected) FocusColors.Teal else FocusColors.SurfaceHigh)
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    )
+}
+
+/** المبلغ بلا كسور إن كان صحيحًا، وإلا برقمين عشريين. */
+private fun formatAmount(amount: Double): String =
+    if (amount == amount.toLong().toDouble()) amount.toLong().toString()
+    else String.format("%.2f", amount)
+
+private val MOOD_FACES = listOf("😞", "😐", "🙂", "😄", "🤩")
+private val MOOD_LABELS = listOf("سيئ", "عادي", "جيد", "سعيد", "رائع")
+
+@Composable
+private fun MoodSection(state: LifeUiState, today: LocalDate, onSelect: (Int) -> Unit) {
+    val moodToday = state.moodToday
+    LifeSectionCard(title = "المزاج", mark = "☺", subtitle = "كيف كان يومك؟") {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            MOOD_FACES.forEachIndexed { index, face ->
+                val mood = index + 1
+                val selected = moodToday == mood
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable { onSelect(mood) }.padding(4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.size(44.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (selected) FocusColors.Teal.copy(alpha = 0.25f) else FocusColors.SurfaceHigh
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(face, style = MaterialTheme.typography.titleLarge)
+                    }
+                    Text(
+                        MOOD_LABELS[index],
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (selected) FocusColors.onTint(FocusColors.Teal) else FocusColors.TextSecondary
+                    )
+                }
+            }
+        }
+        Text(
+            if (moodToday == null) "لم تسجّل مزاج اليوم بعد."
+            else "مزاجك اليوم: ${MOOD_LABELS[moodToday - 1]}",
+            style = MaterialTheme.typography.bodySmall,
+            color = FocusColors.TextSecondary
+        )
+        if (state.moods30.isNotEmpty()) {
+            Text(
+                "آخر 30 يومًا",
+                style = MaterialTheme.typography.labelMedium,
+                color = FocusColors.TextSecondary
+            )
+            MoodStrip(moods = state.moods30, today = today)
+        }
+    }
+}
+
+/** شريط آخر 30 يومًا: عمود لكل يوم، ارتفاعه مزاج ذلك اليوم. */
+@Composable
+private fun MoodStrip(moods: List<MoodLog>, today: LocalDate) {
+    val byDay = moods.associate { it.day to it.mood }
+    val scrollState = rememberScrollState()
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(scrollState),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        (29 downTo 0).forEach { back ->
+            val day = today.minusDays(back.toLong())
+            val mood = byDay[day.toString()]
+            Box(
+                modifier = Modifier
+                    .size(width = 8.dp, height = if (mood == null) 8.dp else (8 + mood * 8).dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(
+                        if (mood == null) FocusColors.Outline.copy(alpha = 0.4f) else FocusColors.Teal
+                    )
+            )
+        }
+    }
+}

@@ -24,6 +24,8 @@ data class SessionRow(
  *   v2 — rich task fields (description, category, priority, status, dates, notes, recurrence,
  *        subject, sort_order, completed_at) and the subtasks table.
  *   v14 — notes(id, title, body, category, pinned, created_at, updated_at) for the private «نوتة».
+ *   v15 — life tracking: habits, habit_logs, wird_settings, wird_logs, health_logs,
+ *        transactions, mood_logs.
  *
  * Every upgrade is additive: no column or table is dropped, so existing data survives.
  */
@@ -73,6 +75,7 @@ class StudyDb private constructor(context: Context) :
         migrateToV12(db)
         migrateToV13(db)
         migrateToV14(db)
+        migrateToV15(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -89,6 +92,7 @@ class StudyDb private constructor(context: Context) :
         if (oldVersion < 12) migrateToV12(db)
         if (oldVersion < 13) migrateToV13(db)
         if (oldVersion < 14) migrateToV14(db)
+        if (oldVersion < 15) migrateToV15(db)
     }
 
     private fun migrateToV4(db: SQLiteDatabase) {
@@ -1516,9 +1520,298 @@ class StudyDb private constructor(context: Context) :
         return raw.split(SEPARATOR).filter { it.isNotBlank() }.toSet()
     }
 
+    /**
+     * v15 — تتبع الحياة «حياتي»: عادات، ورد قرآني، صحة، مال، مزاج.
+     *
+     * جداول جديدة فقط؛ لا يتغير أي جدول قائم، فبيانات المستخدمين الحاليين تبقى كما هي.
+     * مفاتيح الأيام نصوص ISO (yyyy-MM-dd) في منطقة الجهاز، فيطابق مفتاح اليوم ما تعرضه
+     * الواجهة دون حسابات مناطق زمنية داخل قاعدة البيانات.
+     */
+    private fun migrateToV15(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS habits(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              archived INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS habit_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              habit_id INTEGER NOT NULL,
+              day TEXT NOT NULL,
+              done INTEGER NOT NULL DEFAULT 1,
+              UNIQUE(habit_id, day)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_habit_logs_habit_day ON habit_logs(habit_id, day)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS wird_settings(
+              id INTEGER PRIMARY KEY,
+              surah TEXT NOT NULL DEFAULT 'البقرة',
+              start_page INTEGER NOT NULL DEFAULT 2,
+              pages_per_day INTEGER NOT NULL DEFAULT 2
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS wird_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              day TEXT NOT NULL,
+              pages INTEGER NOT NULL,
+              surah TEXT NOT NULL DEFAULT 'البقرة',
+              logged_at INTEGER NOT NULL,
+              UNIQUE(day)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS health_logs(
+              day TEXT PRIMARY KEY,
+              weight REAL,
+              sleep_hours REAL,
+              water_cups INTEGER NOT NULL DEFAULT 0,
+              exercise_minutes INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS transactions(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              amount REAL NOT NULL,
+              category TEXT NOT NULL DEFAULT '',
+              note TEXT NOT NULL DEFAULT '',
+              day TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_transactions_day ON transactions(day)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS mood_logs(
+              day TEXT PRIMARY KEY,
+              mood INTEGER NOT NULL,
+              logged_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
+    // ------------------------------------------------------- life tracking
+
+    fun habits(): List<Habit> = readableDatabase.rawQuery(
+        "SELECT id, name, created_at FROM habits WHERE archived = 0 ORDER BY created_at ASC",
+        null
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(Habit(id = cursor.getLong(0), name = cursor.getString(1).orEmpty(), createdAt = cursor.getLong(2)))
+            }
+        }
+    }
+
+    fun addHabit(name: String): Long {
+        require(name.isNotBlank()) { "اسم العادة مطلوب" }
+        val values = ContentValues().apply {
+            put("name", name.trim())
+            put("created_at", System.currentTimeMillis())
+            put("archived", 0)
+        }
+        return writableDatabase.insert("habits", null, values)
+    }
+
+    fun deleteHabit(habitId: Long) {
+        writableDatabase.delete("habit_logs", "habit_id = ?", arrayOf(habitId.toString()))
+        writableDatabase.delete("habits", "id = ?", arrayOf(habitId.toString()))
+    }
+
+    /** أيام الإنجاز لعادة واحدة منذ يوم معين؛ تُبنى منها شبكة الأيام والسلسلة. */
+    fun habitDoneDays(habitId: Long, sinceDay: String): Set<String> =
+        readableDatabase.rawQuery(
+            "SELECT day FROM habit_logs WHERE habit_id = ? AND done = 1 AND day >= ? ORDER BY day DESC",
+            arrayOf(habitId.toString(), sinceDay)
+        ).use { cursor ->
+            buildSet { while (cursor.moveToNext()) add(cursor.getString(0).orEmpty()) }
+        }
+
+    fun setHabitDone(habitId: Long, day: String, done: Boolean) {
+        if (done) {
+            writableDatabase.execSQL(
+                "INSERT OR IGNORE INTO habit_logs(habit_id, day, done) VALUES(?, ?, 1)",
+                arrayOf<Any?>(habitId, day)
+            )
+        } else {
+            writableDatabase.delete(
+                "habit_logs",
+                "habit_id = ? AND day = ?",
+                arrayOf(habitId.toString(), day)
+            )
+        }
+    }
+
+    /** إعدادات الورد؛ الافتراضي صفحتان يوميًا من سورة البقرة بداية من صفحة 2. */
+    fun wirdSettings(): WirdSettings =
+        readableDatabase.rawQuery(
+            "SELECT surah, start_page, pages_per_day FROM wird_settings WHERE id = 1 LIMIT 1",
+            null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                WirdSettings(
+                    surah = cursor.getString(0).orEmpty().ifBlank { "البقرة" },
+                    startPage = cursor.getInt(1).coerceAtLeast(1),
+                    pagesPerDay = cursor.getInt(2).coerceAtLeast(1)
+                )
+            } else {
+                WirdSettings()
+            }
+        }
+
+    fun saveWirdSettings(settings: WirdSettings) {
+        require(settings.surah.isNotBlank()) { "اسم السورة مطلوب" }
+        require(settings.startPage >= 1) { "صفحة البداية يجب أن تكون 1 أو أكثر" }
+        require(settings.pagesPerDay in 1..30) { "عدد صفحات اليوم بين 1 و 30" }
+        writableDatabase.execSQL(
+            "INSERT INTO wird_settings(id, surah, start_page, pages_per_day) VALUES(1, ?, ?, ?) " +
+                "ON CONFLICT(id) DO UPDATE SET surah=excluded.surah, start_page=excluded.start_page, " +
+                "pages_per_day=excluded.pages_per_day",
+            arrayOf<Any?>(settings.surah.trim(), settings.startPage, settings.pagesPerDay)
+        )
+    }
+
+    /** يسجّل ورد يوم واحد فقط؛ الإرجاع false إن كان اليوم مسجّلًا بالفعل فلا يتضاعف العد. */
+    fun logWird(day: String, pages: Int, surah: String): Boolean {
+        if (pages <= 0) return false
+        val values = ContentValues().apply {
+            put("day", day)
+            put("pages", pages)
+            put("surah", surah)
+            put("logged_at", System.currentTimeMillis())
+        }
+        return writableDatabase.insertWithOnConflict(
+            "wird_logs", null, values, SQLiteDatabase.CONFLICT_IGNORE
+        ) != -1L
+    }
+
+    fun wirdLoggedToday(day: String): Boolean =
+        readableDatabase.rawQuery(
+            "SELECT 1 FROM wird_logs WHERE day = ? LIMIT 1",
+            arrayOf(day)
+        ).use { it.moveToFirst() }
+
+    fun wirdTotalPages(): Int =
+        readableDatabase.rawQuery("SELECT COALESCE(SUM(pages), 0) FROM wird_logs", null)
+            .use { if (it.moveToFirst()) it.getInt(0) else 0 }
+
+    fun healthLog(day: String): HealthLog? =
+        readableDatabase.rawQuery(
+            "SELECT day, weight, sleep_hours, water_cups, exercise_minutes FROM health_logs WHERE day = ? LIMIT 1",
+            arrayOf(day)
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            HealthLog(
+                day = cursor.getString(0).orEmpty(),
+                weight = if (cursor.isNull(1)) null else cursor.getDouble(1),
+                sleepHours = if (cursor.isNull(2)) null else cursor.getDouble(2),
+                waterCups = cursor.getInt(3),
+                exerciseMinutes = cursor.getInt(4)
+            )
+        }
+
+    fun saveHealthLog(log: HealthLog) {
+        val values = ContentValues().apply {
+            put("day", log.day)
+            if (log.weight != null) put("weight", log.weight) else putNull("weight")
+            if (log.sleepHours != null) put("sleep_hours", log.sleepHours) else putNull("sleep_hours")
+            put("water_cups", log.waterCups.coerceAtLeast(0))
+            put("exercise_minutes", log.exerciseMinutes.coerceAtLeast(0))
+        }
+        writableDatabase.insertWithOnConflict(
+            "health_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE
+        )
+    }
+
+    fun addTransaction(kind: MoneyKind, amount: Double, category: String, note: String, day: String): Long {
+        require(amount > 0) { "المبلغ يجب أن يكون أكبر من صفر" }
+        val values = ContentValues().apply {
+            put("kind", kind.key)
+            put("amount", amount)
+            put("category", category.trim())
+            put("note", note.trim())
+            put("day", day)
+            put("created_at", System.currentTimeMillis())
+        }
+        return writableDatabase.insert("transactions", null, values)
+    }
+
+    fun deleteTransaction(transactionId: Long) {
+        writableDatabase.delete("transactions", "id = ?", arrayOf(transactionId.toString()))
+    }
+
+    /** معاملات شهر كامل؛ `monthPrefix` بصيغة yyyy-MM فيطابق مفتاح اليوم مباشرة. */
+    fun transactionsForMonth(monthPrefix: String): List<MoneyTransaction> =
+        readableDatabase.rawQuery(
+            "SELECT id, kind, amount, category, note, day, created_at FROM transactions " +
+                "WHERE day LIKE ? ORDER BY day DESC, created_at DESC",
+            arrayOf("$monthPrefix%")
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        MoneyTransaction(
+                            id = cursor.getLong(0),
+                            kind = MoneyKind.from(cursor.getString(1)),
+                            amount = cursor.getDouble(2),
+                            category = cursor.getString(3).orEmpty(),
+                            note = cursor.getString(4).orEmpty(),
+                            day = cursor.getString(5).orEmpty(),
+                            createdAt = cursor.getLong(6)
+                        )
+                    )
+                }
+            }
+        }
+
+    fun logMood(day: String, mood: Int) {
+        val values = ContentValues().apply {
+            put("day", day)
+            put("mood", mood.coerceIn(1, 5))
+            put("logged_at", System.currentTimeMillis())
+        }
+        writableDatabase.insertWithOnConflict(
+            "mood_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE
+        )
+    }
+
+    fun moodFor(day: String): Int? =
+        readableDatabase.rawQuery(
+            "SELECT mood FROM mood_logs WHERE day = ? LIMIT 1",
+            arrayOf(day)
+        ).use { if (it.moveToFirst()) it.getInt(0) else null }
+
+    fun moodLogsSince(sinceDay: String): List<MoodLog> =
+        readableDatabase.rawQuery(
+            "SELECT day, mood FROM mood_logs WHERE day >= ? ORDER BY day ASC",
+            arrayOf(sinceDay)
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(MoodLog(day = cursor.getString(0).orEmpty(), mood = cursor.getInt(1)))
+            }
+        }
+
     companion object {
         private const val DB_NAME = "focus_study.db"
-        private const val DB_VERSION = 14
+        private const val DB_VERSION = 15
         private const val STATE_ACTIVE = "active"
         private const val SEPARATOR = "\n"
 

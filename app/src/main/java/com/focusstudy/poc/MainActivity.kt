@@ -788,6 +788,7 @@ private fun AppRoot(
                     onRequestNotifications = onRequestNotifications
                 )
                 "goals" -> GoalsScreen(onBack = { returnToPreviousTab() })
+                "life" -> LifeTrackerScreen(onBack = { returnToPreviousTab() }, onOpenTasks = { rootTab = "tasks" })
                 "calendar" -> StudyCalendarScreen(
                     onBack = { returnToPreviousTab() },
                     onStartTask = { taskId -> setupTaskId = taskId }

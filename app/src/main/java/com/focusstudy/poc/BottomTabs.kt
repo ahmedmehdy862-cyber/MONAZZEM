@@ -12,6 +12,7 @@ enum class BottomTab(val id: String, val label: String, val mark: String) {
     CALENDAR("calendar", "التقويم", "▦"),
     SUBJECTS("subjects", "موادي", "▤"),
     GOALS("goals", "أهدافي", "◎"),
+    LIFE("life", "حياتي", "♥"),
     MESSAGES("messages", "الرسائل", "✉"),
     SKILLS("skills", "مهاراتي", "✦"),
     NOTES("notes", "نوتة", "✎"),

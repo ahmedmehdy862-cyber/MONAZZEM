@@ -180,3 +180,52 @@ data class Goal(
 }
 
 data class FocusSessionMetric(val startedAt: Long, val endsAt: Long, val taskId: Long)
+
+/** عادة يومية في تتبع الحياة «حياتي»؛ سجل إنجازها اليومي في habit_logs. */
+data class Habit(
+    val id: Long,
+    val name: String,
+    val createdAt: Long = 0L
+)
+
+/** إعدادات الورد اليومي؛ الافتراضي صفحتان يوميًا من سورة البقرة بداية من صفحة 2. */
+data class WirdSettings(
+    val surah: String = "البقرة",
+    val startPage: Int = 2,
+    val pagesPerDay: Int = 2
+)
+
+/** تسجيل صحي ليوم واحد؛ الوزن والنوم اختياريان، والماء والرياضة صفر عند عدم التسجيل. */
+data class HealthLog(
+    val day: String,
+    val weight: Double? = null,
+    val sleepHours: Double? = null,
+    val waterCups: Int = 0,
+    val exerciseMinutes: Int = 0
+)
+
+enum class MoneyKind(val key: String, val label: String) {
+    INCOME("income", "دخل"),
+    EXPENSE("expense", "مصروف");
+
+    companion object {
+        fun from(key: String?): MoneyKind =
+            entries.firstOrNull { it.key == key } ?: EXPENSE
+    }
+}
+
+data class MoneyTransaction(
+    val id: Long,
+    val kind: MoneyKind,
+    val amount: Double,
+    val category: String = "",
+    val note: String = "",
+    val day: String,
+    val createdAt: Long = 0L
+)
+
+/** مزاج يوم واحد على مقياس 1..5. */
+data class MoodLog(
+    val day: String,
+    val mood: Int
+)

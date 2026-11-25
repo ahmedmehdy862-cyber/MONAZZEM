@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Last sent fingerprint per record, kept outside the app database so `DB_VERSION` stays at 14.
+ * Last sent fingerprint per record, kept outside the app database so it never forces a `DB_VERSION` bump.
  * Nothing here stores a passphrase, a device id or note content.
  */
 internal class SyncMetadata(private val prefs: SharedPreferences) {
