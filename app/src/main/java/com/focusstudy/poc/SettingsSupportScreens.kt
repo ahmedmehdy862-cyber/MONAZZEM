@@ -8,7 +8,6 @@ import android.net.Uri
 import android.graphics.BitmapFactory
 import android.widget.Toast
 import android.Manifest
-import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -90,8 +89,9 @@ internal fun PrayerTimesScreen(
     var timezone by rememberSaveable(timezoneId) { mutableStateOf(timezoneId.ifBlank { AppTimeZone.deviceId() }) }
     var message by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
-    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) scope.launch {
+    /** جلب الموقع التقريبي مرة واحدة بعد منح الإذن (من البوابة أو من طلب النظام). */
+    fun fetchApproximateLocation() {
+        scope.launch {
             loading = true
             val location = currentApproximateLocation(context)
             loading = false
@@ -101,8 +101,19 @@ internal fun PrayerTimesScreen(
                 PrayerReminderScheduler.schedule(context); refresh++
                 message = "تم حفظ الموقع على جهازك. لا نرسل إحداثياتك إلى أي خادم."
             } else message = "تعذر تحديد الموقع الآن. أدخل الإحداثيات يدويًا أو حاول قرب نافذة."
-        } else message = "لم يُمنح إذن الموقع. يمكنك إدخال الإحداثيات يدويًا."
+        }
     }
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) fetchApproximateLocation()
+        else message = "لم يُمنح إذن الموقع. يمكنك إدخال الإحداثيات يدويًا."
+    }
+    // البوابة المركزية (المرحلة 7أ): شرح داخل التطبيق قبل أول طلب نظام، وطلب
+    // النظام مرة واحدة فقط في عمر التثبيت، ثم تلميح يدوي بعد أي رفض.
+    val locationGate = rememberPermissionGate(
+        permission = GatedPermission.LOCATION,
+        launchSystemRequest = { locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION) },
+        onGranted = ::fetchApproximateLocation
+    )
     val prayers = remember(refresh) { runCatching { PrayerCalculator.today(context) }.getOrNull() }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -160,21 +171,8 @@ internal fun PrayerTimesScreen(
             item {
                 PreferenceCard("الموقع وطريقة الحساب", "نطلب موقعًا تقريبيًا فقط عند ضغطك على الزر. الحساب والإحداثيات يبقيان على جهازك.") {
                     Button(
-                        onClick = {
-                            if (androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                                scope.launch {
-                                    loading = true
-                                    val location = currentApproximateLocation(context)
-                                    loading = false
-                                    if (location != null) {
-                                        latitude = coordinateText(location.latitude); longitude = coordinateText(location.longitude)
-                                        city = "موقعي"; PrayerPrefs.saveLocation(context, location.latitude, location.longitude, city)
-                                        PrayerReminderScheduler.schedule(context); refresh++
-                                        message = "تم حفظ الموقع على جهازك."
-                                    } else message = "تعذر تحديد الموقع؛ أدخل الإحداثيات يدويًا."
-                                }
-                            } else locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
-                        }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), enabled = !loading
+                        onClick = { locationGate.attempt() },
+                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), enabled = !loading
                     ) { Text(if (loading) "جارٍ تحديد الموقع…" else "استخدم موقعي التقريبي") }
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -250,6 +248,8 @@ internal fun PrayerTimesScreen(
             }
         }
     }
+    // نافذة بوابة الموقع (شرح قبل أول طلب، وتلميح يدوي بعد الرفض).
+    locationGate.Dialog()
 }
 
 @Composable
@@ -257,7 +257,6 @@ internal fun PersonalizationScreen(
     current: FocusPreferences,
     onBack: () -> Unit,
     onSave: (FocusPreferences) -> Unit,
-    onRequestNotifications: () -> Unit,
     onManagePermanentApps: () -> Unit,
     onOpenNotifications: () -> Unit = {}
 ) {
@@ -452,11 +451,6 @@ internal fun PersonalizationScreen(
         Spacer(Modifier.height(10.dp))
         Button(
             onClick = {
-                if (!notificationsAllowed && android.os.Build.VERSION.SDK_INT >= 33 &&
-                    androidx.core.content.ContextCompat.checkSelfPermission(
-                        context, android.Manifest.permission.POST_NOTIFICATIONS
-                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                ) onRequestNotifications()
                 // Notification fields are no longer saved from here: they live only in the
                 // notification center screen now, so this copy keeps their stored values.
                 onSave(current.copy(

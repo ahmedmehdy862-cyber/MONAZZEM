@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -81,7 +80,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -249,6 +247,17 @@ internal fun AssistantScreen(
         }
     }
 
+    // البوابة المركزية (المرحلة 7أ): شرح داخل التطبيق قبل أول طلب نظام، وطلب
+    // النظام مرة واحدة فقط في عمر التثبيت، ثم تلميح يدوي بعد أي رفض.
+    val micGate = rememberPermissionGate(
+        permission = GatedPermission.MICROPHONE,
+        launchSystemRequest = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
+        onGranted = {
+            voiceNote = "بتكلم؟ اسمعك…"
+            recognizer.start()
+        }
+    )
+
     fun importProfileText(text: String, sourceLabel: String) {
         val clean = text.trim()
         if (clean.isBlank()) {
@@ -403,15 +412,7 @@ internal fun AssistantScreen(
                         voiceNote = "التعرف الصوتي مش متاح على الجهاز ده — اكتب رسالتك."
                         return@IconButton
                     }
-                    val granted = ContextCompat.checkSelfPermission(
-                        context, Manifest.permission.RECORD_AUDIO
-                    ) == PackageManager.PERMISSION_GRANTED
-                    if (granted) {
-                        voiceNote = "بتكلم؟ اسمعك…"
-                        recognizer.start()
-                    } else {
-                        micPermission.launch(Manifest.permission.RECORD_AUDIO)
-                    }
+                    micGate.attempt()
                 }) {
                     Icon(
                         imageVector = Icons.Filled.Mic,
@@ -500,6 +501,8 @@ internal fun AssistantScreen(
             }
         }
     }
+    // نافذة بوابة الميكروفون (شرح قبل أول طلب، وتلميح يدوي بعد الرفض).
+    micGate.Dialog()
 }
 
 @Composable

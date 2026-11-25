@@ -299,10 +299,17 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * One pass for every permission the alerts need. Android shows one runtime permission per
-     * dialog, so notifications and coarse location are requested in a single batched call here.
-     * Special access (exact alarms, battery) cannot be combined by the OS, so those screens are
-     * chained immediately afterwards, skipping whatever is already granted.
+     * حالة نافذة بوابة إذن الإشعارات (المرحلة 7أ). يملكها النشاط لأن الطلب
+     * يُطلق من أماكن غير مركّبة أيضًا (إنهاء الإعداد الأولي)، فتُعرض النافذة
+     * من `setContent` فوق أي شاشة كانت ظاهرة.
+     */
+    private var notificationGateDialog by mutableStateOf<GateDialogState?>(null)
+
+    /**
+     * طلب إذن الإشعارات وحده (المرحلة 7أ: البوابة المركزية). الموقع التقريبي
+     * لم يعد يُطلب هنا: يُطلب عند أول استخدام لزر «استخدم موقعي التقريبي» في
+     * شاشة مواقيت الصلاة عبر البوابة نفسها. الوصولات الخاصة (التنبيهات الدقيقة،
+     * البطارية) لا يمكن دمجها من النظام، فتُسلسل بعدها مباشرة متخطيةً الممنوح.
      */
     private val runtimePermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -313,9 +320,6 @@ class MainActivity : ComponentActivity() {
             NotificationMaintenance.rescheduleAll(applicationContext)
         } else {
             NotificationMaintenance.log(this, NotificationMaintenance.PERMISSION_DENIED)
-        }
-        if (results[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
-            refreshApproximateLocationOnce()
         }
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching { ConsentStore.record(applicationContext) }
@@ -364,16 +368,6 @@ class MainActivity : ComponentActivity() {
         NotificationMaintenance.rescheduleAll(applicationContext)
     }
 
-    /** One cached GPS fix, used only if the person granted coarse location in this same pass. */
-    private fun refreshApproximateLocationOnce() {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            val here = runCatching { currentApproximateLocation(applicationContext) }.getOrNull()
-            if (here != null && PrayerPrefs.needsLocationRefresh(applicationContext, here.latitude, here.longitude)) {
-                PrayerPrefs.saveLocation(applicationContext, here.latitude, here.longitude, "موقعي")
-                withContext(Dispatchers.Main) { PrayerNotificationScheduler.schedule(applicationContext) }
-            }
-        }
-    }
 
     override fun onNewIntent(intent: Intent) {
 
@@ -486,6 +480,15 @@ class MainActivity : ComponentActivity() {
 
                     )
 
+                    // نافذة بوابة إذن الإشعارات (شرح قبل أول طلب، وتلميح يدوي بعد الرفض).
+                    notificationGateDialog?.let { state ->
+                        PermissionGateDialog(
+                            state = state,
+                            onRequestSystem = ::onNotificationGateRequestSystem,
+                            onOpenSettings = ::onNotificationGateOpenSettings,
+                            onDismiss = { notificationGateDialog = null }
+                        )
+                    }
                 }
 
             }
@@ -495,25 +498,38 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Called once when onboarding finishes, and again only if the person taps "منح" later after
-     * the system revoked something. Already-granted permissions never show a dialog again.
+     * القمع الوحيد لطلب إذن الإشعارات: إنهاء الإعداد الأولي، وزر «منح» في
+     * شاشة الإشعارات، وصف الإذن في إعداد الجلسة. لا يُطلق طلب نظام مباشرةً:
+     * البوابة المركزية تعرض شرحًا داخل التطبيق أولًا، وتطلب من النظام مرة
+     * واحدة فقط في عمر التثبيت، ثم تكتفي بالتلميح اليدوي بعد أي رفض.
+     *
+     * الموقع التقريبي لم يعد يُطلب هنا مع الإشعارات: يُطلب عند أول استخدام
+     * لزر «استخدم موقعي التقريبي» في شاشة مواقيت الصلاة عبر البوابة نفسها.
      */
     private fun requestNotificationPermissionIfNeeded() {
-        val runtime = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            runtime += Manifest.permission.POST_NOTIFICATIONS
-        }
-        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            runtime += Manifest.permission.ACCESS_COARSE_LOCATION
-        }
-        if (runtime.isNotEmpty()) {
-            runtimePermissions.launch(runtime.toTypedArray())
-        } else {
-            // Nothing for the OS to ask: go straight through the special-access pass.
+        if (PermissionGate.isGranted(this, GatedPermission.NOTIFICATIONS)) {
+            // لا شيء يطلبه النظام: نمر مباشرة بمسار الوصولات الخاصة.
             requestSpecialAccessInOrder(0)
+            return
         }
+        notificationGateDialog = if (PermissionGate.wasAsked(this, GatedPermission.NOTIFICATIONS)) {
+            GateDialogState(GatedPermission.NOTIFICATIONS, GateDialogKind.DENIED_HINT)
+        } else {
+            GateDialogState(GatedPermission.NOTIFICATIONS, GateDialogKind.EXPLAIN)
+        }
+    }
+
+    /** ضغطة «فهمت، اطلب الإذن» في نافذة البوابة: أول إطلاق فعلي لطلب النظام. */
+    private fun onNotificationGateRequestSystem() {
+        notificationGateDialog = null
+        PermissionGate.markAsked(this, GatedPermission.NOTIFICATIONS)
+        runtimePermissions.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+    }
+
+    /** ضغطة «فتح إعدادات التطبيق» في نافذة التلميح بعد الرفض. */
+    private fun onNotificationGateOpenSettings() {
+        notificationGateDialog = null
+        PermissionGate.openAppSettings(this)
     }
 
     /** Only reachable from the setup screen, after duration, apps and permissions are in place. */
@@ -998,7 +1014,6 @@ private fun AppRoot(
                     current = preferences,
                     onBack = { returnToPreviousTab() },
                     onSave = onPreferencesChanged,
-                    onRequestNotifications = onRequestNotifications,
                     onManagePermanentApps = { openSecondary("permanent_apps") },
                     onOpenNotifications = { openSecondary("notifications") }
                 )
