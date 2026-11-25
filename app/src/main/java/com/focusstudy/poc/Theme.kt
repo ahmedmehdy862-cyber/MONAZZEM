@@ -49,7 +49,7 @@ object FocusColors {
     val TextSecondary get() = token(Color(0xFFC6D5E4), Color(0xFF445E78))
 
     /** Lowest emphasis, still comfortable against the background. */
-    val TextMuted get() = token(Color(0xFF9FB2C6), Color(0xFF6F849A))
+    val TextMuted get() = token(Color(0xFF9FB2C6), Color(0xFF5D7285))
 
     val Blue get() = Color(0xFF16B8A6)
     val BlueDeep get() = Color(0xFF0E7C74)
@@ -102,6 +102,23 @@ object FocusColors {
      * scheme and deepened towards black on the light one, so labels stay readable.
      */
     fun onTint(accent: Color): Color = if (lightMode) lerp(accent, Color.Black, 0.42f) else lerp(accent, Color.White, 0.45f)
+}
+
+/**
+ * One shared spacing scale so screens stop inventing their own paddings: 16dp at the screen
+ * edge and inside cards, 12dp between sections, 10dp between list items, 6dp inside chip
+ * rows. Corners stay on the [FocusShapes] scale; [radiusCard] matches `Shapes.medium`.
+ */
+object FocusSpacing {
+    val screen = 16.dp
+    val card = 16.dp
+    val section = 12.dp
+    val item = 10.dp
+    val chip = 6.dp
+    val radiusCard = 22.dp
+    val radiusChip = 10.dp
+    val rowMinHeight = 52.dp
+    val progressHeight = 10.dp
 }
 
 private fun darkScheme(accent: Color) = darkColorScheme(
@@ -161,9 +178,9 @@ private val FocusTypography = Typography(
     bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 25.sp),
     bodyMedium = TextStyle(fontSize = 15.sp, lineHeight = 23.sp),
     bodySmall = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
-    labelLarge = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium),
-    labelMedium = TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Medium),
-    labelSmall = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+    labelLarge = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium, lineHeight = 22.sp),
+    labelMedium = TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
+    labelSmall = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Medium, lineHeight = 18.sp)
 )
 
 private val FocusShapes = Shapes(

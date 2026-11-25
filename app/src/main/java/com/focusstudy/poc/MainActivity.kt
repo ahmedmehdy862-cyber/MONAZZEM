@@ -114,6 +114,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
 
 import androidx.compose.material3.HorizontalDivider
 
@@ -1293,7 +1294,7 @@ private fun TasksScreen(
             if (visibleTasks.isEmpty()) {
 
                 item {
-                    if (tasks.isEmpty()) EmptyTasks()
+                    if (tasks.isEmpty()) EmptyTasks(onAddTask = { showAddDialog = true })
                     else Text(
                         text = if (taskQuery.isBlank()) "لا توجد مهام ضمن هذا التصفية." else "لا توجد مهام تطابق بحثك.",
                         modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp),
@@ -1682,7 +1683,7 @@ private fun RingBadge(progress: Float, label: String) {
 }
 
 @Composable
-
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun TaskCard(
 
     task: StudyTask,
@@ -1749,7 +1750,7 @@ private fun TaskCard(
 
             )
 
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(FocusSpacing.card)) {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
 
@@ -1765,7 +1766,9 @@ private fun TaskCard(
 
                         modifier = Modifier.weight(1f),
 
-                        maxLines = 1
+                        maxLines = 1,
+
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
 
                     )
 
@@ -1801,63 +1804,59 @@ private fun TaskCard(
 
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(FocusSpacing.section))
 
-                Box(
-
-                    modifier = Modifier
-
-                        .fillMaxWidth()
-
-                        .height(8.dp)
-
-                        .clip(RoundedCornerShape(8.dp))
-
-                        .background(FocusColors.SurfaceHigh)
-
-                ) {
-
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-
                         modifier = Modifier
-
-                            .fillMaxWidth(animated.coerceIn(0f, 1f))
-
-                            .fillMaxSize()
-
-                            .background(Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.55f))))
-
+                            .weight(1f)
+                            .height(FocusSpacing.progressHeight)
+                            .clip(RoundedCornerShape(FocusSpacing.progressHeight))
+                            .background(FocusColors.SurfaceHigh)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(animated.coerceIn(0f, 1f))
+                                .fillMaxSize()
+                                .background(Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.55f))))
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "${(animated * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = accentText
                     )
-
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(FocusSpacing.item))
 
                 Text(
-
-                    text = (subjectName?.let { "$it · " } ?: "") + "${typeLabel.ifBlank { task.category.label }} · ${task.priority.label}" +
-                        " · ${TaskState.dueText(task, zone)}" +
-                        (if (task.recurrence != Recurrence.NONE) " · ${RecurrenceEngine.label(task.recurrence)}" else ""),
-
+                    text = TaskState.progressText(task),
                     style = MaterialTheme.typography.bodySmall,
-
                     color = FocusColors.TextSecondary
-
                 )
 
-                Text(
+                Spacer(Modifier.height(FocusSpacing.item))
 
-                    text = TaskState.progressText(task) +
-
-                        if (task.blockedPackages.isEmpty()) " • بلا تطبيقات محددة"
-
-                        else " • ${task.blockedPackages.size} تطبيقًا",
-
-                    style = MaterialTheme.typography.bodySmall,
-
-                    color = FocusColors.TextSecondary
-
-                )
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip),
+                    verticalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
+                ) {
+                    MetaChip(
+                        label = (subjectName?.let { "$it · " } ?: "") + typeLabel.ifBlank { task.category.label },
+                        dot = accent
+                    )
+                    MetaChip(label = task.priority.label, dot = priorityColor(task.priority))
+                    MetaChip(label = TaskState.dueText(task, zone))
+                    if (task.recurrence != Recurrence.NONE) {
+                        MetaChip(label = RecurrenceEngine.label(task.recurrence))
+                    }
+                    MetaChip(
+                        label = if (task.blockedPackages.isEmpty()) "بلا تطبيقات محددة"
+                        else "${task.blockedPackages.size} تطبيقًا محجوبًا"
+                    )
+                }
 
                 HorizontalDivider(
 
@@ -1869,10 +1868,15 @@ private fun TaskCard(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
 
-                    TextButton(onClick = onStart) {
-
-                        Text("ابدأ جلسة", color = accentText, fontWeight = FontWeight.SemiBold)
-
+                    FilledTonalButton(
+                        onClick = onStart,
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = accent.copy(alpha = 0.22f),
+                            contentColor = accentText
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                    ) {
+                        Text("ابدأ جلسة", fontWeight = FontWeight.SemiBold)
                     }
 
                     TextButton(onClick = onEditBlocked) {
@@ -1915,6 +1919,31 @@ private fun TaskCard(
         }
 
     }}
+
+/**
+ * Small info pill for the task meta row: type/subject, priority, due date, recurrence and
+ * blocked apps. One visual language instead of a long comma-separated sentence.
+ */
+@Composable
+private fun MetaChip(label: String, dot: Color? = null) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(FocusSpacing.radiusChip))
+            .background(FocusColors.SurfaceHigh)
+            .padding(horizontal = 9.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (dot != null) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(dot))
+            Spacer(Modifier.width(5.dp))
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = FocusColors.TextSecondary
+        )
+    }
+}
 
 @Composable
 
@@ -2221,7 +2250,7 @@ private fun EditTaskDialog(
 
 @Composable
 
-private fun EmptyTasks() {
+private fun EmptyTasks(onAddTask: () -> Unit) {
 
     Column(
 
@@ -2257,6 +2286,16 @@ private fun EmptyTasks() {
             textAlign = TextAlign.Center
 
         )
+
+        Spacer(Modifier.height(16.dp))
+
+        FilledTonalButton(
+            onClick = onAddTask,
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = FocusColors.Blue.copy(alpha = 0.18f),
+                contentColor = FocusColors.onTint(FocusColors.Blue)
+            )
+        ) { Text("أضف أول مهمة") }
 
     }
 
@@ -3296,22 +3335,21 @@ private fun SessionScreen(
 
     ) {
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-
-            Box(Modifier.size(9.dp).clip(CircleShape).background(FocusColors.Green.copy(alpha = glow)))
-
-            Spacer(Modifier.width(8.dp))
-
-            Text(
-
-                text = "جلسة مقفلة — لا يمكن إلغاؤها",
-
-                style = MaterialTheme.typography.labelLarge,
-
-                color = FocusColors.TextSecondary
-
-            )
-
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(FocusSpacing.radiusChip))
+                .background(FocusColors.Green.copy(alpha = 0.16f))
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(9.dp).clip(CircleShape).background(FocusColors.Green.copy(alpha = glow)))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "جلسة مقفلة — لا يمكن إلغاؤها",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = FocusColors.onTint(FocusColors.Green)
+                )
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -3400,7 +3438,7 @@ private fun SessionScreen(
 
                     fontWeight = FontWeight.Bold,
 
-                    color = Color.White
+                    color = FocusColors.TextPrimary
 
                 )
 
@@ -3411,6 +3449,18 @@ private fun SessionScreen(
                     style = MaterialTheme.typography.labelMedium,
 
                     color = FocusColors.TextSecondary
+
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                Text(
+
+                    text = "مدة الجلسة ${minuteCount((session.totalSeconds / 60).toInt())}",
+
+                    style = MaterialTheme.typography.labelSmall,
+
+                    color = FocusColors.TextMuted
 
                 )
 
