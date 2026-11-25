@@ -33,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
@@ -64,7 +63,7 @@ internal fun SubjectsScreen(onBack: () -> Unit) {
         }
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(FocusSpacing.radiusCard),
             colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh)
         ) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -85,7 +84,7 @@ internal fun SubjectsScreen(onBack: () -> Unit) {
             }
             state.subjects.isEmpty() -> Card(
                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(FocusSpacing.radiusCard),
                 colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)
             ) {
                 Column(
@@ -127,7 +126,7 @@ internal fun SubjectsScreen(onBack: () -> Unit) {
 private fun SubjectCard(subject: StudySubject) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard),
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)
     ) {
         Row(
@@ -135,7 +134,7 @@ private fun SubjectCard(subject: StudySubject) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Spacer(
-                Modifier.size(12.dp).clip(CircleShape).background(Color(subject.color))
+                Modifier.size(12.dp).clip(CircleShape).background(FocusColors.subjectColor(subject.color))
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -185,7 +184,7 @@ private fun AddSubjectDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(24.dp),
+        shape = FocusShapes.large,
         containerColor = FocusColors.SurfaceHigh,
         title = { Text("إضافة مادة") },
         text = {

@@ -94,7 +94,7 @@ internal fun NotesScreen(onBack: () -> Unit) {
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-                    shape = RoundedCornerShape(22.dp)
+                    shape = RoundedCornerShape(FocusSpacing.radiusCard)
                 ) {
                     Column(
                         Modifier.fillMaxWidth().padding(16.dp),
@@ -230,7 +230,7 @@ internal fun NotesScreen(onBack: () -> Unit) {
     confirmDelete?.let { note ->
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
-            shape = RoundedCornerShape(24.dp),
+            shape = FocusShapes.large,
             containerColor = FocusColors.SurfaceHigh,
             title = { Text("حذف الملاحظة؟") },
             text = { Text("«${note.title.ifBlank { note.body.take(40) }}» وكل ما كتبته فيها سيُحذف نهائيًا.") },
@@ -253,7 +253,7 @@ private fun NoteCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(20.dp)
+        shape = RoundedCornerShape(FocusSpacing.radiusCard)
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

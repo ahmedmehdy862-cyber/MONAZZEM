@@ -49,7 +49,7 @@ internal fun PrayerCountdownCard(onOpenPrayerSettings: () -> Unit) {
 
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {

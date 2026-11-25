@@ -61,7 +61,7 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
         if (staleBlocks.isNotEmpty()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(FocusSpacing.radiusCard),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.fillMaxWidth().padding(14.dp)) {
@@ -96,7 +96,7 @@ internal fun StudyPlannerScreen(dailyGoal: Int, onBack: () -> Unit, onStartTask:
                     Text(date.format(formatter), modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 }
                 items(blocks, key = { "${date}-${it.task.id}" }) { block ->
-                    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(18.dp)) {
+                    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(block.task.title, maxLines = 1, fontWeight = FontWeight.SemiBold)

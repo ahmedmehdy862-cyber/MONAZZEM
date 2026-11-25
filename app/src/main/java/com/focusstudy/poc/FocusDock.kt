@@ -11,11 +11,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -31,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,7 +78,7 @@ internal fun FocusDock(
             ) {
                 tabs.forEach { tab ->
                     DockItem(
-                        mark = BottomTab.markOf(tab),
+                        icon = BottomTab.iconOf(tab),
                         label = BottomTab.labelOf(tab),
                         selected = tab == current,
                         modifier = Modifier.weight(1f),
@@ -82,7 +87,7 @@ internal fun FocusDock(
                 }
                 Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(26.dp).background(FocusColors.SurfaceHigh))
                 DockItem(
-                    mark = "▦",
+                    icon = Icons.Filled.GridView,
                     label = "الأقسام",
                     selected = false,
                     modifier = Modifier.width(58.dp),
@@ -95,7 +100,7 @@ internal fun FocusDock(
 
 @Composable
 private fun DockItem(
-    mark: String,
+    icon: ImageVector,
     label: String,
     selected: Boolean,
     modifier: Modifier = Modifier,
@@ -112,7 +117,7 @@ private fun DockItem(
             .padding(vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(mark, fontSize = 16.sp, color = tint, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+        Icon(imageVector = icon, contentDescription = label, modifier = Modifier.size(22.dp), tint = tint)
         Text(
             label,
             fontSize = 10.sp,
@@ -237,7 +242,7 @@ private fun SectionRow(
         Box(
             Modifier.width(34.dp).height(34.dp).clip(RoundedCornerShape(12.dp)).background(FocusColors.SurfaceHigh),
             contentAlignment = Alignment.Center
-        ) { Text(entry.mark, color = FocusColors.Blue) }
+        ) { Icon(imageVector = entry.icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = FocusColors.Blue) }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(entry.title, style = MaterialTheme.typography.bodyLarge, color = FocusColors.TextPrimary)

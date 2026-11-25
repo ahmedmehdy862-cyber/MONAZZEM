@@ -95,7 +95,7 @@ internal fun GoalsScreen(onBack: () -> Unit) {
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-                    shape = RoundedCornerShape(22.dp)
+                    shape = RoundedCornerShape(FocusSpacing.radiusCard)
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("هدف جديد", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
@@ -234,7 +234,7 @@ internal fun GoalsScreen(onBack: () -> Unit) {
     confirmDelete?.let { goal ->
         AlertDialog(
             onDismissRequest = { confirmDelete = null },
-            shape = RoundedCornerShape(24.dp),
+            shape = FocusShapes.large,
             containerColor = FocusColors.SurfaceHigh,
             title = { Text("حذف الهدف؟") },
             text = { Text("«${goal.title}» وتقدّمه (${goal.current} من ${goal.target}) سيُحذف، وروابط مهامه ومهاراته تُفك.") },
@@ -283,7 +283,7 @@ internal fun GoalsScreen(onBack: () -> Unit) {
         }
         AlertDialog(
             onDismissRequest = { linkPicker = null },
-            shape = RoundedCornerShape(24.dp),
+            shape = FocusShapes.large,
             containerColor = FocusColors.SurfaceHigh,
             title = { Text(if (kind == "task") "اربط مهمة بهذا الهدف" else "اربط مهارة بهذا الهدف") },
             text = {
@@ -335,7 +335,7 @@ private fun GoalEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(24.dp),
+        shape = FocusShapes.large,
         containerColor = FocusColors.SurfaceHigh,
         title = { Text("تعديل الهدف") },
         text = {
@@ -400,7 +400,7 @@ private fun GoalCard(
     val done = goal.status == "done"
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(22.dp)
+        shape = RoundedCornerShape(FocusSpacing.radiusCard)
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -861,8 +861,10 @@ private fun AppRoot(
         }
         }
 
-        // Only the full task list keeps the floating button; the day screen already has one in its header.
-        if (screen == "tasks") {
+        // One persistent quick-add button for every main (bottom-tab) screen: the two
+        // "مهمة +" header buttons (dashboard + today plan) were removed, so this FAB is
+        // now the single place to add a task, skill or goal from anywhere.
+        if (screen in bottomTabIds) {
             // Floats over the corner the bar leaves empty; the list opens upwards from it.
             QuickAddFab(
                 modifier = Modifier
@@ -1088,16 +1090,6 @@ private fun TasksScreen(
                 )
             }
 
-            Button(
-
-                onClick = { showAddDialog = true },
-
-                shape = RoundedCornerShape(16.dp),
-
-                contentPadding = ButtonDefaults.ButtonWithIconContentPadding
-
-            ) { Text("مهمة +") }
-
         }
 
         if (typeNames.isNotEmpty()) {
@@ -1193,7 +1185,7 @@ private fun TasksScreen(
                 onAddTask = { showAddDialog = true }
             )
             Spacer(Modifier.height(12.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(20.dp)) {
+            Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("قائمة مهامك", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
@@ -1345,7 +1337,7 @@ private fun TasksScreen(
 
             onDismissRequest = { deleteTarget = null },
 
-            shape = RoundedCornerShape(26.dp),
+            shape = FocusShapes.large,
 
             containerColor = FocusColors.SurfaceHigh,
 
@@ -1457,7 +1449,7 @@ private fun NextStepCard(step: NextStep, onStart: () -> Unit, onSnooze: () -> Un
     val task = step.task
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(22.dp)
+        shape = RoundedCornerShape(FocusSpacing.radiusCard)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -1488,7 +1480,7 @@ private fun NextStepCard(step: NextStep, onStart: () -> Unit, onSnooze: () -> Un
 
 @Composable
 private fun DashboardEmptyStep(onAddTask: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(22.dp)) {
+    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("جاهز لخطوتك الأولى؟", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
@@ -1731,7 +1723,7 @@ private fun TaskCard(
 
         modifier = Modifier.fillMaxWidth().clickable(onClick = onStart),
 
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard),
 
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)
 
@@ -1960,7 +1952,7 @@ private fun SubtasksDialog(
     LaunchedEffect(task.id, refreshKey) { subtasks = viewModel.subtasks(task.id) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(24.dp),
+        shape = FocusShapes.large,
         containerColor = FocusColors.SurfaceHigh,
         title = { Text("خطوات: ${task.title}") },
         text = {
@@ -2036,7 +2028,7 @@ private fun EditTaskDialog(
 
         onDismissRequest = onDismiss,
 
-        shape = RoundedCornerShape(26.dp),
+        shape = FocusShapes.large,
 
         containerColor = FocusColors.SurfaceHigh,
 
@@ -2310,7 +2302,7 @@ private fun AccessibilityWarningCard(onEnable: () -> Unit) {
 
         modifier = Modifier.fillMaxWidth(),
 
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard),
 
         colors = CardDefaults.cardColors(containerColor = FocusColors.Amber.copy(alpha = 0.16f))
 
@@ -2558,7 +2550,7 @@ private fun SessionSetupScreen(
 
                 Card(
 
-                    shape = RoundedCornerShape(22.dp),
+                    shape = RoundedCornerShape(FocusSpacing.radiusCard),
 
                     colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)
 
@@ -2634,7 +2626,7 @@ private fun SessionSetupScreen(
             }
 
             item {
-                Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)) {
+                Card(shape = RoundedCornerShape(FocusSpacing.radiusCard), colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)) {
                     Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("نطاق الحجب", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary)
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { usePermanentApps = !usePermanentApps }) {
@@ -2658,7 +2650,7 @@ private fun SessionSetupScreen(
             if (!ready) {
                 item {
                     Card(
-                        shape = RoundedCornerShape(22.dp),
+                        shape = RoundedCornerShape(FocusSpacing.radiusCard),
                         colors = CardDefaults.cardColors(containerColor = FocusColors.Amber.copy(alpha = 0.12f))
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -2897,7 +2889,7 @@ private fun SessionSetupScreen(
 
                 Card(
 
-                    shape = RoundedCornerShape(22.dp),
+                    shape = RoundedCornerShape(FocusSpacing.radiusCard),
 
                     colors = CardDefaults.cardColors(containerColor = FocusColors.Surface)
 
@@ -3089,7 +3081,7 @@ private fun SessionSetupScreen(
 
             onDismissRequest = { confirm = false },
 
-            shape = RoundedCornerShape(26.dp),
+            shape = FocusShapes.large,
 
             containerColor = FocusColors.SurfaceHigh,
 
@@ -3531,7 +3523,7 @@ private fun SessionScreen(
 
             Card(
 
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(FocusSpacing.radiusCard),
 
                 colors = CardDefaults.cardColors(containerColor = FocusColors.Amber.copy(alpha = 0.16f))
 
@@ -3647,7 +3639,7 @@ private fun AddTaskDialog(
 
         onDismissRequest = onDismiss,
 
-        shape = RoundedCornerShape(26.dp),
+        shape = FocusShapes.large,
 
         containerColor = FocusColors.SurfaceHigh,
 
@@ -4141,7 +4133,7 @@ private fun SelectedAppsStrip(selectedApps: List<InstalledApp>, onRemove: (Strin
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         selectedApps.forEach { app ->
-            Card(colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh), shape = RoundedCornerShape(16.dp)) {
+            Card(colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
                 Row(
                     modifier = Modifier.padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically

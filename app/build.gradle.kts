@@ -93,6 +93,10 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
+    // Real icons for the bottom dock and the sections directory (BottomTabs.kt):
+    // material-icons-core alone does not carry Today/Checklist/CalendarMonth/Book and the
+    // other destinations, so the extended set is declared explicitly (BOM-managed version).
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")

@@ -63,7 +63,7 @@ internal fun StudyAnalyticsScreen(onBack: () -> Unit) {
             MetricCard("مهام مكتملة", state.completedTasks.toString(), Modifier.weight(1f))
         }
         Spacer(Modifier.height(10.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(22.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
             Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 AvatarPortrait(avatarPrefs.avatarPath, avatarPrefs.studentName, avatarPrefs.companionStyle, 52.dp)
                 Spacer(Modifier.width(12.dp))
@@ -79,7 +79,7 @@ internal fun StudyAnalyticsScreen(onBack: () -> Unit) {
             }
         }
         Spacer(Modifier.height(14.dp))
-        Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(22.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 Text("وقت التركيز خلال الأسبوع", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(14.dp))
@@ -126,7 +126,7 @@ internal fun StudyAnalyticsScreen(onBack: () -> Unit) {
 
 @Composable
 private fun MetricCard(title: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier, colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(18.dp)) {
+    Card(modifier, colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
         Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(title, color = FocusColors.TextSecondary, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)

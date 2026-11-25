@@ -150,7 +150,7 @@ internal fun StudyCalendarScreen(onBack: () -> Unit, onStartTask: (Long) -> Unit
                 }
             }
         }
-        if (calendarView == "month") Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(22.dp)) {
+        if (calendarView == "month") Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
@@ -216,7 +216,7 @@ internal fun StudyCalendarScreen(onBack: () -> Unit, onStartTask: (Long) -> Unit
             .sortedWith(compareBy<StudyTask> { it.isDone || it.status == TaskStatus.DONE }.thenByDescending { it.priority.level })
         if (selectedTasks.isEmpty() && selectedEvents.isEmpty()) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(20.dp)) {
+                Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
                     Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("يوم بمساحة لبداية جديدة", color = FocusColors.TextPrimary, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Text("أضف موعد مذاكرة أو اختر مهمة من يوم آخر، ثم ابدأ جلستك من هنا.", color = FocusColors.TextSecondary, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)
@@ -228,7 +228,7 @@ internal fun StudyCalendarScreen(onBack: () -> Unit, onStartTask: (Long) -> Unit
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (selectedEvents.isNotEmpty()) item { Text("المواعيد", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = FocusColors.TextPrimary) }
                 items(selectedEvents, key = { "event-${it.id}" }) { event ->
-                    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(18.dp)) {
+                    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(event.title, maxLines = 1, fontWeight = FontWeight.SemiBold, color = FocusColors.TextPrimary)
@@ -242,7 +242,7 @@ internal fun StudyCalendarScreen(onBack: () -> Unit, onStartTask: (Long) -> Unit
                 }
                 if (selectedTasks.isNotEmpty()) item { Text("المهام", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = FocusColors.TextPrimary) }
                 items(selectedTasks, key = { it.id }) { task ->
-                    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(18.dp)) {
+                    Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(task.title, maxLines = 1, fontWeight = FontWeight.SemiBold, color = FocusColors.TextPrimary)

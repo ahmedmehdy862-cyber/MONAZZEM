@@ -57,7 +57,6 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -532,7 +531,7 @@ internal fun PersonalizationScreen(
                                         .clickable { accent = index },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (accent == index) Text("✓", color = Color.White, fontWeight = FontWeight.Bold)
+                                    if (accent == index) Text("✓", color = FocusColors.onAccentFill(color), fontWeight = FontWeight.Bold)
                                 }
                                 Text(listOf("أزرق", "بنفسجي", "تركواز", "ذهبي", "أخضر")[index], style = MaterialTheme.typography.labelSmall)
                             }

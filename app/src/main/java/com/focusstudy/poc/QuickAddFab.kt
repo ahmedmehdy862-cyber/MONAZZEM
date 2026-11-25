@@ -17,6 +17,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -30,16 +36,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 /**
- * The one place to add something.
+ * The one place to add something — the single persistent quick-add button.
  *
  * It floats above the bottom bar in the corner the bar leaves free, so it never covers a card
  * action or a bar item, and it offers the three things this app organises: a task, a skill or a
- * goal. The list opens upwards and closes as soon as one is picked.
+ * goal. The list opens upwards and closes as soon as one is picked. MainActivity shows this
+ * button on every main (bottom-tab) screen; the old «مهمة +» header buttons were removed so
+ * adding never lives in two places at once. Tapping «مهمة» still opens the same quick
+ * capture dialog (QuickCaptureParser), only from one entry point now.
  */
 @Composable
 internal fun QuickAddFab(
@@ -54,21 +63,21 @@ internal fun QuickAddFab(
     Column(modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         AnimatedVisibility(visible = open, enter = fadeIn() + scaleIn(initialScale = 0.9f), exit = fadeOut() + scaleOut(targetScale = 0.9f)) {
             Surface(
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(FocusSpacing.radiusCard),
                 color = FocusColors.Surface,
                 shadowElevation = 8.dp,
                 tonalElevation = 0.dp
             ) {
                 Column(Modifier.padding(vertical = 8.dp, horizontal = 6.dp)) {
-                    QuickAddRow("✓", "مهمة", "شيء تنجزه اليوم أو لاحقًا") {
+                    QuickAddRow(Icons.Filled.Check, "مهمة", "شيء تنجزه اليوم أو لاحقًا") {
                         open = false
                         onAddTask()
                     }
-                    QuickAddRow("✦", "مهارة", "تتبّع تدريبك ومستواك فيها") {
+                    QuickAddRow(Icons.Filled.Star, "مهارة", "تتبّع تدريبك ومستواك فيها") {
                         open = false
                         onAddSkill()
                     }
-                    QuickAddRow("◎", "هدف", "مقياس ومهلة ومهام مرتبطة") {
+                    QuickAddRow(Icons.Filled.Flag, "هدف", "مقياس ومهلة ومهام مرتبطة") {
                         open = false
                         onAddGoal()
                     }
@@ -77,18 +86,17 @@ internal fun QuickAddFab(
         }
 
         Surface(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(FocusSpacing.radiusCard),
             color = FocusColors.BlueDeep,
             shadowElevation = 12.dp,
-            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(20.dp)).clickable { open = !open }
+            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(FocusSpacing.radiusCard)).clickable { open = !open }
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text(
-                    "+",
-                    color = Color.White,
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.rotate(turn)
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = "إضافة سريعة",
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp).rotate(turn)
                 )
             }
         }
@@ -96,7 +104,7 @@ internal fun QuickAddFab(
 }
 
 @Composable
-private fun QuickAddRow(mark: String, title: String, hint: String, onClick: () -> Unit) {
+private fun QuickAddRow(icon: ImageVector, title: String, hint: String, onClick: () -> Unit) {
     Row(
         Modifier
             .clip(RoundedCornerShape(16.dp))
@@ -105,7 +113,7 @@ private fun QuickAddRow(mark: String, title: String, hint: String, onClick: () -
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-            Text(mark, color = FocusColors.onTint(FocusColors.Blue), fontWeight = FontWeight.Bold)
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = FocusColors.onTint(FocusColors.Blue))
         }
         Spacer(Modifier.width(6.dp))
         Column {

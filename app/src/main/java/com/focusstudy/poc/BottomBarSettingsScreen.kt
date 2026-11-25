@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -94,11 +95,11 @@ internal fun BottomBarSettingsScreen(
                             Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(FocusColors.SurfaceHigh),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                tab.mark,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = FocusColors.onTint(if (picked) FocusColors.Blue else FocusColors.TextMuted),
-                                fontWeight = FontWeight.Bold
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = FocusColors.onTint(if (picked) FocusColors.Blue else FocusColors.TextMuted)
                             )
                         }
                         Spacer(Modifier.width(12.dp))

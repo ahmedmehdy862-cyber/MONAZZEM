@@ -93,7 +93,7 @@ internal fun DailyIntentionCard(openToday: Int, doneToday: Int) {
 
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {

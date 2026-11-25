@@ -1,5 +1,11 @@
 package com.focusstudy.poc
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.ui.graphics.vector.ImageVector
+
 /**
  * One shelf in the all-sections directory.
  *
@@ -20,7 +26,9 @@ internal data class SectionEntry(
     val title: String,
     val description: String,
     val mark: String,
-    val shelf: SectionShelf
+    val shelf: SectionShelf,
+    /** Real icon drawn by the directory; [mark] stays as the plain-text fallback. */
+    val icon: ImageVector
 )
 
 /** Kept as a small value type so the dock sheet keeps its existing signature. */
@@ -38,29 +46,29 @@ internal object NavigationCatalog {
 
     val entries: List<SectionEntry> = listOf(
 
-        SectionEntry("today", BottomTab.TODAY.label, "خطّة يومك والمهمة التالية.", BottomTab.TODAY.mark, SectionShelf.PLANNING),
-        SectionEntry("tasks", BottomTab.TASKS.label, "كل مهامك في قائمة واحدة.", BottomTab.TASKS.mark, SectionShelf.PLANNING),
-        SectionEntry("calendar", BottomTab.CALENDAR.label, "مواعيدك وجلساتك على التقويم.", BottomTab.CALENDAR.mark, SectionShelf.PLANNING),
-        SectionEntry("planner", BottomTab.PLANNER.label, "حوّل مهامك إلى جلسات قابلة للتنفيذ.", BottomTab.PLANNER.mark, SectionShelf.PLANNING),
-        SectionEntry("task_types", BottomTab.TASK_TYPES.label, "أضف أنواعك المخصّصة، وأعد ترتيبها أو أرشفها.", BottomTab.TASK_TYPES.mark, SectionShelf.PLANNING),
-        SectionEntry("notes", BottomTab.NOTES.label, "ملاحظاتك الخاصة — محفوظة على جهازك فقط.", BottomTab.NOTES.mark, SectionShelf.PLANNING),
-        SectionEntry("analytics", BottomTab.ANALYTICS.label, "راجع وقت التركيز والمهام المنجزة.", BottomTab.ANALYTICS.mark, SectionShelf.PLANNING),
+        SectionEntry("today", BottomTab.TODAY.label, "خطّة يومك والمهمة التالية.", BottomTab.TODAY.mark, SectionShelf.PLANNING, BottomTab.TODAY.icon),
+        SectionEntry("tasks", BottomTab.TASKS.label, "كل مهامك في قائمة واحدة.", BottomTab.TASKS.mark, SectionShelf.PLANNING, BottomTab.TASKS.icon),
+        SectionEntry("calendar", BottomTab.CALENDAR.label, "مواعيدك وجلساتك على التقويم.", BottomTab.CALENDAR.mark, SectionShelf.PLANNING, BottomTab.CALENDAR.icon),
+        SectionEntry("planner", BottomTab.PLANNER.label, "حوّل مهامك إلى جلسات قابلة للتنفيذ.", BottomTab.PLANNER.mark, SectionShelf.PLANNING, BottomTab.PLANNER.icon),
+        SectionEntry("task_types", BottomTab.TASK_TYPES.label, "أضف أنواعك المخصّصة، وأعد ترتيبها أو أرشفها.", BottomTab.TASK_TYPES.mark, SectionShelf.PLANNING, BottomTab.TASK_TYPES.icon),
+        SectionEntry("notes", BottomTab.NOTES.label, "ملاحظاتك الخاصة — محفوظة على جهازك فقط.", BottomTab.NOTES.mark, SectionShelf.PLANNING, BottomTab.NOTES.icon),
+        SectionEntry("analytics", BottomTab.ANALYTICS.label, "راجع وقت التركيز والمهام المنجزة.", BottomTab.ANALYTICS.mark, SectionShelf.PLANNING, BottomTab.ANALYTICS.icon),
 
-        SectionEntry("goals", BottomTab.GOALS.label, "أهداف بمقياس ومهلة، ومهام ومهارات مرتبطة بها.", BottomTab.GOALS.mark, SectionShelf.GROWTH),
-        SectionEntry("skills", BottomTab.SKILLS.label, "سجّل المهارات التي تطوّرها ودقائق تدريبك.", BottomTab.SKILLS.mark, SectionShelf.GROWTH),
-        SectionEntry("life", BottomTab.LIFE.label, "عاداتك ووردك وصحتك ومالك ومزاجك في مكان واحد.", BottomTab.LIFE.mark, SectionShelf.GROWTH),
-        SectionEntry("subjects", BottomTab.SUBJECTS.label, "نظّم موادك ومحاضراتك.", BottomTab.SUBJECTS.mark, SectionShelf.GROWTH),
+        SectionEntry("goals", BottomTab.GOALS.label, "أهداف بمقياس ومهلة، ومهام ومهارات مرتبطة بها.", BottomTab.GOALS.mark, SectionShelf.GROWTH, BottomTab.GOALS.icon),
+        SectionEntry("skills", BottomTab.SKILLS.label, "سجّل المهارات التي تطوّرها ودقائق تدريبك.", BottomTab.SKILLS.mark, SectionShelf.GROWTH, BottomTab.SKILLS.icon),
+        SectionEntry("life", BottomTab.LIFE.label, "عاداتك ووردك وصحتك ومالك ومزاجك في مكان واحد.", BottomTab.LIFE.mark, SectionShelf.GROWTH, BottomTab.LIFE.icon),
+        SectionEntry("subjects", BottomTab.SUBJECTS.label, "نظّم موادك ومحاضراتك.", BottomTab.SUBJECTS.mark, SectionShelf.GROWTH, BottomTab.SUBJECTS.icon),
 
-        SectionEntry("settings", BottomTab.SETTINGS.label, "اسمك وهدفك اليومي والمظهر والملف.", BottomTab.SETTINGS.mark, SectionShelf.CUSTOMIZE),
-        SectionEntry("notifications", BottomTab.NOTIFICATIONS.label, "ما يصلك ومتى.", BottomTab.NOTIFICATIONS.mark, SectionShelf.CUSTOMIZE),
-        SectionEntry("prayer_times", BottomTab.PRAYER.label, "احسب المواقيت حسب موقعك واضبط تذكيرها.", BottomTab.PRAYER.mark, SectionShelf.CUSTOMIZE),
-        SectionEntry("bottom_bar", "الشريط السفلي", "اختر أقسام الشريط السفلي ورتّبها.", "▥", SectionShelf.CUSTOMIZE),
-        SectionEntry("permanent_apps", "التطبيقات الدائمة", "التطبيقات التي تبقى مفتوحة أثناء الجلسة.", "⊞", SectionShelf.CUSTOMIZE),
+        SectionEntry("settings", BottomTab.SETTINGS.label, "اسمك وهدفك اليومي والمظهر والملف.", BottomTab.SETTINGS.mark, SectionShelf.CUSTOMIZE, BottomTab.SETTINGS.icon),
+        SectionEntry("notifications", BottomTab.NOTIFICATIONS.label, "ما يصلك ومتى.", BottomTab.NOTIFICATIONS.mark, SectionShelf.CUSTOMIZE, BottomTab.NOTIFICATIONS.icon),
+        SectionEntry("prayer_times", BottomTab.PRAYER.label, "احسب المواقيت حسب موقعك واضبط تذكيرها.", BottomTab.PRAYER.mark, SectionShelf.CUSTOMIZE, BottomTab.PRAYER.icon),
+        SectionEntry("bottom_bar", "الشريط السفلي", "اختر أقسام الشريط السفلي ورتّبها.", "▥", SectionShelf.CUSTOMIZE, Icons.Filled.GridView),
+        SectionEntry("permanent_apps", "التطبيقات الدائمة", "التطبيقات التي تبقى مفتوحة أثناء الجلسة.", "⊞", SectionShelf.CUSTOMIZE, Icons.Filled.Apps),
 
-        SectionEntry("messages", BottomTab.MESSAGES.label, "إعلانات ومستجدّات بدون تحديث التطبيق.", BottomTab.MESSAGES.mark, SectionShelf.TEAM),
-        SectionEntry("updates", BottomTab.UPDATES.label, "افحص الإصدارات الجديدة واقرأ سجل التغييرات.", BottomTab.UPDATES.mark, SectionShelf.TEAM),
-        SectionEntry("support", BottomTab.SUPPORT.label, "تواصل معنا إذا احتجت إلى مساعدة.", BottomTab.SUPPORT.mark, SectionShelf.TEAM),
-        SectionEntry("sync", "المزامنة", "فعّل حسابك واستخدمه في تطبيق الويب.", "☁", SectionShelf.TEAM)
+        SectionEntry("messages", BottomTab.MESSAGES.label, "إعلانات ومستجدّات بدون تحديث التطبيق.", BottomTab.MESSAGES.mark, SectionShelf.TEAM, BottomTab.MESSAGES.icon),
+        SectionEntry("updates", BottomTab.UPDATES.label, "افحص الإصدارات الجديدة واقرأ سجل التغييرات.", BottomTab.UPDATES.mark, SectionShelf.TEAM, BottomTab.UPDATES.icon),
+        SectionEntry("support", BottomTab.SUPPORT.label, "تواصل معنا إذا احتجت إلى مساعدة.", BottomTab.SUPPORT.mark, SectionShelf.TEAM, BottomTab.SUPPORT.icon),
+        SectionEntry("sync", "المزامنة", "فعّل حسابك واستخدمه في تطبيق الويب.", "☁", SectionShelf.TEAM, Icons.Filled.Cloud)
     )
 
     /** Every route the directory can open — a regression test compares this with the old map. */

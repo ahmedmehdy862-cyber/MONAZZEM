@@ -78,7 +78,7 @@ internal fun SkillsScreen(onBack: () -> Unit) {
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-                    shape = RoundedCornerShape(22.dp)
+                    shape = RoundedCornerShape(FocusSpacing.radiusCard)
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("مهارة جديدة", style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
@@ -126,7 +126,7 @@ internal fun SkillsScreen(onBack: () -> Unit) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-                        shape = RoundedCornerShape(20.dp)
+                        shape = RoundedCornerShape(FocusSpacing.radiusCard)
                     ) {
                         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("${skills.size} مهارة", color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
@@ -169,7 +169,7 @@ internal fun SkillsScreen(onBack: () -> Unit) {
     confirmDelete?.let { skill ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirmDelete = null },
-            shape = RoundedCornerShape(24.dp),
+            shape = FocusShapes.large,
             containerColor = FocusColors.SurfaceHigh,
             title = { Text("حذف المهارة؟") },
             text = { Text("«${skill.name}» و${skill.minutes} دقيقة تدريب ستُحذف. لا يمكن التراجع.") },
@@ -192,7 +192,7 @@ private fun SkillCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(22.dp)
+        shape = RoundedCornerShape(FocusSpacing.radiusCard)
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

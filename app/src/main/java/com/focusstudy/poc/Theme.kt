@@ -51,7 +51,12 @@ object FocusColors {
     /** Lowest emphasis, still comfortable against the background. */
     val TextMuted get() = token(Color(0xFF9FB2C6), Color(0xFF5D7285))
 
-    val Blue get() = Color(0xFF16B8A6)
+    /**
+     * «أزرق» هو أزرق ملكي مميز (0xFF2563EB)، لا تركوازي: كان مطابقًا حرفيًا لـ [Teal]
+     * (0xFF16B8A6) فعرض منتقي التمييز خيارين متطابقين. القيمة المقترحة أصلًا 0xFF2F6F9E
+     * لم تُستخدم لأنها مطابقة حرفيًا لـ [Violet] وكانت ستنقل الازدواج إليه.
+     */
+    val Blue get() = Color(0xFF2563EB)
     val BlueDeep get() = Color(0xFF0E7C74)
     val Violet get() = Color(0xFF2F6F9E)
     val Teal get() = Color(0xFF16B8A6)
@@ -102,12 +107,44 @@ object FocusColors {
      * scheme and deepened towards black on the light one, so labels stay readable.
      */
     fun onTint(accent: Color): Color = if (lightMode) lerp(accent, Color.Black, 0.42f) else lerp(accent, Color.White, 0.45f)
+
+    /**
+     * Error text/action colour, adaptive to the mode: the dark scheme uses the same rose as
+     * [darkScheme]'s error, the light scheme the same deep rose-red as [lightScheme]'s error.
+     * Never use a fixed pale pink for «حذف» — it disappears on a white card.
+     */
+    val Error get() = token(Color(0xFFF43F5E), Color(0xFFC81E43))
+
+    /**
+     * Mark (✓) colour on a filled accent circle: dark ink on light fills such as Amber and
+     * Green, white on dark fills. A white ✓ on Amber/Green fails contrast; this keeps the
+     * selected accent readable in both modes.
+     */
+    fun onAccentFill(accent: Color): Color =
+        if (accent.luminance() > 0.5f) Color(0xFF101F30) else Color.White
+
+    /**
+     * A stored subject colour (an arbitrary ARGB int from the database, no palette behind it)
+     * mapped to something readable at display time only — the stored value never changes.
+     * Mid-tone colours pass through untouched; a near-black value is lifted towards white so
+     * it does not vanish on the dark surface, and a near-white value is deepened towards black
+     * so it does not vanish on the white surface.
+     */
+    fun subjectColor(stored: Int): Color {
+        val raw = Color(stored)
+        return when {
+            lightMode && raw.luminance() > 0.72f -> lerp(raw, Color.Black, 0.45f)
+            !lightMode && raw.luminance() < 0.22f -> lerp(raw, Color.White, 0.55f)
+            else -> raw
+        }
+    }
 }
 
 /**
  * One shared spacing scale so screens stop inventing their own paddings: 16dp at the screen
  * edge and inside cards, 12dp between sections, 10dp between list items, 6dp inside chip
- * rows. Corners stay on the [FocusShapes] scale; [radiusCard] matches `Shapes.medium`.
+ * rows. Corners stay on the [FocusShapes] scale; [radiusCard] is 20.dp and matches
+ * `Shapes.medium` exactly — the old 22.dp value contradicted this comment.
  */
 object FocusSpacing {
     val screen = 16.dp
@@ -115,7 +152,7 @@ object FocusSpacing {
     val section = 12.dp
     val item = 10.dp
     val chip = 6.dp
-    val radiusCard = 22.dp
+    val radiusCard = 20.dp
     val radiusChip = 10.dp
     val rowMinHeight = 52.dp
     val progressHeight = 10.dp
@@ -167,23 +204,42 @@ private fun lightScheme(accent: Color) = lightColorScheme(
     onError = Color.White
 )
 
-/** Zian Black (arfonts.net, free for personal and commercial use) — headings only. */
+/** Zian Black (arfonts.net, free for personal and commercial use) — display headings only. */
 internal val ZianHeading = FontFamily(Font(R.font.zian_black))
+
+/**
+ * Cairo (SIL Open Font License 1.1, © 2009 The Cairo Project Authors) — the app-wide text
+ * face. Static weights downloaded from Google Fonts (fonts.gstatic.com, served from the
+ * google/fonts repository, ofl/cairo/OFL.txt): Regular 400, Medium 500, SemiBold 600 and
+ * Bold 700, in app/src/main/res/font/cairo_*.ttf. Arabic + Latin coverage was verified
+ * (all common Arabic letters and presentation forms present).
+ *
+ * Zian stays only for the two largest display styles ([Typography.headlineSmall] and
+ * [Typography.titleLarge]): its heavy black cut suits a brand heading but is too blunt for
+ * card titles and body copy, which now all read in Cairo.
+ */
+internal val Cairo = FontFamily(
+    Font(R.font.cairo_regular, FontWeight.Normal),
+    Font(R.font.cairo_medium, FontWeight.Medium),
+    Font(R.font.cairo_semibold, FontWeight.SemiBold),
+    Font(R.font.cairo_bold, FontWeight.Bold)
+)
 
 private val FocusTypography = Typography(
     headlineSmall = TextStyle(fontFamily = ZianHeading, fontSize = 27.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp),
     titleLarge = TextStyle(fontFamily = ZianHeading, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp),
-    titleMedium = TextStyle(fontFamily = ZianHeading, fontSize = 18.sp, fontWeight = FontWeight.Bold, lineHeight = 28.sp),
-    titleSmall = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 24.sp),
-    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 25.sp),
-    bodyMedium = TextStyle(fontSize = 15.sp, lineHeight = 23.sp),
-    bodySmall = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
-    labelLarge = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium, lineHeight = 22.sp),
-    labelMedium = TextStyle(fontSize = 13.5.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
-    labelSmall = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Medium, lineHeight = 18.sp)
+    titleMedium = TextStyle(fontFamily = Cairo, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, lineHeight = 28.sp),
+    titleSmall = TextStyle(fontFamily = Cairo, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 24.sp),
+    bodyLarge = TextStyle(fontFamily = Cairo, fontSize = 16.sp, lineHeight = 25.sp),
+    bodyMedium = TextStyle(fontFamily = Cairo, fontSize = 15.sp, lineHeight = 23.sp),
+    bodySmall = TextStyle(fontFamily = Cairo, fontSize = 14.sp, lineHeight = 21.sp),
+    labelLarge = TextStyle(fontFamily = Cairo, fontSize = 15.sp, fontWeight = FontWeight.Medium, lineHeight = 22.sp),
+    labelMedium = TextStyle(fontFamily = Cairo, fontSize = 13.5.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
+    labelSmall = TextStyle(fontFamily = Cairo, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, lineHeight = 18.sp)
 )
 
-private val FocusShapes = Shapes(
+/** Shared corner scale: cards use [FocusSpacing.radiusCard] (= medium), dialogs use [Shapes.large]. */
+internal val FocusShapes = Shapes(
     extraSmall = RoundedCornerShape(10.dp),
     small = RoundedCornerShape(14.dp),
     medium = RoundedCornerShape(20.dp),
