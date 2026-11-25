@@ -553,7 +553,9 @@ private fun LifeNumberField(
 ) {
     OutlinedTextField(
         value = value,
-        onValueChange = { onValueChange(it.take(8)) },
+        // تطبيع الأرقام المشرقية/الفارسية والفاصلة العشرية قبل تمريرها للمستدعي،
+        // حتى تنجح toIntOrNull/toDoubleOrNull في كل حقول الأرقام.
+        onValueChange = { onValueChange(normalizeInputDigits(it.take(8))) },
         label = { Text(label) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),

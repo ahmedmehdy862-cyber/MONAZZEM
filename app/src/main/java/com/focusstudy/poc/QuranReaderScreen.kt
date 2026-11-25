@@ -167,7 +167,7 @@ internal fun QuranReaderScreen(
             JumpPanel.PAGE -> Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = jumpPageText,
-                    onValueChange = { jumpPageText = it.filter { ch -> ch.isDigit() }.take(3) },
+                    onValueChange = { jumpPageText = normalizeInputDigits(it).filter { ch -> ch.isDigit() }.take(3) },
                     label = { Text("رقم الصفحة (1–604)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

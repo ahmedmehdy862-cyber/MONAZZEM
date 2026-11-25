@@ -219,3 +219,24 @@ object QuranData {
         }.joinToString("")
     }
 }
+
+/**
+ * تطبيع الأرقام المدخلة قبل تحليلها: الأرقام العربية المشرقية (٠–٩) والفارسية
+ * (۰–۹) تتحول إلى أرقام لاتينية، والفاصلة العشرية «,» و«٫» إلى «.»؛ لأن
+ * `toIntOrNull` و`toDoubleOrNull` يرفضانها رغم أن `isDigit()` يقبلها، فكان
+ * الإدخال بها يفشل بصمت في حقول الأرقام.
+ */
+fun normalizeInputDigits(input: String): String {
+    val sb = StringBuilder(input.length)
+    for (ch in input) {
+        sb.append(
+            when (ch) {
+                in '٠'..'٩' -> '0' + (ch - '٠')
+                in '۰'..'۹' -> '0' + (ch - '۰')
+                ',', '٫' -> '.'
+                else -> ch
+            }
+        )
+    }
+    return sb.toString()
+}
