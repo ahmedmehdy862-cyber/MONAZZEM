@@ -305,6 +305,8 @@ internal object CartoonAvatar {
      * مع الرأس (الجسم ثابت، والرأس فقط يدور حول مركزه).
      */
     private fun drawProfiled(palette: AvatarPalette, profile: FaceProfile, style: Int, depth: AvatarDepth): Bitmap {
+        // تحييد قيم الملف أولًا (نطاقات + NaN) حتى لا يرسم الكانفاس خارج حدوده.
+        val safe = profile.coerceForDrawing()
         val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         if (depth == AvatarDepth.DEPTH) {
@@ -349,18 +351,20 @@ internal object CartoonAvatar {
         canvas.drawRect(228f, 300f, 284f, 400f, skinPaint)
 
         // Face geometry from the profile.
-        val faceW = (232f * (profile.faceAspect / FaceProfile.DEFAULT.faceAspect)).coerceIn(186f, 267f)
+        val faceW = (232f * (safe.faceAspect / FaceProfile.DEFAULT.faceAspect)).coerceIn(186f, 267f)
         val faceH = 270f
         val face = RectF(256f - faceW / 2f, 112f, 256f + faceW / 2f, 112f + faceH)
         val faceCenterY = face.centerY()
-        val eyeSpacingPx = profile.eyeSpacing * faceW
+        val eyeSpacingPx = safe.eyeSpacing * faceW
         val leftEyeX = 256f - eyeSpacingPx / 2f
         val rightEyeX = 256f + eyeSpacingPx / 2f
-        val eyeY = 112f + profile.eyeHeight * faceH
-        val eyeR = (profile.eyeSize * faceW / 2f).coerceIn(7f, 16f)
+        val eyeY = 112f + safe.eyeHeight * faceH
+        val eyeR = (safe.eyeSize * faceW / 2f).coerceIn(7f, 16f)
 
         canvas.save()
-        canvas.rotate(profile.headTilt, 256f, faceCenterY)
+        // headTilt مقاس باتفاقية Canvas (موجب مع عقارب الساعة) — انظر
+        // FaceProfile.fromGeometry حيث تُنفى إشارة eulerZ.
+        canvas.rotate(safe.headTilt, 256f, faceCenterY)
         canvas.drawOval(face, skinPaint)
         if (style == 3) canvas.drawOval(face, linePaint)
         if (depth == AvatarDepth.DEPTH) {
@@ -431,7 +435,7 @@ internal object CartoonAvatar {
         canvas.drawPath(hair, hairPaint)
         if (style == 3) canvas.drawPath(hair, linePaint)
         canvas.restore()
-        val hairLength = profile.effectiveHairLength()
+        val hairLength = safe.effectiveHairLength()
         if (hairLength > 0.55f) {
             val lockBottom = 200f + hairLength * 130f
             canvas.drawRoundRect(RectF(face.left - 6f, 198f, face.left + 30f, lockBottom), 16f, 16f, hairPaint)
@@ -439,7 +443,7 @@ internal object CartoonAvatar {
         }
 
         // Beard: a jaw band along the chin, drawn before the mouth so the lips stay visible.
-        if (profile.effectiveBeard()) {
+        if (safe.effectiveBeard()) {
             val beardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = palette.hair
                 alpha = 235
@@ -468,12 +472,14 @@ internal object CartoonAvatar {
             strokeWidth = 7f
             strokeCap = Paint.Cap.ROUND
         }
-        val browDy = kotlin.math.tan(Math.toRadians(profile.browAngle.toDouble())).toFloat() * 20f
+        // سقوط الطرف الخارجي على خط حاجب طوله 40px هو tan(الزاوية) × 40،
+        // لا × 20 (القديم رسم الحاجب بنصف زاويته).
+        val browDy = kotlin.math.tan(Math.toRadians(safe.browAngle.toDouble())).toFloat() * 40f
         canvas.drawLine(leftEyeX - 20f, eyeY - 34f + browDy, leftEyeX + 20f, eyeY - 30f, browPaint)
         canvas.drawLine(rightEyeX + 20f, eyeY - 34f + browDy, rightEyeX - 20f, eyeY - 30f, browPaint)
 
         // Glasses: round frames around the eyes, a bridge, and temples to the face edge.
-        if (profile.effectiveGlasses()) {
+        if (safe.effectiveGlasses()) {
             val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = darken(palette.hair, 0.2f)
                 this.style = Paint.Style.STROKE
@@ -488,7 +494,7 @@ internal object CartoonAvatar {
         }
 
         // Smile: the mouth arc deepens with the profile smile.
-        val smile = profile.effectiveSmile()
+        val smile = safe.effectiveSmile()
         val mouthH = 30f + smile * 34f
         val mouthPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = palette.hair

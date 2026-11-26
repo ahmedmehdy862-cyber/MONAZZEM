@@ -59,7 +59,7 @@ internal data class FaceProfile(
     val eyeSpacing: Float,
     /** عرض العين / عرض الوجه (0.05..0.2). */
     val eyeSize: Float,
-    /** موضع العينين من أعلى الوجه 0..1 (0.2..0.6). */
+    /** موضع العينين من أعلى الوجه 0..1 (0.2..0.55). */
     val eyeHeight: Float,
     /** ميل الحاجبين بالدرجات (-15..15)؛ الموجب يعني الطرف الخارجي أخفض. */
     val browAngle: Float,
@@ -99,6 +99,24 @@ internal data class FaceProfile(
     fun effectiveHairLength(): Float = (hairLength + hairLengthAdjust).coerceIn(0f, 1f)
 
     fun effectiveSmile(): Float = (smile + smileAdjust).coerceIn(0f, 1f)
+
+    /**
+     * نسخة آمنة للرسم: كل حقل رقمي داخل نطاقه، وNaN يُستبدل بالافتراضي
+     * (فـ coerceIn وحده يمرّر NaN). تُستدعى أول drawProfiled حتى لو جاء
+     * الملف من JSON قديم أو تعديل يدوي.
+     */
+    fun coerceForDrawing(): FaceProfile = copy(
+        faceAspect = finite(faceAspect, DEFAULT.faceAspect).coerceIn(0.6f, 1.1f),
+        eyeSpacing = finite(eyeSpacing, DEFAULT.eyeSpacing).coerceIn(0.25f, 0.55f),
+        eyeSize = finite(eyeSize, DEFAULT.eyeSize).coerceIn(0.05f, 0.2f),
+        eyeHeight = finite(eyeHeight, DEFAULT.eyeHeight).coerceIn(0.2f, 0.55f),
+        browAngle = finite(browAngle, 0f).coerceIn(-15f, 15f),
+        smile = finite(smile, 0.45f).coerceIn(0f, 1f),
+        headTilt = finite(headTilt, 0f).coerceIn(-30f, 30f),
+        hairLength = finite(hairLength, 0f).coerceIn(0f, 1f),
+        hairLengthAdjust = finite(hairLengthAdjust, 0f).coerceIn(-1f, 1f),
+        smileAdjust = finite(smileAdjust, 0f).coerceIn(-1f, 1f),
+    )
 
     /** JSON مضغوط بإصدار، يُحفظ في التفضيلات (`avatar_face_profile_json`) بلا مخطط DB. */
     fun toJson(): String = buildString {
@@ -140,23 +158,34 @@ internal data class FaceProfile(
             val boxH = geometry.boxHeight.takeIf { it > 0f } ?: 120f
             val (leftEyeCenter, rightEyeCenter) = eyeCenters(geometry)
             val eyeDistance = hypot(rightEyeCenter.x - leftEyeCenter.x, rightEyeCenter.y - leftEyeCenter.y)
-            val eyeWidth = (eyeContourWidth(geometry.leftEye) + eyeContourWidth(geometry.rightEye)) / 2f
+            // متوسط عرض العينين غير الفارغتين فقط — عين بلا كونتور (عرضها 0)
+            // لا تنصّف القياس.
+            val eyeWidths = listOf(eyeContourWidth(geometry.leftEye), eyeContourWidth(geometry.rightEye))
+                .filter { it > 0f }
+            val eyeWidth = if (eyeWidths.isEmpty()) 0f else eyeWidths.average().toFloat()
             val eyeCenterY = (leftEyeCenter.y + rightEyeCenter.y) / 2f
             val mouthOpenness = mouthOpenness(geometry, boxH)
-            val probability = geometry.smilingProbability?.coerceIn(0f, 1f)
+            val probability = geometry.smilingProbability?.takeIf { it.isFinite() }?.coerceIn(0f, 1f)
+            // الابتسامة مزيج من احتمال الكاشف وانفتاح الفم (0.6/0.4) لا الاحتمال
+            // الخام وحده — توحيد المقياس يحتاج معايرة على صور حقيقية، فالفرق
+            // موثّق هنا ولا يُغيَّر الآن.
             val smile = when {
                 probability != null -> (0.6f * probability + 0.4f * mouthOpenness).coerceIn(0f, 1f)
                 geometry.upperLip.isNotEmpty() && geometry.lowerLip.isNotEmpty() -> mouthOpenness
                 else -> 0.45f
             }
+            // ميل الرأس: ML Kit موجب عكس عقارب الساعة (كما تراه الكاميرا)،
+            // وCanvas.rotate موجب مع عقارب الساعة — ننفي الإشارة هنا فيُقاس
+            // headTilt باتفاقية الرسم نفسها.
+            val headTilt = (geometry.eulerZ.takeIf { it.isFinite() }?.let { -it } ?: 0f).coerceIn(-30f, 30f)
             return FaceProfile(
-                faceAspect = (boxW / boxH).coerceIn(0.6f, 1.1f),
-                eyeSpacing = (eyeDistance / boxW).coerceIn(0.25f, 0.55f),
-                eyeSize = (eyeWidth / boxW).coerceIn(0.05f, 0.2f),
-                eyeHeight = ((eyeCenterY - geometry.boxTop) / boxH).coerceIn(0.2f, 0.6f),
-                browAngle = browAngle(geometry).coerceIn(-15f, 15f),
-                smile = smile,
-                headTilt = geometry.eulerZ.coerceIn(-30f, 30f),
+                faceAspect = finite(boxW / boxH, DEFAULT.faceAspect).coerceIn(0.6f, 1.1f),
+                eyeSpacing = finite(eyeDistance / boxW, DEFAULT.eyeSpacing).coerceIn(0.25f, 0.55f),
+                eyeSize = finite(eyeWidth / boxW, DEFAULT.eyeSize).coerceIn(0.05f, 0.2f),
+                eyeHeight = finite((eyeCenterY - geometry.boxTop) / boxH, DEFAULT.eyeHeight).coerceIn(0.2f, 0.55f),
+                browAngle = finite(browAngle(geometry), 0f).coerceIn(-15f, 15f),
+                smile = finite(smile, 0.45f).coerceIn(0f, 1f),
+                headTilt = headTilt,
                 skinColor = samples.skinColor,
                 hairColor = samples.hairColor,
                 hairLength = samples.hairLength.coerceIn(0f, 1f),
@@ -177,8 +206,8 @@ internal data class FaceProfile(
             val browAngle = readFloat(json, "ba") ?: return null
             val smile = readFloat(json, "sm") ?: return null
             val headTilt = readFloat(json, "ht") ?: return null
-            val skinColor = readInt(json, "sk") ?: return null
-            val hairColor = readInt(json, "hc") ?: return null
+            val skinColor = readInt(json, "sk")?.let { it or OPAQUE_ALPHA } ?: return null
+            val hairColor = readInt(json, "hc")?.let { it or OPAQUE_ALPHA } ?: return null
             val hairLength = readFloat(json, "hl") ?: return null
             val hasGlasses = (readInt(json, "gl") ?: return null) != 0
             val hasBeard = (readInt(json, "bd") ?: return null) != 0
@@ -186,7 +215,7 @@ internal data class FaceProfile(
                 faceAspect = faceAspect.coerceIn(0.6f, 1.1f),
                 eyeSpacing = eyeSpacing.coerceIn(0.25f, 0.55f),
                 eyeSize = eyeSize.coerceIn(0.05f, 0.2f),
-                eyeHeight = eyeHeight.coerceIn(0.2f, 0.6f),
+                eyeHeight = eyeHeight.coerceIn(0.2f, 0.55f),
                 browAngle = browAngle.coerceIn(-15f, 15f),
                 smile = smile.coerceIn(0f, 1f),
                 headTilt = headTilt.coerceIn(-30f, 30f),
@@ -249,37 +278,52 @@ internal data class FaceProfile(
 
         /**
          * ميل الحاجبين: متوسط ميل خط كل حاجب، والموجب يعني الطرف الخارجي
-         * أخفض من الداخلي. الطرف الخارجي للحاجب الأيسر هو أصغر x، وللأيمن أكبر x.
+         * أخفض من الداخلي. الطرف الخارجي هو الأبعد عن مركز الوجه — ففي ML Kit
+         * LEFT_EYE هي عين الشخص اليسرى وتظهر على يمين الصورة (مرآة)، فلا يصح
+         * افتراض أن الخارجي هو أصغر x للحاجب الأيسر وأكبر x للأيمن.
          */
         private fun browAngle(geometry: FaceGeometry): Float {
-            val left = browTilt(geometry.leftBrow, outerIsMinX = true)
-            val right = browTilt(geometry.rightBrow, outerIsMinX = false)
+            val faceCenterX = geometry.boxLeft + geometry.boxWidth / 2f
+            val left = browTilt(geometry.leftBrow, faceCenterX)
+            val right = browTilt(geometry.rightBrow, faceCenterX)
             val angles = listOfNotNull(left, right)
             if (angles.isEmpty()) return 0f
             return angles.average().toFloat()
         }
 
-        private fun browTilt(points: List<FPoint>, outerIsMinX: Boolean): Float? {
+        private fun browTilt(points: List<FPoint>, faceCenterX: Float): Float? {
             if (points.size < 2) return null
-            val outer = if (outerIsMinX) points.minByOrNull { it.x }!! else points.maxByOrNull { it.x }!!
-            val inner = if (outerIsMinX) points.maxByOrNull { it.x }!! else points.minByOrNull { it.x }!!
+            val outer = points.maxByOrNull { kotlin.math.abs(it.x - faceCenterX) }!!
+            val inner = points.minByOrNull { kotlin.math.abs(it.x - faceCenterX) }!!
             val dx = kotlin.math.abs(outer.x - inner.x)
             if (dx < 1f) return null
             return Math.toDegrees(atan2((outer.y - inner.y).toDouble(), dx.toDouble())).toFloat()
         }
 
+        /** قيمة آمنة للرسم: بديل محايد عند NaN أو ما لا نهاية (فـ coerceIn وحده يمرّر NaN). */
+        private fun finite(value: Float, fallback: Float): Float =
+            if (value.isFinite()) value else fallback
+
         private fun num(value: Float): String {
+            if (!value.isFinite()) return "0"
             val rounded = (kotlin.math.round(value * 1000f) / 1000f)
             return if (rounded == rounded.toInt().toFloat()) rounded.toInt().toString() else rounded.toString()
         }
 
+        /** ألفا معتمة (0xFF000000) تُفرض على الألوان عند القراءة. */
+        private const val OPAQUE_ALPHA = -16777216
+
+        /** نمطا القيمة العددية في JSON؛ وتُسمح بمسافات اختيارية حول النقطتين. */
+        private const val FLOAT_VALUE_PATTERN = "(-?[0-9]+(?:\\.[0-9]+)?)"
+        private const val INT_VALUE_PATTERN = "(-?[0-9]+)"
+
         private fun readFloat(json: String, key: String): Float? {
-            val match = Regex("\"$key\":(-?[0-9]+(?:\\.[0-9]+)?)").find(json) ?: return null
+            val match = Regex("\"$key\"\\s*:\\s*$FLOAT_VALUE_PATTERN").find(json) ?: return null
             return match.groupValues[1].toFloatOrNull()
         }
 
         private fun readInt(json: String, key: String): Int? {
-            val match = Regex("\"$key\":(-?[0-9]+)").find(json) ?: return null
+            val match = Regex("\"$key\"\\s*:\\s*$INT_VALUE_PATTERN").find(json) ?: return null
             return match.groupValues[1].toIntOrNull()
         }
     }

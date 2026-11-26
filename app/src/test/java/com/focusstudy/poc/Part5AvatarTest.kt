@@ -69,8 +69,11 @@ class Part5AvatarTest {
         faceContour = listOf(FPoint(10f, 10f), FPoint(90f, 10f), FPoint(90f, 110f), FPoint(10f, 110f)),
         leftEye = listOf(FPoint(30f, 48f), FPoint(40f, 48f), FPoint(35f, 52f)),
         rightEye = listOf(FPoint(60f, 48f), FPoint(70f, 48f), FPoint(65f, 52f)),
-        leftBrow = listOf(FPoint(25f, 30f), FPoint(35f, 28f), FPoint(45f, 30f)),
-        rightBrow = listOf(FPoint(55f, 30f), FPoint(65f, 28f), FPoint(75f, 30f)),
+        // الحاجبان بوضع ML Kit الحقيقي: LEFT_BROW هي حاجب الشخص الأيسر
+        // ويظهر على يمين الصورة — فطرفه الخارجي (الأبعد عن مركز الوجه)
+        // أخفض هنا، والميل المتوقع موجب (atan2(4, 20) ≈ 11.31°).
+        leftBrow = listOf(FPoint(55f, 30f), FPoint(65f, 28f), FPoint(75f, 34f)),
+        rightBrow = listOf(FPoint(25f, 34f), FPoint(35f, 28f), FPoint(45f, 30f)),
         upperLip = listOf(FPoint(40f, 85f), FPoint(60f, 85f)),
         lowerLip = listOf(FPoint(40f, 92f), FPoint(60f, 92f)),
         eulerZ = 10f,
@@ -91,9 +94,9 @@ class Part5AvatarTest {
         assertEquals(0.30f, profile.eyeSpacing, 0.001f)
         assertEquals(0.10f, profile.eyeSize, 0.001f)
         assertEquals(49.33f / 120f, profile.eyeHeight, 0.01f)
-        assertEquals(0f, profile.browAngle, 0.001f)
+        assertEquals(11.31f, profile.browAngle, 0.01f)
         assertEquals(0.6f * 0.8f + 0.4f * (7f / 120f / 0.22f), profile.smile, 0.01f)
-        assertEquals(10f, profile.headTilt, 0.001f)
+        assertEquals(-10f, profile.headTilt, 0.001f)
         assertEquals(0xFFD9A27A.toInt(), profile.skinColor)
         assertEquals(0xFF2A1A10.toInt(), profile.hairColor)
         assertEquals(0.6f, profile.hairLength, 0.001f)
@@ -110,9 +113,11 @@ class Part5AvatarTest {
         )
         val profile = FaceProfile.fromGeometry(geometry, testSamples())
         assertEquals(0.28f, profile.eyeSpacing, 0.01f)
+        assertEquals(0.05f, profile.eyeSize, 0.001f)
         assertEquals(0.42f, profile.eyeHeight, 0.01f)
+        assertEquals(0f, profile.browAngle, 0.001f)
         assertEquals(0.45f, profile.smile, 0.001f)
-        assertEquals(30f, profile.headTilt, 0.001f)
+        assertEquals(-30f, profile.headTilt, 0.001f)
     }
 
     @Test fun faceProfileJsonRoundTrips() {
@@ -157,6 +162,9 @@ class Part5AvatarTest {
         assertTrue(noGlasses.effectiveGlasses())
         val withGlasses = FaceProfile.DEFAULT.copy(hasGlasses = true, glassesOverride = -1)
         assertTrue(!withGlasses.effectiveGlasses())
+        assertTrue(FaceProfile.DEFAULT.copy(hasBeard = true, beardOverride = 0).effectiveBeard())
+        assertTrue(!FaceProfile.DEFAULT.copy(hasBeard = false, beardOverride = 5).effectiveBeard())
+        assertTrue(FaceProfile.DEFAULT.copy(hasBeard = true, beardOverride = -2).effectiveBeard())
         assertEquals(1f, FaceProfile.DEFAULT.copy(hairLength = 0.9f, hairLengthAdjust = 0.5f).effectiveHairLength(), 0.001f)
         assertEquals(0f, FaceProfile.DEFAULT.copy(smile = 0.1f, smileAdjust = -0.5f).effectiveSmile(), 0.001f)
     }
@@ -167,13 +175,17 @@ class Part5AvatarTest {
         assertTrue(!FaceSampler.isInsidePolygon(15f, 5f, square))
         assertTrue(!FaceSampler.isInsidePolygon(5f, -1f, square))
         assertTrue(!FaceSampler.isInsidePolygon(5f, 5f, emptyList()))
+        // سلوك الحافة في خوارزمية الشعاع: نقطة على الضلع الأيسر داخل،
+        // والرأس (10,10) خارج — مثبَّت هنا حتى لا يتغير بصمت.
+        assertTrue(FaceSampler.isInsidePolygon(0f, 5f, square))
+        assertTrue(!FaceSampler.isInsidePolygon(10f, 10f, square))
     }
 
     @Test fun faceSamplerFindsSkinInsideContourOnly() {
         val pixels = IntArray(40 * 40) { i ->
             val x = i % 40
             val y = i / 40
-            if (x in 10..30 && y in 0..15) 0xFFD9A27A.toInt() else 0xFF6F8FC0.toInt()
+            if (x in 10..33 && y in 0..15) 0xFFD9A27A.toInt() else 0xFF6F8FC0.toInt()
         }
         val geometry = testGeometry().copy(
             boxLeft = 0f, boxTop = 0f, boxWidth = 40f, boxHeight = 40f,
@@ -184,12 +196,103 @@ class Part5AvatarTest {
         assertEquals(0xFFD9A27A.toInt(), FaceSampler.sampleSkin(pixels, 40, 40, geometry))
     }
 
-    @Test fun faceSamplerScoresAreBounded() {
-        val pixels = IntArray(20 * 20) { 0xFF202020.toInt() }
-        val geometry = testGeometry().copy(boxWidth = 20f, boxHeight = 20f)
-        val samples = FaceSampler.sampleAll(pixels, 20, 20, geometry, 0xFFD9A27A.toInt(), 0xFF2A1A10.toInt())
+    @Test fun faceSamplerSkinIgnoresWarmBackgroundOutsideContour() {
+        // الخلفية دافئة أيضًا بلون مختلف — فلو أخذ السامبلر بكسلات خارج
+        // الكونتور لاختلط المتوسط ولما ساوى لون الداخل تمامًا.
+        val pixels = IntArray(40 * 40) { i ->
+            val x = i % 40
+            val y = i / 40
+            if (x in 4..36 && y in 4..36) 0xFFD9A27A.toInt() else 0xFFC08A5A.toInt()
+        }
+        val geometry = testGeometry().copy(
+            boxLeft = 0f, boxTop = 0f, boxWidth = 40f, boxHeight = 40f,
+            faceContour = listOf(FPoint(4f, 4f), FPoint(36f, 4f), FPoint(36f, 36f), FPoint(4f, 36f)),
+            leftEye = emptyList(), rightEye = emptyList(),
+            upperLip = emptyList(), lowerLip = emptyList()
+        )
+        assertEquals(0xFFD9A27A.toInt(), FaceSampler.sampleSkin(pixels, 40, 40, geometry))
+    }
+
+    @Test fun faceSamplerSkinExcludesEyeBand() {
+        // بكسلات دافئة في شريط العينين فقط؛ المقبول منها خارج الشريط بارد،
+        // فالنتيجة يجب أن تساوي اللون البارد تمامًا لا الدافئ.
+        val pixels = IntArray(40 * 40) { i ->
+            val x = i % 40
+            val y = i / 40
+            if (y in 8..26) 0xFFD9A27A.toInt() else 0xFF6F8FC0.toInt()
+        }
+        val geometry = testGeometry().copy(
+            boxLeft = 0f, boxTop = 0f, boxWidth = 40f, boxHeight = 40f,
+            faceContour = listOf(FPoint(4f, 4f), FPoint(36f, 4f), FPoint(36f, 36f), FPoint(4f, 36f)),
+            leftEye = emptyList(), rightEye = emptyList(),
+            upperLip = emptyList(), lowerLip = emptyList()
+        )
+        assertEquals(0xFF6F8FC0.toInt(), FaceSampler.sampleSkin(pixels, 40, 40, geometry))
+    }
+
+    // هندسة متسقة مع الصورة لاختبارات النتائج: صورة 40×40 وصندوق وجه
+    // 20×20 داخلها، بكونتور داخل الصندوق وعينين وفم معروفين.
+    private fun scoresGeometry() = FaceGeometry(
+        boxLeft = 10f, boxTop = 10f, boxWidth = 20f, boxHeight = 20f,
+        faceContour = listOf(FPoint(12f, 12f), FPoint(28f, 12f), FPoint(28f, 28f), FPoint(12f, 28f)),
+        leftEye = listOf(FPoint(15f, 18f), FPoint(19f, 18f)),
+        rightEye = listOf(FPoint(21f, 18f), FPoint(25f, 18f)),
+        leftBrow = listOf(FPoint(15f, 14f), FPoint(19f, 14f)),
+        rightBrow = listOf(FPoint(21f, 14f), FPoint(25f, 14f)),
+        upperLip = listOf(FPoint(16f, 24f), FPoint(24f, 24f)),
+        lowerLip = listOf(FPoint(16f, 26f), FPoint(24f, 26f)),
+        eulerZ = 0f,
+        smilingProbability = null
+    )
+
+    private fun warmBasePixels() = IntArray(40 * 40) { 0xFFD9A27A.toInt() }
+
+    @Test fun faceSamplerGlassesScoreDetectsDarkTopBar() {
+        // شريط داكن فوق العينين (حيث العارضة العليا للنظارة): النتيجة فوق
+        // العتبة 0.25، وكل النتائج في نطاقها.
+        val pixels = warmBasePixels()
+        for (y in 3..8) for (x in 8..31) pixels[y * 40 + x] = 0xFF202020.toInt()
+        val samples = FaceSampler.sampleAll(pixels, 40, 40, scoresGeometry(), 0xFFD9A27A.toInt(), 0xFF2A1A10.toInt())
+        assertTrue(samples.glassesScore > 0.25f)
         assertTrue(samples.glassesScore in 0f..1f)
         assertTrue(samples.beardScore in 0f..1f)
         assertTrue(samples.hairLength in 0f..1f)
+    }
+
+    @Test fun faceSamplerBeardScoreDetectsDarkLowerThird() {
+        // ثلث سفلي داكن تحت الفم وداخل الكونتور: النتيجة فوق العتبة 0.30.
+        val pixels = warmBasePixels()
+        for (y in 26..29) for (x in 13..26) pixels[y * 40 + x] = 0xFF202020.toInt()
+        val samples = FaceSampler.sampleAll(pixels, 40, 40, scoresGeometry(), 0xFFD9A27A.toInt(), 0xFF2A1A10.toInt())
+        assertTrue(samples.beardScore > 0.30f)
+        assertTrue(samples.glassesScore in 0f..1f)
+        assertTrue(samples.beardScore in 0f..1f)
+        assertTrue(samples.hairLength in 0f..1f)
+    }
+
+    @Test fun faceSamplerSkinFallsBackWithoutWarmPixels() {
+        // بلا بكسلات دافئة داخل الكونتور: لون البشرة يساوي الاحتياطي تمامًا.
+        val pixels = IntArray(40 * 40) { 0xFF6F8FC0.toInt() }
+        val samples = FaceSampler.sampleAll(pixels, 40, 40, scoresGeometry(), 0xFFD9A27A.toInt(), 0xFF2A1A10.toInt())
+        assertEquals(0xFFD9A27A.toInt(), samples.skinColor)
+    }
+
+    @Test fun faceSamplerHairLengthDetectsTopStrip() {
+        // شعر يغطي الشريط العلوي فوق الوجه: الطول أكبر من صفر وفي نطاقه.
+        val pixels = warmBasePixels()
+        for (y in 0..9) for (x in 10..29) pixels[y * 40 + x] = 0xFF202020.toInt()
+        val samples = FaceSampler.sampleAll(pixels, 40, 40, scoresGeometry(), 0xFFD9A27A.toInt(), 0xFF2A1A10.toInt())
+        assertTrue(samples.hairLength > 0f)
+        assertTrue(samples.hairLength in 0f..1f)
+        assertTrue(samples.glassesScore in 0f..1f)
+        assertTrue(samples.beardScore in 0f..1f)
+    }
+
+    @Test fun faceProfileJsonAcceptsSpacesAndRejectsStringNumbers() {
+        val original = FaceProfile.DEFAULT.copy(headTilt = 8f)
+        val spaced = original.toJson().replace(":", ": ").replace(",", ", ")
+        assertEquals(original.toJson(), FaceProfile.fromJson(spaced)?.toJson())
+        val stringNumber = original.toJson().replace("\"ht\":8", "\"ht\":\"8\"")
+        assertNull(FaceProfile.fromJson(stringNumber))
     }
 }
