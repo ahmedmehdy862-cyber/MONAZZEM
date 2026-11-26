@@ -82,19 +82,13 @@ jobs:
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
-          script: |
-            # مهم: التقاط رمز الخروج بـ || بدل إيقاف السكربت عند أول فشل —
-            # وإلا أُجهض السحب كله عند فشل الاختبار (كما في التشغيل
-            # 45803901266: فشل connectedDebugAndroidTest فلم تُسحب أي لقطة
-            # رغم التقاطها فعلًا على الجهاز) ولم يصلنا أي دليل بصري.
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || TEST_EXIT=$?
-            # سحب اللقطات من التنزيلات المشتركة: الاختبار يصدّرها إليها عبر
-            # MediaStore (انظر QaExport) لأن مجلد التطبيق الخارجي يُحذف
-            # عند إلغاء تثبيت التطبيق بعد الاختبارات. سحب عادي بلا run-as.
-            adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api34" || echo "screenshot pull failed (app may have crashed before first shot)"
-            ls "./qa-screenshots-api34" || true
-            adb logcat -d > ./logcat-api34.txt || true
-            exit ${TEST_EXIT:-0}
+          # مهم: المشغّل ينفّذ كل سطر من السكربت في صدفة `sh -c` مستقلة،
+          # فلا تبقى متغيرات (كـ TEST_EXIT) بين الأسطر — لذلك السكربت كله
+          # سطر واحد بفواصل `؛`، وإلا خرج برمز 0 رغم فشل الاختبارات
+          # (التشغيل 45806661534: فشل الاختباران ومع ذلك خلص «success»).
+          # `||` بعد gradle يمنع الإجهاض قبل السحب، و`exit` الأخير يعيد
+          # رمز الاختبار نفسه.
+          script: ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || TEST_EXIT=$?; adb pull /sdcard/Download/qa-screenshots ./qa-screenshots-api34 || echo screenshot-pull-failed; ls ./qa-screenshots-api34 || true; adb logcat -d > ./logcat-api34.txt || true; exit ${TEST_EXIT:-0}
 
       - name: Upload screenshots and logs
         if: always()

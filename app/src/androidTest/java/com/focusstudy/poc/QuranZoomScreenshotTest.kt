@@ -9,6 +9,8 @@ import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
+import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import java.io.File
 import java.time.LocalDate
@@ -178,6 +180,16 @@ class QuranZoomScreenshotTest {
     }
 
     private fun scrollSheetTo(label: String, maxSwipes: Int = 12): Boolean {
+        // المحاولة الأولى: تمرير الإطار نفسه حتى يظهر النص (يتوقف عند نهاية
+        // القائمة بنفسه). التمرير اليدوي وحده أخطأ المصحف مرة (التشغيل
+        // 45806661534: 12 سحبة انتهت أسفل الورقة دون أن يظهر الصف).
+        val viaFramework = runCatching {
+            val scrollable = UiScrollable(UiSelector().scrollable(true)).apply {
+                maxSearchSwipes = 20
+            }
+            scrollable.scrollTextIntoView(label)
+        }.getOrDefault(false)
+        if (viaFramework) return true
         repeat(maxSwipes) {
             val found = runCatching {
                 device.wait(Until.hasObject(By.text(label)), 1500)
@@ -205,8 +217,25 @@ class QuranZoomScreenshotTest {
             dumpHierarchy("nav-debug-home-$currentTheme")
         }
         assertTrue("sections sheet [كل الأقسام] must open after tapping [الأقسام]", sheetOpen)
-        val visible = scrollSheetTo(title)
-        log("SHEET SCROLL [$title]: visible=$visible")
+        // البحث أولًا: حقل «ابحث عن قسم» يصفّي الصفوف فيظهر الصف المطلوب
+        // بلا تمرير (التمرير اليدوي أخطأه مرة). clickText يأخذ آخر مطابقة
+        // للنص — أي صف القسم لا حقل البحث نفسه.
+        val searched = runCatching {
+            val field = device.wait(
+                Until.findObject(By.clazz("android.widget.EditText")), 5000
+            ) ?: return@runCatching false
+            field.click()
+            Thread.sleep(300)
+            field.text = title
+            Thread.sleep(800)
+            composeRule.waitForIdle()
+            device.wait(Until.hasObject(By.text(title)), 5000)
+        }.getOrDefault(false)
+        log("SHEET SEARCH [$title]: found=$searched")
+        if (!searched) {
+            val visible = scrollSheetTo(title)
+            log("SHEET SCROLL [$title]: visible=$visible")
+        }
         clickText(title)
         val arrived = runCatching {
             device.wait(Until.hasObject(By.text("رجوع")), 10000)
@@ -217,6 +246,20 @@ class QuranZoomScreenshotTest {
             dumpHierarchy("nav-debug-after-sheet-$currentTheme")
         }
         assertTrue("reader screen must open after tapping [$title]", arrived)
+    }
+
+    /**
+     * ينتظر اكتمال تحميل المصحف قبل أي تأكيد أو لقطة: القارئ يعرض
+     * «جارٍ تحميل المصحف…» حتى يكتمل تحليل ملف 1.4MB على خيط IO
+     * (LifeTrackerScreen)، وقد يستغرق ذلك ثواني على المحاكي البارد —
+     * انتظار 5 ثوانٍ فقط هو ما أفشل التشغيل 45806661534 (اللقطة أظهرت
+     * شاشة التحميل لا القارئ). إن كان التحميل مكتملًا أصلًا عاد فورًا.
+     */
+    private fun waitForReaderReady() {
+        val loaded = device.wait(Until.gone(By.textContains("جارٍ تحميل المصحف")), 30000)
+        val label = device.wait(Until.hasObject(By.textContains("حجم الخط")), 30000)
+        log("READER READY: loadingGone=$loaded zoomRowPresent=$label")
+        assertTrue("reader must finish loading and show the zoom row", loaded && label)
     }
 
     /** النقر على زرّي الزوم «−» / «+» في صف الزوم أعلى نص المصحف. */
@@ -260,6 +303,8 @@ class QuranZoomScreenshotTest {
 
     /** لقطات الزوم الثلاثة لصفحة واحدة: افتراضي، أدنى، أقصى — ثم عودة للافتراضي. */
     private fun shootPageZooms(page: Int, prefix: String) {
+        // اللقطة الأولى بعد اكتمال التحميل لا قبله، وإلا صوّرنا شاشة التحميل.
+        waitForReaderReady()
         shot("${prefix}-default")
         assertZoomLabel("100")
         zoomTap("−", 2)
