@@ -1053,15 +1053,16 @@ private fun AppRoot(
                     onOpenGoals = { openSecondary("goals") },
                     showBack = backStack.isNotEmpty() && current == "tasks",
                     onBack = { returnToPreviousTab() },
-                    // يدور فاتح ← داكن ← حسب النظام ← فاتح: الوضع «نظام» كان يُفقد
-                    // عند أول ضغطة (يتحول إلى فاتح)، فصار جزءًا من الدورة.
+                    // زر الثيم يبدّل فاتح ↔ داكن فقط (إصلاح 0.34.0): وضع
+                    // «حسب النظام» خرج من دورة الزر — كان يدخل فيها فيجعل
+                    // الضغطة الثالثة تتبع إعداد الهاتف فجأة. الوضع «نظام»
+                    // يبقى متاحًا من «التخصيص ← المظهر» لمن يريده صراحةً.
                     onToggleTheme = {
                         onPreferencesChanged(
                             preferences.copy(
                                 themeMode = when (preferences.themeMode) {
-                                    ThemeMode.LIGHT -> ThemeMode.DARK
-                                    ThemeMode.DARK -> ThemeMode.SYSTEM
-                                    ThemeMode.SYSTEM -> ThemeMode.LIGHT
+                                    ThemeMode.DARK -> ThemeMode.LIGHT
+                                    else -> ThemeMode.DARK
                                 }
                             )
                         )
@@ -1418,13 +1419,9 @@ private fun TasksScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)
             ) {
                 Text(
-                    // رمز الوضع الفعّال الناتج عن الضغطة: ☾ نتيجة داكنة، ☀ نتيجة فاتحة.
-                    // من «داكن» الضغطة تذهب إلى «نظام» فيتبع رمزها وضع النظام الحالي.
-                    if (when (preferences.themeMode) {
-                        ThemeMode.LIGHT -> true
-                        ThemeMode.DARK -> isSystemInDarkTheme()
-                        ThemeMode.SYSTEM -> false
-                    }) "☾" else "☀",
+                    // رمز الوضع الناتج عن الضغطة: ☾ تعني ستصبح داكنًا،
+                    // ☀ تعني ستصبح فاتحًا. الدورة وضعان فقط (فاتح ↔ داكن).
+                    if (preferences.themeMode == ThemeMode.DARK) "☀" else "☾",
                     style = MaterialTheme.typography.titleMedium,
                     color = FocusColors.TextSecondary
                 )

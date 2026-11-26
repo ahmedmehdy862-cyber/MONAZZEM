@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import java.io.File
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -90,9 +91,10 @@ internal fun avatarSource(avatar: AvatarImage): String =
 
 /**
  * نتيجة اختيار صورة: الكرتون المولَّد + ملف الملامح المكتشف (null إن لم يوجد
- * وجه واضح — عندها يُرسم الكرتون القديم من بذرة اللون).
+ * وجه واضح — عندها يُرسم الكرتون القديم من بذرة اللون) + نتيجة التحليل
+ * المفصّلة ([FaceAnalysisResult]) لتمييز «لا وجه» عن «الكاشف غير متاح».
  */
-internal data class AvatarPhotoResult(val image: AvatarImage, val profile: FaceProfile?) {
+internal data class AvatarPhotoResult(val image: AvatarImage, val profile: FaceProfile?, val analysis: FaceAnalysisResult) {
     val faceDetected: Boolean get() = profile != null
 }
 
@@ -130,13 +132,24 @@ internal suspend fun copyAvatarToAppFiles(context: Context, uri: Uri, style: Int
         val source = File(context.filesDir, AVATAR_SOURCE_NAME)
         source.outputStream().use { prepared.compress(Bitmap.CompressFormat.JPEG, 88, it) }
         // كشف الوجه مرة واحدة (نموذج مضمّن، دون إنترنت)؛ عند غيابه نرجع للبذرة.
-        val profile = runCatching { FaceAnalyzer.analyze(context, prepared) }.getOrNull()
+        // النتيجة المفصّلة تُحفظ مع الصورة حتى تعرف الواجهة لماذا رجعت
+        // للبذرة: لا وجه في الصورة، أم الكاشف نفسه لم يعمل.
+        // الإلغاء يُمرَّر كما هو (لا يُبتلع في «غير متاح»)؛ أي فشل آخر
+        // في التحليل يعني الكاشف غير متاح على هذا الجهاز.
+        val analysis = try {
+            FaceAnalyzer.analyzeDetailed(context, prepared)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            FaceAnalysisResult.Unavailable
+        }
+        val profile = (analysis as? FaceAnalysisResult.Detected)?.profile
         val cartoon = if (profile != null) CartoonAvatar.stylizeWithProfile(prepared, profile, style, depth)
         else CartoonAvatar.stylize(prepared, style, depth)
         toRecycle += cartoon
         val output = File(context.filesDir, CartoonAvatar.fileName(style))
         output.outputStream().use { cartoon.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        AvatarPhotoResult(AvatarImage(output.absolutePath, source.absolutePath, style), profile)
+        AvatarPhotoResult(AvatarImage(output.absolutePath, source.absolutePath, style), profile, analysis)
     } catch (_: Throwable) {
         null
     } finally {
@@ -189,6 +202,8 @@ internal fun AvatarChooser(
     var busy by remember { mutableStateOf(false) }
     /** نتيجة آخر كشف وجه: true وُجد، false لم يوجد، null لم يُحلل بعد. */
     var faceDetected by remember { mutableStateOf<Boolean?>(null) }
+    /** الكاشف نفسه تعذّر تشغيله في آخر تحليل (لا «لا وجه») — رسالة صادقة. */
+    var analysisUnavailable by remember { mutableStateOf(false) }
     /** رسالة خطأ عابرة لاختيار الصورة أو إعادة الرسم؛ تُمسح عند نجاح العملية التالية. */
     var notice by remember { mutableStateOf<String?>(null) }
     /** إعادة الرسم متسلسلة: تصحيحان متتاليان لا يكتبان ملف الكرتون نفسه معًا. */
@@ -202,10 +217,12 @@ internal fun AvatarChooser(
                 notice = null
                 selectedPresetSeed = null
                 faceDetected = result.faceDetected
+                analysisUnavailable = result.analysis == FaceAnalysisResult.Unavailable
                 onFaceProfileChanged(result.profile)
                 onAvatarChanged(result.image)
             } else {
                 faceDetected = null
+                analysisUnavailable = false
                 notice = "تعذّر تحميل الصورة، جرّب صورة أخرى"
             }
             busy = false
@@ -265,6 +282,7 @@ internal fun AvatarChooser(
             if (path != null) {
                 selectedPresetSeed = preset.seed
                 faceDetected = null
+                analysisUnavailable = false
                 onFaceProfileChanged(null)
                 onAvatarChanged(AvatarImage(path, "", selectedStyle))
             }
@@ -292,7 +310,11 @@ internal fun AvatarChooser(
                 }
                 if (busy) Text("جارٍ رسم الكارتون على الجهاز...", style = MaterialTheme.typography.labelSmall, color = FocusColors.TextSecondary)
                 notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary) }
-                if (faceDetected == false) Text(
+                if (analysisUnavailable) Text(
+                    "تعذّر تشغيل كاشف الوجه على هذا الجهاز — رسمنا الكرتون من ألوان الصورة فقط، فبقيت الشخصية عامة. أعد المحاولة؛ وإن تكررت المشكلة فالكشف غير متاح على هذا الجهاز.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FocusColors.TextSecondary
+                ) else if (faceDetected == false) Text(
                     "لم نجد وجهًا واضحًا في الصورة — رسمنا الكرتون من ألوانها. جرّب صورة أوضح لوجهك، بإضاءة جيدة ووجه مواجه للكاميرا، للحصول على مطابقة أفضل.",
                     style = MaterialTheme.typography.bodySmall,
                     color = FocusColors.TextSecondary
@@ -407,6 +429,7 @@ internal fun AvatarChooser(
         }
         TextButton(onClick = {
             faceDetected = null
+            analysisUnavailable = false
             notice = null
             onFaceProfileChanged(null)
             onAvatarChanged(avatar.copy(path = "", sourcePath = "", style = selectedStyle))

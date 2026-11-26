@@ -16,7 +16,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
+
+/** نتيجة تحليل صورة: وجه بملف ملامح، أو لا وجه واضح، أو الكاشف نفسه غير متاح. */
+internal sealed interface FaceAnalysisResult {
+    data class Detected(val profile: FaceProfile) : FaceAnalysisResult
+    data object NoFace : FaceAnalysisResult
+    data object Unavailable : FaceAnalysisResult
+}
 
 /**
  * كشف الوجه على الجهاز (ML Kit المضمّن) + تصحيح اتجاه EXIF لصور الأفاتار.
@@ -42,32 +50,77 @@ internal object FaceAnalyzer {
         .setMinFaceSize(0.15f)
         .build()
 
+    /** مهلة انتظار اكتمال تهيئة ML Kit قبل اعتبار الكاشف غير متاح. */
+    private const val INIT_TIMEOUT_MS = 10_000L
+
     /**
      * تهيئة ML Kit كسولة (hotfix 0.33.1): موفّر التهيئة التلقائي معطَّل في
-     * الـ manifest، فالتهيئة تتم هنا فقط عند أول تحليل صورة. الاستدعاء
-     * المكرر بعد تهيئة سابقة يُبتلع خطؤه (فهو مهيأ أصلًا)؛ وإن فشلت التهيئة
-     * لسبب حقيقي فإنشاء الكاشف سيفشل بعدها ويرجع analyze null — فيُستخدم
-     * الكرتون القديم، فلا ينكسر اختيار الصورة ولا الإقلاع.
+     * الـ manifest، فالتهيئة تتم هنا فقط عند أول تحليل صورة.
+     *
+     * السبب الجذري لخلل 0.34.0 «شخصية ثابتة مهما رُفعت أي صورة»: النسخة
+     * السابقة كانت تستدعي `MlKit.initialize()` وترمي مهمتها (Task) فورًا،
+     * ثم تنشئ الكاشف في السطر التالي — قبل أن تكتمل التهيئة غالبًا —
+     * فيرمي `getClient` أن السياق غير مهيأ، فيبتلعه الـ catch العام،
+     * فيرجع التحليل null دائمًا، فيُستخدم كرتون بذرة اللون ذو الهندسة
+     * الثابتة لكل صورة. الإصلاح: انتظار اكتمال مهمة التهيئة (بمهلة)
+     * قبل إنشاء الكاشف، وتخزين نجاحها فلا تُعاد في كل صورة.
      */
-    private fun ensureMlKitInitialized(context: Context) {
-        runCatching { MlKit.initialize(context.applicationContext) }
+    @Volatile
+    private var mlKitReady = false
+
+    private suspend fun ensureMlKitInitialized(context: Context): Boolean {
+        if (mlKitReady) return true
+        val initialized = try {
+            withTimeoutOrNull(INIT_TIMEOUT_MS) {
+                suspendCancellableCoroutine { cont ->
+                    MlKit.initialize(context.applicationContext)
+                        .addOnSuccessListener { if (cont.isActive) cont.resume(true) }
+                        .addOnFailureListener { if (cont.isActive) cont.resume(false) }
+                }
+            } ?: false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            false
+        }
+        if (initialized) mlKitReady = true
+        return initialized
     }
 
     /**
      * يحلل صورة ويرجع ملف ملامح أكبر وجه فيها، أو null إن لم يوجد وجه واضح
-     * أو فشل الكشف. لا تُستدعى من الخيط الرئيسي إلا عبر coroutine (الكشف
-     * غير متزامن داخلًا)؛ وإن أُلغيت الـ coroutine يُغلق الكاشف فورًا.
-     * مستمع ML Kit يستلم الوجه فقط؛ وحساب الملف (قراءة بكسلات الصورة
-     * وعيّنتها) يجري على Dispatchers.Default بعد الاستئناف، لا على مستمع
-     * الكشف (الذي يعمل على الخيط الرئيسي افتراضيًا).
-     * لا ترمي أبدًا (عدا إلغاء الـ coroutine): أي فشل في ML Kit — غياب
-     * النموذج، فشل تحميل المكتبة الأصلية، تهيئة غير مكتملة — يرجع null.
+     * أو فشل الكشف — اختصار فوق [analyzeDetailed] للمتّصلين القدامى.
+     * لا ترمي أبدًا (عدا إلغاء الـ coroutine).
      */
-    suspend fun analyze(context: Context, bitmap: Bitmap): FaceProfile? {
-        ensureMlKitInitialized(context)
+    suspend fun analyze(context: Context, bitmap: Bitmap): FaceProfile? =
+        when (val result = analyzeDetailed(context, bitmap)) {
+            is FaceAnalysisResult.Detected -> result.profile
+            else -> null
+        }
+
+    /**
+     * يحلل صورة ويرجع نتيجة مفصّلة: [FaceAnalysisResult.Detected] بملف
+     * ملامح أكبر وجه، أو [FaceAnalysisResult.NoFace] إن لم يوجد وجه واضح،
+     * أو [FaceAnalysisResult.Unavailable] إن تعذّر تشغيل الكاشف نفسه
+     * (تهيئة لم تكتمل، فشل الكشف، أو تعذّر بناء الملف من وجه وُجد) —
+     * فيُعرض للشخص سبب حقيقي بدل رسالة «لا وجه» المضللة.
+     * لا تُستدعى من الخيط الرئيسي إلا عبر coroutine (الكشف غير متزامن
+     * داخلًا)؛ وإن أُلغيت الـ coroutine يُغلق الكاشف فورًا. مستمع ML Kit
+     * يستلم الوجه فقط؛ وحساب الملف (قراءة بكسلات الصورة وعيّنتها) يجري
+     * على Dispatchers.Default بعد الاستئناف، لا على مستمع الكشف (الذي
+     * يعمل على الخيط الرئيسي افتراضيًا).
+     * لا ترمي أبدًا (عدا إلغاء الـ coroutine): أي فشل في ML Kit — غياب
+     * النموذج، فشل تحميل المكتبة الأصلية، تهيئة غير مكتملة — يرجع
+     * [FaceAnalysisResult.Unavailable].
+     */
+    suspend fun analyzeDetailed(context: Context, bitmap: Bitmap): FaceAnalysisResult {
+        if (!ensureMlKitInitialized(context)) return FaceAnalysisResult.Unavailable
         return try {
             val detectionBitmap = downscaleForDetection(bitmap)
             try {
+                // فشل مهمة الكشف نفسها يُميَّز عن «لا وجوه»: الأول عطل في
+                // الكاشف (Unavailable)، والثاني صورة بلا وجه واضح (NoFace).
+                val failed = AtomicBoolean(false)
                 val face = suspendCancellableCoroutine<Face?> { cont ->
                     val detector = FaceDetection.getClient(detectorOptions())
                     // إغلاق مرة واحدة فقط: قد يتسابق الإلغاء مع نجاح/فشل الكشف.
@@ -84,14 +137,23 @@ internal object FaceAnalyzer {
                             if (cont.isActive) cont.resume(largest)
                         }
                         .addOnFailureListener {
+                            failed.set(true)
                             closeOnce()
                             if (cont.isActive) cont.resume(null)
                         }
-                } ?: return null
-                withContext(Dispatchers.Default) {
-                    runCatching { profileFromFace(face, detectionBitmap) }
-                        .onFailure { if (it is CancellationException) throw it }
-                        .getOrNull()
+                }
+                when {
+                    failed.get() -> FaceAnalysisResult.Unavailable
+                    face == null -> FaceAnalysisResult.NoFace
+                    else -> {
+                        val profile = withContext(Dispatchers.Default) {
+                            runCatching { profileFromFace(face, detectionBitmap) }
+                                .onFailure { if (it is CancellationException) throw it }
+                                .getOrNull()
+                        }
+                        if (profile != null) FaceAnalysisResult.Detected(profile)
+                        else FaceAnalysisResult.Unavailable
+                    }
                 }
             } finally {
                 if (detectionBitmap !== bitmap) detectionBitmap.recycle()
@@ -99,7 +161,7 @@ internal object FaceAnalyzer {
         } catch (e: CancellationException) {
             throw e
         } catch (_: Throwable) {
-            null
+            FaceAnalysisResult.Unavailable
         }
     }
 
