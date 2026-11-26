@@ -53,6 +53,8 @@ android {
         targetSdk = 36
         versionCode = 43
         versionName = "0.34.0"
+        // Emulator QA (androidTest): screenshot tour of the Quran reader.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "UPDATE_FEED_URL", "\"$escapedUpdateFeedUrl\"")
     }
 
@@ -132,4 +134,14 @@ dependencies {
     // is pure SQLite, so no device is needed. Pinned to 4.14.1 (supports the SDK 35
     // runtime the test pins itself to with @Config).
     testImplementation("org.robolectric:robolectric:4.14.1")
+
+    // Emulator QA: Quran reader zoom screenshot tour (androidTest only).
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.09.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.1")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }

@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -38,12 +37,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 
 private enum class JumpPanel { NONE, PAGE, SURAH, JUZ }
 
@@ -70,10 +70,30 @@ internal fun QuranReaderScreen(
     val chipsScrollState = rememberScrollState()
     LaunchedEffect(page) { scrollState.scrollTo(0) }
 
+    // زوم القارئ (5 مستويات، الافتراضي 2): يُحفظ فور تغييره فيبقى بعد إعادة
+    // التشغيل. القارئ يقرأ القيمة المخزنة مرة عند أول تركيب؛ وrememberSaveable
+    // تحفظ آخر قيمة داخل الجلسة. الدالة تقرأ zoomLevel حيًا عبر الـ delegate
+    // فلا تُحبس قيمة قديمة داخل معالج القرص (pointerInput بمفتاح Unit).
+    val context = LocalContext.current
+    var zoomLevel by rememberSaveable { mutableStateOf(QuranZoom.loadZoomLevel(context)) }
+    fun setZoomLevel(level: Int) {
+        val clamped = QuranZoom.clamp(level)
+        if (clamped != zoomLevel) {
+            zoomLevel = clamped
+            QuranZoom.saveZoomLevel(context, clamped)
+        }
+    }
+    val zoomScale = QuranZoom.scaleFor(zoomLevel)
+
     val ayahs = remember(page) { index.ayahsForPage(page) }
-    val surahNames = remember(page) { index.pageSurahNames(page) }
     val juz = remember(page) { index.juzForPage(page) }
     val inWirdRange = page in wirdFirstPage..wirdLastPage
+    // نص الصفحة بتدفق متصل واحد (انظر [buildQuranPageContent]): آيات الصفحة
+    // مبرَّرة الطرفين بلا فراغات بينها، وعنوان السورة والبسملة سطران
+    // متمركزان داخل التدفق — كما في المصحف المطبوع قدر ما تسمح البيانات.
+    val pageContent = remember(index, page, zoomLevel) {
+        buildQuranPageContent(index, ayahs, zoomLevel)
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -94,56 +114,52 @@ internal fun QuranReaderScreen(
         }
         Spacer(Modifier.height(8.dp))
 
-        Column(
-            Modifier.weight(1f).verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        // أزرار الزوم: «−» و«+» مستوى بمستوى، والنسبة في الوسط تعيد للافتراضي
+        // (100٪) عند الضغط عليها. القرص بإصبعين على النص يفعل الشيء نفسه.
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            if (surahNames.isNotBlank()) {
+            TextButton(
+                onClick = { setZoomLevel(zoomLevel - 1) },
+                enabled = zoomLevel > QuranZoom.MIN_LEVEL
+            ) { Text("−", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+            TextButton(onClick = { setZoomLevel(QuranZoom.DEFAULT_LEVEL) }) {
                 Text(
-                    surahNames,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = FocusColors.onTint(FocusColors.Teal),
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    "حجم الخط ${(zoomScale * 100).roundToInt()}٪",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FocusColors.TextSecondary
                 )
             }
-            ayahs.forEach { ayah ->
-                val (basmalah, rest) = QuranData.splitBasmalah(index, ayah)
-                if (basmalah != null) {
-                    Text(
-                        basmalah,
-                        fontSize = 22.sp,
-                        lineHeight = 40.sp,
-                        color = FocusColors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    )
-                }
-                val display = if (rest.isBlank()) ayah.text else rest
-                // علامة نهاية الآية مرسومة لا نصية (انظر [AyahEndMarker]): حرف «۝»
-                // النصي زخرفة صغيرة لا تتسع لرقم داخلها، فكان الرقم يظهر خارج الدائرة.
-                val markerId = "ayahEnd"
-                val annotated = buildAnnotatedString {
-                    append(display)
-                    append(" ")
-                    appendInlineContent(markerId, "[" + QuranData.arabicDigits(ayah.ayah) + "]")
-                }
+            TextButton(
+                onClick = { setZoomLevel(zoomLevel + 1) },
+                enabled = zoomLevel < QuranZoom.MAX_LEVEL
+            ) { Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        }
+        Spacer(Modifier.height(4.dp))
+
+        Column(
+            Modifier.weight(1f).verticalScroll(scrollState).quranPinchZoom { step ->
+                setZoomLevel(zoomLevel + step)
+            }
+        ) {
+            if (ayahs.isNotEmpty()) {
                 Text(
-                    text = annotated,
-                    inlineContent = mapOf(
-                        markerId to InlineTextContent(
+                    text = pageContent.text,
+                    inlineContent = pageContent.markers.mapValues { (_, number) ->
+                        InlineTextContent(
                             Placeholder(
-                                width = 30.sp,
-                                height = 30.sp,
+                                width = QuranZoom.markerSize(zoomLevel),
+                                height = QuranZoom.markerSize(zoomLevel),
                                 placeholderVerticalAlign = PlaceholderVerticalAlign.Center
                             )
-                        ) { AyahEndMarker(number = ayah.ayah) }
-                    ),
-                    fontSize = 21.sp,
-                    lineHeight = 40.sp,
-                    color = FocusColors.TextPrimary
+                        ) { AyahEndMarker(number = number, scale = zoomScale) }
+                    },
+                    fontSize = QuranZoom.ayahFontSize(zoomLevel),
+                    lineHeight = QuranZoom.ayahLineHeight(zoomLevel),
+                    color = FocusColors.TextPrimary,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
             if (ayahs.isEmpty()) {
@@ -313,16 +329,13 @@ internal fun QuranReaderScreen(
  *
  * الحجم مضبوط بوحدة sp عبر الـ Placeholder في موضع الاستخدام، فيكبر مع تكبير
  * خط المستخدم؛ والرقم يصغر كلما زادت خاناته حتى يتسع داخل الدائرة (أكبر رقم
- * آية في المصحف 286 — ثلاث خانات).
+ * آية في المصحف 286 — ثلاث خانات). معامل `scale` هو معامل مستوى الزوم
+ * الحالي، فيبقى الرقم داخل الدائرة في كل مستويات الزوم.
  */
 @Composable
-private fun AyahEndMarker(number: Int) {
+private fun AyahEndMarker(number: Int, scale: Float = 1f) {
     val digits = QuranData.arabicDigits(number)
-    val numberSize = when (digits.length) {
-        1 -> 14.sp
-        2 -> 13.sp
-        else -> 11.sp
-    }
+    val numberSize = QuranZoom.markerNumberSize(digits.length, scale)
     Box(
         Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
