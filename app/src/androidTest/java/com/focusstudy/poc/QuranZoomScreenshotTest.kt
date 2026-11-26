@@ -180,16 +180,13 @@ class QuranZoomScreenshotTest {
     }
 
     /**
-     * تمرير يدوي ناعم داخل الورقة حتى يظهر الصف: خطوات 400px فقط حتى لا
-     * يُتخطى أي صف بين توقفين، مع انتظار استقرار الورقة بعد فتحها.
-     * بلا UiScrollable: سحباته تنطلق من حافة الحاوية السفلية ففسّرها
-     * نظام الإيماءات سحبة نظامية وفتح شاشة التطبيقات الأخيرة (التشغيل
-     * 45813074003، الاختبار الداكن). وبلا نقر Compose: performScrollTo
-     * رمى استثناءً في الاختبارين (السبب الدقيق غير مسجّل؛ الورقة نافذة
-     * حوار منفصلة)، بينما نقر UiAutomator على الصف الظاهر أثبت نجاحه
-     * (التشغيل 45806661534).
+     * تمرير يدوي بطيء داخل الورقة حتى يظهر الصف: سحبة 300px بمئة خطوة
+     * (بطيئة فلا قصور ذاتي) + ثانية استقرار قبل كل فحص. السحبات
+     * السريعة كانت تُطلق قصورًا يتجاوز الصف أثناء الفحص (التشغيل
+     * 45815159007، الفاتح: 20 سحبة انتهت أسفل الورقة دون أن يظهر
+     * «المصحف» رغم مروره حتمًا في النطاق).
      */
-    private fun scrollSheetTo(label: String, maxSwipes: Int = 20): Boolean {
+    private fun scrollSheetTo(label: String, maxSwipes: Int = 25): Boolean {
         Thread.sleep(1000)
         composeRule.waitForIdle()
         repeat(maxSwipes) {
@@ -197,8 +194,8 @@ class QuranZoomScreenshotTest {
                 device.wait(Until.hasObject(By.text(label)), 1500)
             }.getOrDefault(false)
             if (found) return true
-            device.swipe(540, 1400, 540, 1000, 20)
-            Thread.sleep(500)
+            device.swipe(540, 1400, 540, 1100, 100)
+            Thread.sleep(1000)
             composeRule.waitForIdle()
         }
         return runCatching {
@@ -234,17 +231,20 @@ class QuranZoomScreenshotTest {
     }
 
     /**
-     * ينتظر اكتمال تحميل المصحف قبل أي تأكيد أو لقطة: القارئ يعرض
-     * «جارٍ تحميل المصحف…» حتى يكتمل تحليل ملف 1.4MB على خيط IO
-     * (LifeTrackerScreen)، وقد يستغرق ذلك ثواني على المحاكي البارد —
-     * انتظار 5 ثوانٍ فقط هو ما أفشل التشغيل 45806661534 (اللقطة أظهرت
-     * شاشة التحميل لا القارئ). إن كان التحميل مكتملًا أصلًا عاد فورًا.
+     * ينتظر اكتمال تحميل المصحف قبل أي تأكيد أو لقطة: انتظار واحد طويل
+     * (90 ثانية) لظهور صف الزوم — وهو لا يظهر إلا بعد اكتمال التحميل.
+     * تحليل ملف 1.4MB على محاكي بارد يتفاوت بشدة (التشغيل 45815159007،
+     * الداكن: نص التحميل باقٍ بعد 30 ثانية؛ وفي تشغيل سابق اكتمل في
+     * ثوانٍ). انتظار على مرحلتين (30+30) كان يهدر الوقت دون فائدة.
      */
     private fun waitForReaderReady() {
-        val loaded = device.wait(Until.gone(By.textContains("جارٍ تحميل المصحف")), 30000)
-        val label = device.wait(Until.hasObject(By.textContains("حجم الخط")), 30000)
-        log("READER READY: loadingGone=$loaded zoomRowPresent=$label")
-        assertTrue("reader must finish loading and show the zoom row", loaded && label)
+        val label = device.wait(Until.hasObject(By.textContains("حجم الخط")), 90000)
+        log("READER READY: zoomRowPresent=$label")
+        if (!label) {
+            shot("reader-not-ready-$currentTheme")
+            dumpHierarchy("reader-not-ready-$currentTheme")
+        }
+        assertTrue("reader must finish loading and show the zoom row", label)
     }
 
     /** النقر على زرّي الزوم «−» / «+» في صف الزوم أعلى نص المصحف. */
