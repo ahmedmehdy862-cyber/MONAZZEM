@@ -94,5 +94,18 @@ enum class BottomTab(val id: String, val label: String, val mark: String, val ic
         }
 
         fun canAdd(ids: List<String>): Boolean = normalize(ids).size < MAX
+
+        /**
+         * يعيد ترتيب قائمة معرّفات بعد نقل عنصر من [from] إلى [to] — منطق
+         * السحب والإفلات النقي (0.34.0): خارج النطاق أو from == to يعيد
+         * القائمة كما هي دون تعديل. لا يزيل تكرارات ولا يفرض الحد الأقصى؛
+         * الحفظ يمر عبر [normalize] كالمعتاد.
+         */
+        fun moved(ids: List<String>, from: Int, to: Int): List<String> {
+            if (from !in ids.indices || to !in ids.indices || from == to) return ids
+            val out = ids.toMutableList()
+            out.add(to, out.removeAt(from))
+            return out
+        }
     }
 }

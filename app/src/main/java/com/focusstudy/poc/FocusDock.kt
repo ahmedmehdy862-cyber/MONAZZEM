@@ -4,6 +4,10 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,10 +17,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -28,18 +31,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 
 /**
  * The floating dock that replaced the full-width navigation bar.
@@ -136,29 +144,162 @@ private fun DockItem(
  * points can never drift into showing different sections. Pinning still writes the same preference
  * the bar editor used, and the five-slot cap is explained instead of silently refusing.
  */
+/**
+ * The dock sheet: the shared directory plus the pin controls that belong to the dock.
+ *
+ * Rows come from [NavigationCatalog], the same source «المزيد» reads, so the two directory entry
+ * points can never drift into showing different sections. Pinning still writes the same preference
+ * the bar editor used, and the five-slot cap is explained instead of silently refusing.
+ *
+ * (0.34.0) The pinned bar itself is reorderable by long-press drag: the dragged row follows the
+ * finger, the other rows shift live ([animateItem]), and every drop persists immediately through
+ * [onReorder] — the same instant-save pattern as pinning, so the dock updates at once and the
+ * order survives restarts (it lives in FocusPreferences.bottomTabs). No third-party reorder
+ * library: Compose has no built-in reorder API, so this is a small manual implementation on
+ * [detectDragGesturesAfterLongPress] + LazyListState.layoutInfo.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SectionsSheet(
     pinned: List<String>,
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit,
-    onTogglePin: (String) -> Unit
+    onTogglePin: (String) -> Unit,
+    onReorder: (List<String>) -> Unit
 ) {
     val current = remember(pinned) { BottomTab.normalize(pinned) }
+    val listState = rememberLazyListState()
+    var draggedId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    // pointerInput لا يُعاد تشغيله أثناء السحب، فيُقرأ الترتيب الحالي عبر
+    // rememberUpdatedState وإلا استخدم نسخة قديمة بعد أول إعادة ترتيب.
+    val currentState = rememberUpdatedState(current)
+    val onReorderState = rememberUpdatedState(onReorder)
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = FocusColors.Surface) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("كل الأقسام", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = FocusColors.TextPrimary)
-                Spacer(Modifier.weight(1f))
-                Text("${current.size}/${BottomTab.MAX} في الشريط", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextMuted)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)
+        ) {
+            item(key = "header") {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("كل الأقسام", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = FocusColors.TextPrimary)
+                        Spacer(Modifier.weight(1f))
+                        Text("${current.size}/${BottomTab.MAX} في الشريط", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextMuted)
+                    }
+                    Text(
+                        "اضغط أي قسم للانتقال إليه، واضغط «تثبيت» ليظهر في الشريط.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                }
             }
-            Text(
-                "اضغط أي قسم للانتقال إليه، واضغط «تثبيت» ليظهر في الشريط.",
-                style = MaterialTheme.typography.bodySmall,
-                color = FocusColors.TextSecondary
-            )
-            SectionsDirectory(pinned = current, onOpen = onSelect, onTogglePin = onTogglePin)
+            item(key = "pinned-title") {
+                Text(
+                    "في الشريط — اضغط مطوّلًا على قسم واسحبه لإعادة ترتيبه؛ يُحفظ فورًا.",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = FocusColors.TextMuted,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 6.dp)
+                )
+            }
+            itemsIndexed(current, key = { _, id -> id }) { index, id ->
+                val dragged = draggedId == id
+                PinnedDockRow(
+                    id = id,
+                    position = index + 1,
+                    dragged = dragged,
+                    modifier = if (dragged) {
+                        Modifier
+                            .zIndex(1f)
+                            .graphicsLayer {
+                                translationY = dragOffset
+                                scaleX = 1.03f
+                                scaleY = 1.03f
+                            }
+                    } else {
+                        Modifier.animateItem()
+                    },
+                    onDragStart = { draggedId = id; dragOffset = 0f },
+                    onDrag = { dy ->
+                        dragOffset += dy
+                        val order = currentState.value
+                        val draggedIndex = order.indexOf(id)
+                        if (draggedIndex < 0) return@PinnedDockRow
+                        val items = listState.layoutInfo.visibleItemsInfo
+                        val info = items.firstOrNull { it.key == id } ?: return@PinnedDockRow
+                        val center = info.offset + info.size / 2 + dragOffset.toInt()
+                        val targetIndex = items.firstOrNull { item ->
+                            val key = item.key as? String
+                            key != null && key != id && key in order &&
+                                center in item.offset..(item.offset + item.size)
+                        }?.let { order.indexOf(it.key as String) } ?: return@PinnedDockRow
+                        if (targetIndex != draggedIndex) {
+                            onReorderState.value(BottomTab.moved(order, draggedIndex, targetIndex))
+                            // انتقل الصف تخطيطيًا بمقدار صف واحد؛ يُخصم من الإزاحة
+                            // حتى يبقى تحت الإصبع دون قفزة.
+                            dragOffset -= (targetIndex - draggedIndex) * info.size
+                        }
+                    },
+                    onDragEnd = { draggedId = null; dragOffset = 0f },
+                    onSelect = { onSelect(id) }
+                )
+            }
+            item(key = "directory") {
+                SectionsDirectory(pinned = current, onOpen = onSelect, onTogglePin = onTogglePin)
+            }
         }
+    }
+}
+
+/**
+ * صف قسم مثبّت في الشريط داخل ورقة «كل الأقسام» (0.34.0): نقرة تفتح القسم،
+ * وضغطة مطوّلة + سحب تعيد ترتيبه. مقبض السحب يوضح الإمكانية.
+ */
+@Composable
+private fun PinnedDockRow(
+    id: String,
+    position: Int,
+    dragged: Boolean,
+    modifier: Modifier = Modifier,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onSelect: () -> Unit
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (dragged) FocusColors.SurfaceHigh else Color.Transparent)
+            .clickable(onClick = onSelect)
+            .pointerInput(id) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = onDragEnd,
+                    onDragCancel = onDragEnd,
+                    onDrag = { _, dragAmount -> onDrag(dragAmount.y) }
+                )
+            }
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.DragHandle,
+            contentDescription = "اسحب لإعادة الترتيب",
+            modifier = Modifier.size(20.dp),
+            tint = FocusColors.TextMuted
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier.width(34.dp).height(34.dp).clip(RoundedCornerShape(12.dp)).background(FocusColors.SurfaceHigh),
+            contentAlignment = Alignment.Center
+        ) { Icon(imageVector = BottomTab.iconOf(id), contentDescription = null, modifier = Modifier.size(20.dp), tint = FocusColors.onTint(FocusColors.Blue)) }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(BottomTab.labelOf(id), style = MaterialTheme.typography.bodyLarge, color = FocusColors.TextPrimary)
+            Text("في الشريط", style = MaterialTheme.typography.labelSmall, color = FocusColors.TextMuted)
+        }
+        Text("$position", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextMuted)
     }
 }
 

@@ -47,11 +47,11 @@ internal fun BottomBarSettingsScreen(
 ) {
     var current by remember { mutableStateOf(BottomTab.normalize(selected)) }
 
+    // الأسهم ↑/↓ بديل للسحب والإفلات في ورقة «كل الأقسام» (0.34.0):
+    // نفس المنطق النقي BottomTab.moved، والحفظ يبقى بزر «حفظ الشريط».
     fun move(id: String, delta: Int) {
         val index = current.indexOf(id)
-        val target = index + delta
-        if (index < 0 || target !in current.indices) return
-        current = current.toMutableList().apply { add(target, removeAt(index)) }
+        current = BottomTab.moved(current, index, index + delta)
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {

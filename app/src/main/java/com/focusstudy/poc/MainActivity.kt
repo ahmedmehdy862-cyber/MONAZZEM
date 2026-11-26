@@ -1153,6 +1153,11 @@ private fun AppRoot(
                         else -> current
                     }
                     if (next != current) onPreferencesChanged(preferences.copy(bottomTabs = BottomTab.normalize(next)))
+                },
+                // السحب والإفلات في الورقة (0.34.0): يُحفظ فورًا كالتثبيت،
+                // فيتحدث الشريط لحظيًا ويستمر الترتيب بعد إعادة التشغيل.
+                onReorder = { next ->
+                    onPreferencesChanged(preferences.copy(bottomTabs = BottomTab.normalize(next)))
                 }
             )
         }
