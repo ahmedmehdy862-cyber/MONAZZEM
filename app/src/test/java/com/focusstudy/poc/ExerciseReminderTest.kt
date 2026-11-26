@@ -58,7 +58,7 @@ class ExerciseReminderTest {
         ExerciseReminderScheduler.notifyTest(context)
         val posted = shadowOf(AppNotifications.manager(context)).allNotifications
         assertTrue(posted.isNotEmpty())
-        val notification = posted.first().notification
+        val notification = posted.first()
         assertEquals(AppNotifications.DAILY.id, notification.channelId)
         assertTrue(notification.extras.getString("android.text").orEmpty().contains("تمرين"))
     }
