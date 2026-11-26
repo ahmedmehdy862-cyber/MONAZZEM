@@ -96,16 +96,20 @@ jobs:
             # مهم: سحب اللقطات وlogcat يجب أن يعملا حتى عند فشل الاختبارات —
             # سكربتات GitHub Actions تعمل مع bash -e، ففشل gradle كان يُجهض
             # السكربت قبل السحب، فتضيع اللقطات وتفريغ الهرمية بالضبط عند
-            # الحاجة إليها (كل تشغيلات API 34 الفاشلة). لذلك نلتقط رمز خروج
-            # gradle ونكمل، ثم نعيده في النهاية.
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || TEST_EXIT=$?
+            # الحاجة إليها (كل تشغيلات API 34 الفاشلة).
+            # وتحذير: هذا الأكشن ينفّذ كل سطر في shell مستقل (sh -c)،
+            # فالمتغيرات لا تنتقل بين الأسطر — صيغة `|| TEST_EXIT=$?` مع
+            # `exit ${TEST_EXIT:-0}` كانت تمرّر نجاحًا كاذبًا دائمًا (التشغيل
+            # 45805941914: فشل gradle بـ 429 ومع ذلك ظهرت الوظيفة ناجحة).
+            # لذلك يُحفَظ رمز الخروج في ملف ويُعاد في النهاية.
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || echo $? > ./test-exit-code.txt
             # سحب اللقطات من التنزيلات المشتركة: الاختبار يصدّرها إليها عبر
             # MediaStore (انظر QaExport) لأن مجلد التطبيق الخارجي يُحذف
             # عند إلغاء تثبيت التطبيق بعد الاختبارات. سحب عادي بلا run-as.
             adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api${{ matrix.api-level }}" || echo "screenshot pull failed (app may have crashed before first shot)"
             ls "./qa-screenshots-api${{ matrix.api-level }}" || true
             adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
-            exit ${TEST_EXIT:-0}
+            exit $(cat ./test-exit-code.txt 2>/dev/null || echo 0)
 
       - name: Upload screenshots and logs
         if: always()
