@@ -2,6 +2,13 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
     kotlin("jvm")
+    // إلزامي منذ Kotlin 2.0: مترجم Compose مطلوب لأي وحدة تستخدم
+    // Compose Multiplatform؛ بدونه يفشل تهيئة :desktop بخطأ
+    // «Since Kotlin 2.0.0 to use Compose Multiplatform you must apply
+    // "org.jetbrains.kotlin.plugin.compose" plugin» — وهذا ما كسر
+    // تشغيل إصدار أندرويد 0.34.0 (تهيئة كل المشاريع تتم حتى عند بناء
+    // :app وحدها). الإصدار من الجذري (2.2.10، نفس :app).
+    id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("app.cash.sqldelight")
