@@ -88,9 +88,14 @@ compose.desktop {
             targetFormats(TargetFormat.Msi)
             packageName = "com.focusstudy.poc"
             packageVersion = desktopVersionName
-            vendor = "مُنظِّم"
-            description = "نظّم مهامك ووردك وعاداتك وصحتك ومالك ومزاجك — نسخة ويندوز من مُنظِّم"
-            copyright = "© مُنظِّم"
+            // نصوص MSI لاتينية فقط (ASCII): jpackage يمرّرها إلى WiX،
+            // وقاعدة بيانات MSI لا تدعم Unicode (ترميز الصفحة 0 = ASCII
+            // فقط) — نص عربي هنا (vendor/description/copyright) كسر
+            // jpackage بالكود 1 في run 45756216948 دون أي تفاصيل في السجل.
+            // واجهة التطبيق نفسها تبقى عربية؛ هذا يخص مثبّت ويندوز فقط.
+            vendor = "Monazzem"
+            description = "Organize your tasks, wird, habits, health, money and mood - the Windows version of Monazzem"
+            copyright = "(c) Monazzem"
         }
     }
 }

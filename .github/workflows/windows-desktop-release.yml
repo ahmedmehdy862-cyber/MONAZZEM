@@ -96,6 +96,17 @@ jobs:
       - name: Build MSI
         run: .\gradlew.bat --no-daemon :desktop:packageMsi
 
+      # jpackage يخفي خطأه الحقيقي: يخرج بالكود 1 وتفاصيله في ملفات سجل
+      # على الـ runner لا تظهر في سجل GitHub — اطبعها عند الفشل.
+      - name: Show jpackage logs on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path desktop/build/compose/logs -Recurse -Filter *.txt -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "=== $($_.FullName) ==="
+            Get-Content $_.FullName -ErrorAction SilentlyContinue
+          }
+
       - name: Prepare stable MSI asset name
         id: msi
         shell: pwsh
