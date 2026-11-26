@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.text.appendInlineContent
-import androidx.compose.ui.input.pointer.awaitPointerEvent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.ParagraphStyle
@@ -180,6 +179,7 @@ fun Modifier.quranPinchZoom(onStep: (Int) -> Unit): Modifier = pointerInput(Unit
         var previousDistance: Float? = null
         var cumulative = 1f
         while (true) {
+            // awaitPointerEvent دالة عضو في AwaitPointerEventScope — لا تُستورد.
             val event = awaitPointerEvent()
             val pressed = event.changes.filter { it.pressed }
             if (pressed.size < 2) {
