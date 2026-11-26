@@ -51,8 +51,8 @@ android {
         applicationId = "com.focusstudy.poc"
         minSdk = 26
         targetSdk = 36
-        versionCode = 40
-        versionName = "0.32.0"
+        versionCode = 41
+        versionName = "0.33.0"
         buildConfigField("String", "UPDATE_FEED_URL", "\"$escapedUpdateFeedUrl\"")
     }
 
