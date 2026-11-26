@@ -91,6 +91,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // اختبارات الوحدة (Robolectric) تحتاج موارد التطبيق وأصوله المضمّنة
+    // (نص المصحف في assets/quran) — بدونها يعود AssetManager فارغًا
+    // فيفشل تحميل الفهرس (FileNotFoundException) وتسقط كل اختبارات
+    // QuranDataTest/QuranZoomTest في setUp. الافتراضي معطّل.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
