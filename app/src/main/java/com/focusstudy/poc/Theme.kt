@@ -207,7 +207,7 @@ private fun lightScheme(accent: Color) = lightColorScheme(
     onError = Color.White
 )
 
-/** Zian Black (arfonts.net, free for personal and commercial use) — display headings only. */
+/** Zian Black (arfonts.net, free for personal and commercial use) — every heading style (headline/title). */
 internal val ZianHeading = FontFamily(Font(R.font.zian_black))
 
 /**
@@ -218,9 +218,10 @@ internal val ZianHeading = FontFamily(Font(R.font.zian_black))
  * (all common Arabic letters and presentation forms present). A copy of the license is
  * bundled in the app at app/src/main/assets/OFL.txt.
  *
- * Zian stays only for the two largest display styles ([Typography.headlineSmall] and
- * [Typography.titleLarge]): its heavy black cut suits a brand heading but is too blunt for
- * card titles and body copy, which now all read in Cairo.
+ * قاعدة الخطوط (قرار 2026-11-26): زين بلاك لكل أنماط العناوين
+ * ([Typography.headlineMedium] و[Typography.headlineSmall] و[Typography.titleLarge]
+ * و[Typography.titleMedium] و[Typography.titleSmall])، وCairo للنصوص والتسميات
+ * (body/label) — فالعناوين كلها بهوية واحدة، والنصوص تبقى مقروءة بخط Cairo.
  */
 internal val Cairo = FontFamily(
     Font(R.font.cairo_regular, FontWeight.Normal),
@@ -230,10 +231,11 @@ internal val Cairo = FontFamily(
 )
 
 private val FocusTypography = Typography(
+    headlineMedium = TextStyle(fontFamily = ZianHeading, fontSize = 28.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp),
     headlineSmall = TextStyle(fontFamily = ZianHeading, fontSize = 27.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp),
     titleLarge = TextStyle(fontFamily = ZianHeading, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp),
-    titleMedium = TextStyle(fontFamily = Cairo, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, lineHeight = 28.sp),
-    titleSmall = TextStyle(fontFamily = Cairo, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 24.sp),
+    titleMedium = TextStyle(fontFamily = ZianHeading, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, lineHeight = 28.sp),
+    titleSmall = TextStyle(fontFamily = ZianHeading, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 24.sp),
     bodyLarge = TextStyle(fontFamily = Cairo, fontSize = 16.sp, lineHeight = 25.sp),
     bodyMedium = TextStyle(fontFamily = Cairo, fontSize = 15.sp, lineHeight = 23.sp),
     bodySmall = TextStyle(fontFamily = Cairo, fontSize = 14.sp, lineHeight = 21.sp),
