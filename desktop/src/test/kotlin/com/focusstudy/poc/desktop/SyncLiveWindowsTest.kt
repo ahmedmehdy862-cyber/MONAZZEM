@@ -34,7 +34,19 @@ class SyncLiveWindowsTest {
         val first = service.syncNow(session)
         assertTrue("first syncNow must succeed, got $first", first is SyncOutcome.Ok)
 
-        assertEquals(2, repo.tasks().size)
+        // تشخيص (يظهر في system-out بتقرير XML): ماذا أعاد السحب فعلًا،
+        // وماذا في القاعدة بعده — يحدد إن كان الخلل في السحب أم التطبيق.
+        val probe = client.pull(credentials.profileId, credentials.passphrase)
+        val probeSnap = (probe as? SyncOutcome.Ok)?.snapshot
+        println("SyncLive probe: pull ok=${probe is SyncOutcome.Ok} revision=${probeSnap?.revision} " +
+            "serverTasks=${probeSnap?.data?.tasks?.map { it.id to it.title }} " +
+            "serverSubjects=${probeSnap?.data?.subjects?.map { it.id to it.name }}")
+        println("SyncLive probe: repo tasks=${repo.tasks().map { it.id to it.title }} " +
+            "subjects=${repo.subjects().map { it.id to it.name }}")
+
+        assertEquals(
+            "tasks after first sync: ${repo.tasks().map { it.id to it.title }}",
+            2, repo.tasks().size)
         assertTrue(repo.tasks().any { it.title == SyncLiveWindowsSupport.ANDROID_TASK_TITLE })
         assertTrue(repo.tasks().any { it.title == "مهمة ثانية — اختبار حي" })
         assertEquals(1, repo.subjects().size)

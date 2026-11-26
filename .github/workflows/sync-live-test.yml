@@ -241,6 +241,17 @@ jobs:
           SYNC_LIVE_CREDENTIALS_FILE: ${{ github.workspace }}\live-credentials\sync-live-credentials.json
         run: .\gradlew.bat :desktop:test --tests "com.focusstudy.poc.desktop.SyncLiveWindowsTest" --no-daemon
 
+      - name: Upload Windows test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-live-test-results
+          path: |
+            desktop/build/test-results/test/
+            desktop/build/reports/tests/test/
+          retention-days: 1
+          if-no-files-found: ignore
+
   android-verify:
     name: Android verify Windows changes (API 34 emulator)
     needs: windows-verify
