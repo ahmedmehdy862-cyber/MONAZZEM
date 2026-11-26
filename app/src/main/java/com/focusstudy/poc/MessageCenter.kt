@@ -51,6 +51,13 @@ data class TeamMessage(val id: String, val title: String, val body: String, val 
  * app shows it on the next launch. The last successful fetch is cached so the inbox still reads
  * offline, and dismissals are remembered per message id.
  */
+/** An HTTP failure with its status code attached, so callers can tell a wrong passphrase
+ * (401) or a rate limit (429) from a lost connection. `request` used to throw a plain
+ * "http NNN" message for every non-2xx, which made every auth failure look like a network
+ * failure. The body carries only the server's error code (for example `invalid_credentials`);
+ * the server never echoes a passphrase. */
+internal class HttpStatusException(val status: Int, val body: String) : Exception("http $status")
+
 object TeamMessages {
 
     internal const val BASE = "https://update-site-sigma.vercel.app"
@@ -165,10 +172,11 @@ object TeamMessages {
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
             }
-            val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
-            stream?.bufferedReader()?.use { it.readText() }.orEmpty().also {
-                if (connection.responseCode !in 200..299) error("http ${connection.responseCode}")
-            }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw HttpStatusException(code, body)
+            body
         } finally {
             connection.disconnect()
         }

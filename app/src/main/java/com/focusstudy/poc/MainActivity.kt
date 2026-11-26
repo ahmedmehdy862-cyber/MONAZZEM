@@ -431,6 +431,7 @@ class MainActivity : ComponentActivity() {
         SessionEngine.init(this)
         AppUpdateManager.schedule(this)
         NetworkRetryJob.schedule(this)
+        AutoSync.onAppOpened(applicationContext)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             AppUpdateManager.check(applicationContext, manual = false)
         }
@@ -496,6 +497,12 @@ class MainActivity : ComponentActivity() {
 
         }
 
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Back to the foreground: pull when due, then push pending local changes.
+        AutoSync.onForegrounded(applicationContext)
     }
 
     /**
