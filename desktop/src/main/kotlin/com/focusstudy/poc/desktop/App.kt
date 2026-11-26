@@ -78,6 +78,17 @@ class DesktopAppState(val repo: DesktopRepository) {
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val focusTimer = FocusTimer(scope)
 
+    /**
+     * المزامنة التلقائية (انظر AutoSync.kt): سحب عند الفتح، وسحب عند
+     * عودة الشبكة، ودفع بعد هدوء التغييرات المحلية، ودوريًا كل 15 دقيقة.
+     * زر «مزامنة الآن» يبقى احتياطًا يدويًا يستدعي الدورة نفسها.
+     */
+    val autoSync = AutoSyncController(
+        scope = scope,
+        isLinked = { session.isLinked },
+        requestSync = { onDone -> syncNow(onDone) },
+    )
+
     var screen by mutableStateOf(Screen.Tasks)
     var dark by mutableStateOf(false)
     var offlineMode by mutableStateOf(false)
@@ -96,10 +107,23 @@ class DesktopAppState(val repo: DesktopRepository) {
             repo.logFocusSession(0L, start, end, "completed")
             refresh()
         }
+        // استعادة كاملة من خزنة النظام: ربط صامت + مزامنة فورية عند الفتح.
+        // إن غابت كلمة المرور من الخزنة تبقى شاشة الدخول كما كانت.
+        if (session.restoreFromVault()) {
+            linked = true
+            autoSync.start()
+        }
     }
 
-    fun refresh() {
+    /**
+     * يُستدعى بعد كل تغيير محلي (إضافة/تعديل/حذف)؛ يرفع نسخة البيانات
+     * ويُبلغ المزامنة التلقائية لتدفع بعد مهلة الهدوء.
+     * `triggerAutoSync = false` عند التحديثات الناتجة عن مزامنة نفسها
+     * (وإلا أعادت المزامنة جدولة نفسها إلى ما لا نهاية).
+     */
+    fun refresh(triggerAutoSync: Boolean = true) {
         dataVersion++
+        if (triggerAutoSync) autoSync.notifyLocalChange()
     }
 
     fun linkWithPassphrase(profileId: String, passphrase: String, currentPassphrase: String? = null) {
@@ -112,7 +136,8 @@ class DesktopAppState(val repo: DesktopRepository) {
                 session.link(profileId.trim(), passphrase)
                 linked = true
                 syncMessage = "تم ربط الحساب"
-                refresh()
+                autoSync.start()
+                refresh(triggerAutoSync = false)
             } else {
                 loginError = (outcome as? SyncOutcome.Error)?.message ?: "تعذّر ربط الحساب"
             }
@@ -127,30 +152,42 @@ class DesktopAppState(val repo: DesktopRepository) {
         }
         linked = true
         loginError = null
-        syncNow()
+        // بدء المزامنة التلقائية يُطلق سحب الفتح فورًا؛ بلا syncNow مكرر.
+        autoSync.start()
     }
 
-    fun syncNow() {
-        if (syncBusy || !session.isLinked) return
+    /**
+     * دورة مزامنة واحدة (pull ← تطبيق ← push)؛ تعيد true إن بدأت فعلًا
+     * وfalse إن كانت مزامنة جارية أو الحساب غير مربوط. `onDone` تُستدعى
+     * عند انتهائها مهما كانت النتيجة (لتصريف طلب تلقائي منتظر خلفها).
+     */
+    fun syncNow(onDone: (() -> Unit)? = null): Boolean {
+        if (syncBusy || !session.isLinked) return false
         syncBusy = true
         syncMessage = "جارٍ المزامنة…"
         scope.launch(Dispatchers.IO) {
-            val outcome = syncService.syncNow(session)
-            syncMessage = when (outcome) {
-                is SyncOutcome.Ok -> "تمت المزامنة ✓"
-                is SyncOutcome.Error -> outcome.message
+            try {
+                val outcome = syncService.syncNow(session)
+                syncMessage = when (outcome) {
+                    is SyncOutcome.Ok -> "تمت المزامنة ✓"
+                    is SyncOutcome.Error -> outcome.message
+                }
+            } finally {
+                syncBusy = false
+                refresh(triggerAutoSync = false)
+                onDone?.invoke()
             }
-            syncBusy = false
-            refresh()
         }
+        return true
     }
 
     fun unlink() {
+        autoSync.stop()
         session.unlink()
         linked = false
         offlineMode = false
         syncMessage = null
-        refresh()
+        refresh(triggerAutoSync = false)
     }
 
     fun lastSyncText(): String? {
@@ -250,7 +287,8 @@ private fun LoginScreen(state: DesktopAppState) {
             Text("مُنظِّم — ويندوز", fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Text(
                 "سجّل دخولك بحساب المزامنة نفسه في هاتفك لتزامن مهامك بين الجهازين. " +
-                    "كلمة المرور لا تُحفظ على هذا الجهاز أبدًا.",
+                    "كلمة المرور تُحفظ في مخزن بيانات اعتماد ويندوز على هذا الجهاز فقط " +
+                    "(Credential Manager)، فتتم المزامنة تلقائيًا عند كل فتح — ولا تُحفظ في أي ملف.",
                 fontSize = 14.sp,
             )
             OutlinedTextField(
@@ -271,7 +309,7 @@ private fun LoginScreen(state: DesktopAppState) {
             OutlinedTextField(
                 value = currentPassphrase,
                 onValueChange = { currentPassphrase = it },
-                label = { Text("كلمة المرور الحالية — عند تغييرها فقط") },
+                label = { Text("كلمة المرور الحالية — عند تغييرها فقط (اتركها فارغة للربط بنفس كلمة مرور الهاتف)") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
