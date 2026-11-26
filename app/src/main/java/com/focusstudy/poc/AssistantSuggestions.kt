@@ -2,7 +2,6 @@ package com.focusstudy.poc
 
 import java.time.LocalDateTime
 import java.time.ZoneId
-import kotlin.math.floorMod
 
 /**
  * اقتراحات المساعد المتكيفة: لا أسئلة ثابتة.
@@ -147,7 +146,7 @@ internal object AssistantSuggestions {
     }
 
     private fun pick(pool: List<String>, seed: Long): String =
-        pool[floorMod(seed, pool.size.toLong()).toInt()]
+        pool[Math.floorMod(seed, pool.size.toLong()).toInt()]
 
     private fun formatAmount(amount: Double): String {
         val rounded = if (amount == amount.toLong().toDouble()) amount.toLong().toString() else "%.2f".format(amount)
