@@ -37,6 +37,19 @@ assert.deepEqual(decideCiPublish(base, { ...base, releaseNotes: "ملاحظات 
 assert.deepEqual(decideCiPublish(base, { ...base, apkUrl: "https://example.com/other.apk" }), { action: "write" });
 assert.deepEqual(decideCiPublish(base, { ...base, versionName: "0.26.1", versionCode: 35 }), { action: "write" });
 
+// `windows` is an object field, not a string: adding it later to the same versionCode is a
+// change (write), an identical windows object is unchanged, and a malformed one is no windows.
+const windows = { downloadUrl: "https://example.com/MONAZZEM-Setup-0.26.0.msi", version: "0.26.0", sizeBytes: 12345678 };
+assert.equal(releasePayloadEquals(base, { ...base, windows }), false);
+assert.equal(releasePayloadEquals({ ...base, windows }, { ...base, windows }), true);
+assert.equal(releasePayloadEquals({ ...base, windows }, { ...base, windows: { ...windows, sizeBytes: 1 } }), false);
+assert.equal(releasePayloadEquals(base, { ...base, windows: "https://example.com/x.msi" }), true);
+assert.equal(releasePayloadEquals(base, { ...base, windows: { downloadUrl: "", version: "", sizeBytes: 0 } }), true);
+assert.deepEqual(decideCiPublish(base, { ...base, windows }), { action: "write" });
+assert.deepEqual(decideCiPublish({ ...base, windows }, { ...base, windows }), { action: "unchanged" });
+assert.deepEqual(decideCiPublish({ ...base, windows }, { ...base, windows: { ...windows, version: "0.26.1" } }), { action: "write" });
+assert.deepEqual(decideCiPublish({ ...base, windows }, base), { action: "write" });
+
 // Per-notification sound config accepts only known categories and choices.
 assert.deepEqual(normalizeSounds(null), DEFAULT_SOUNDS);
 assert.deepEqual(normalizeSounds({ prayer: "ADHAN", dhikr: "silent", bogus: "adhan" }), {

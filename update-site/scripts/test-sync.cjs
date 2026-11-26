@@ -115,7 +115,10 @@ async function main() {
       notes: [{ id: "n1", text: "لا تخرج من الجهاز" }],
       messages: [{ id: "m1", title: "رسالة خاصة" }],
     });
-    assert.deepEqual(Object.keys(clean).sort(), ["subjects", "taskTypes", "tasks"]);
+    assert.deepEqual(Object.keys(clean).sort(), [
+      "calorieLogs", "habitLogs", "habits", "healthLogs", "moodLogs",
+      "subjects", "taskTypes", "tasks", "transactions", "wirdLogs",
+    ]);
     assert.equal(clean.tasks[0].title, "مهمة");
     assert.equal(clean.tasks[0].notes, undefined);
     assert.equal(clean.tasks[0].deviceId, undefined);
@@ -124,6 +127,76 @@ async function main() {
     assert.equal(clean.subjects[0].name, "رياضيات");
     assert.equal(clean.subjects[0].notes, undefined);
     assert.equal(clean.taskTypes[0].archived, true);
+  });
+
+  await test("life collections whitelist only their contract fields", async () => {
+    const clean = real.normalizeSyncPayload({
+      habits: [{ id: "3", name: "قراءة", createdAt: 500, archived: true, secret: "x", updatedAt: 100 }],
+      habitLogs: [{ habitId: "3", day: "2026-11-26", updatedAt: 100 }],
+      habitLogsBad: [{ id: "9", habitId: "3", day: "not-a-day", updatedAt: 100 }],
+      wirdLogs: [{ id: "2026-11-26", day: "2026-11-26", pages: 2, surah: "البقرة", loggedAt: 1, updatedAt: 100 }],
+      healthLogs: [{ id: "2026-11-26", day: "2026-11-26", weight: 70.5, sleepHours: 7, waterCups: 6, exerciseMinutes: 30, updatedAt: 100 }],
+      transactions: [{
+        id: "8", kind: "expense", amount: 12.5, category: "طعام", note: "ملاحظة مالية سرية",
+        day: "2026-11-26", createdAt: 400, updatedAt: 100,
+      }],
+      moodLogs: [{ id: "2026-11-26", day: "2026-11-26", mood: 4, updatedAt: 100 }],
+      calorieLogs: [{ id: "5", day: "2026-11-26", name: "أرز", calories: 300, createdAt: 400, updatedAt: 100 }],
+    });
+    assert.equal(clean.habits[0].name, "قراءة");
+    assert.equal(clean.habits[0].archived, true);
+    assert.equal(clean.habits[0].secret, undefined);
+    assert.equal(clean.habitLogs[0].id, "3:2026-11-26");
+    assert.equal(clean.habitLogs[0].habitId, "3");
+    assert.equal(clean.wirdLogs[0].pages, 2);
+    assert.equal(clean.wirdLogs[0].loggedAt, undefined);
+    assert.equal(clean.healthLogs[0].weight, 70.5);
+    assert.equal(clean.transactions[0].amount, 12.5);
+    assert.equal(clean.transactions[0].note, undefined);
+    assert.equal(clean.moodLogs[0].mood, 4);
+    assert.equal(clean.calorieLogs[0].calories, 300);
+  });
+
+  await test("life records reject bad days, ranges and kinds, and done:false becomes a tombstone", async () => {
+    const clean = real.normalizeSyncPayload({
+      habitLogs: [
+        { habitId: "3", day: "2026-11-26", done: false, updatedAt: 100 },
+        { habitId: "3", day: "2026-13-40", updatedAt: 100 },
+      ],
+      wirdLogs: [{ id: "2026-11-26", day: "2026-11-26", pages: 9999, surah: "البقرة", updatedAt: 100 }],
+      healthLogs: [{ id: "2026-11-26", day: "2026-11-26", weight: 5, sleepHours: 99, updatedAt: 100 }],
+      transactions: [{ id: "8", kind: "gift", amount: -5, day: "2026-11-26", updatedAt: 100 }],
+      moodLogs: [{ id: "2026-11-26", day: "2026-11-26", mood: 9, updatedAt: 100 }],
+      calorieLogs: [{ id: "5", day: "2026-11-26", name: "أرز", calories: 0, updatedAt: 100 }],
+    });
+    assert.equal(clean.habitLogs.length, 1);
+    assert.equal(clean.habitLogs[0].deleted, true);
+    assert.equal(clean.habitLogs[0].done, undefined);
+    assert.equal(clean.wirdLogs[0].pages, undefined);
+    assert.equal(clean.healthLogs[0].weight, undefined);
+    assert.equal(clean.healthLogs[0].sleepHours, undefined);
+    assert.equal(clean.transactions[0].kind, undefined);
+    assert.equal(clean.transactions[0].amount, undefined);
+    assert.equal(clean.moodLogs[0].mood, undefined);
+    assert.equal(clean.calorieLogs[0].calories, undefined);
+  });
+
+  await test("merge keeps life collections per-record last-write-wins", async () => {
+    const existing = { revision: 1, updatedAt: 10, data: {
+      wirdLogs: [{ id: "2026-11-25", day: "2026-11-25", pages: 2, surah: "البقرة", updatedAt: 100 }],
+      moodLogs: [{ id: "2026-11-25", day: "2026-11-25", mood: 3, updatedAt: 100 }],
+    } };
+    const merged = real.mergeSync(existing, {
+      wirdLogs: [{ id: "2026-11-25", day: "2026-11-25", pages: 4, surah: "البقرة", updatedAt: 200 }],
+      moodLogs: [{ id: "2026-11-25", day: "2026-11-25", deleted: true, updatedAt: 300 }],
+      habits: [{ id: "3", name: "قراءة", updatedAt: 150 }],
+    }, 400);
+    assert.equal(merged.revision, 2);
+    assert.equal(merged.data.wirdLogs[0].pages, 4);
+    assert.equal(merged.data.moodLogs[0].deleted, true);
+    assert.equal(merged.data.habits[0].name, "قراءة");
+    assert.equal(merged.data.tasks.length, 0);
+    assert.equal(merged.data.calorieLogs.length, 0);
   });
 
   await test("payload de-duplicates by id and caps the record count", async () => {
@@ -202,6 +275,10 @@ async function main() {
 
     const mine = await post(handler, { action: "pull", profileId: PID_A, passphrase: PASS_A });
     assert.equal(mine.body.data.tasks.length, 1);
+    assert.deepEqual(Object.keys(mine.body.data).sort(), [
+      "calorieLogs", "habitLogs", "habits", "healthLogs", "moodLogs",
+      "subjects", "taskTypes", "tasks", "transactions", "wirdLogs",
+    ]);
     const other = await post(handler, { action: "pull", profileId: PID_B, passphrase: PASS_B });
     assert.equal(other.body.data.tasks.length, 0);
     assert.equal(other.body.revision, 0);

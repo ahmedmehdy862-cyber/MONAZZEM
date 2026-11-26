@@ -32,6 +32,24 @@ module.exports = async function publishFromCi(req, res) {
     try { apk = new URL(apkUrl); } catch { return json(res, 400, { error: "invalid_apk_url" }); }
     if (!validHttps(apkUrl) || !apk.pathname.toLowerCase().endsWith(".apk")) return json(res, 400, { error: "invalid_apk_url" });
     if (!validHttps(storeUrl)) return json(res, 400, { error: "invalid_store_url" });
+    // Optional Windows MSI for the same release (windows-sync contract §9). Strict by design:
+    // https, no credentials, a .msi path, an x.y.z version and a positive size (max 2 GiB).
+    // Absent `windows` keeps the old Android-only behaviour byte-for-byte.
+    let windows = null;
+    if (body.windows !== undefined && body.windows !== null) {
+      const candidate = body.windows;
+      const downloadUrl = String(candidate?.downloadUrl || "").trim();
+      const version = String(candidate?.version || "").trim();
+      const sizeBytes = Number(candidate?.sizeBytes);
+      const validWindows =
+        candidate && typeof candidate === "object" && !Array.isArray(candidate) &&
+        validHttps(downloadUrl) &&
+        (() => { try { return new URL(downloadUrl).pathname.toLowerCase().endsWith(".msi"); } catch { return false; } })() &&
+        /^\d+\.\d+\.\d+$/.test(version) &&
+        Number.isSafeInteger(sizeBytes) && sizeBytes >= 1 && sizeBytes <= 2147483648;
+      if (!validWindows) return json(res, 400, { error: "invalid_windows_release" });
+      windows = { downloadUrl, version, sizeBytes };
+    }
     const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
     if (!host) return json(res, 400, { error: "release_host_missing" });
 
@@ -40,6 +58,7 @@ module.exports = async function publishFromCi(req, res) {
     const release = {
       packageName: "com.focusstudy.poc", versionCode, versionName, storeUrl, apkUrl, description,
       releasePageUrl: `https://${host}/#download`, releaseNotes,
+      ...(windows ? { windows } : {}),
     };
 
     const current = await readLatestRelease();
@@ -57,7 +76,10 @@ module.exports = async function publishFromCi(req, res) {
       contentType: "application/json; charset=utf-8", cacheControlMaxAge: 60
     });
     await recordRelease(published);
-    return json(res, 200, { ok: true, packageName: release.packageName, versionCode, versionName, storeUrl, apkUrl });
+    return json(res, 200, {
+      ok: true, packageName: release.packageName, versionCode, versionName, storeUrl, apkUrl,
+      ...(windows ? { windows } : {}),
+    });
   } catch (error) {
     console.error("CI release sync failed", error?.message || "unknown error");
     return json(res, 500, { error: "release_publish_failed" });

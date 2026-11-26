@@ -19,23 +19,44 @@ const PASSWORD_MAX = 200;
 const TASK_CATEGORIES = new Set(["study", "university", "personal", "work", "habits", "other"]);
 const TASK_STATUSES = new Set(["todo", "doing", "done", "postponed", "cancelled"]);
 const RECURRENCES = new Set(["none", "daily", "weekly", "monthly"]);
-const COLLECTIONS = ["tasks", "subjects", "taskTypes"];
+const MONEY_KINDS = new Set(["income", "expense"]);
+const DAY_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+// «حياتي» collections (windows-sync contract §2–§3): habits + habit_logs, wird_logs,
+// health_logs (+ calorie_logs), transactions (money), mood_logs. They ride the same
+// generic normalizeSyncPayload/mergeSync loop as tasks/subjects/taskTypes.
+const COLLECTIONS = [
+  "tasks", "subjects", "taskTypes",
+  "habits", "habitLogs", "wirdLogs", "healthLogs", "transactions", "moodLogs", "calorieLogs",
+];
 
 const cut = (value, max) => String(value ?? "").trim().slice(0, max);
 
 /**
- * Only these fields cross the wire. In particular `notes` (the private notebook and task notes),
- * install ids, device ids, push tokens, display names and secrets are never accepted here.
+ * Only these fields cross the wire. In particular `notes` (the private notebook, task notes and
+ * money-transaction notes), install ids, device ids, push tokens, display names and secrets are
+ * never accepted here. Shapes are fixed by the windows-sync contract (§3); a field not listed
+ * there is dropped silently, never stored.
  */
 function cleanRecord(item, kind) {
   if (!item || typeof item !== "object" || Array.isArray(item)) return null;
   const id = cut(item.id, 100);
+  // habitLogs use a derived id ("habitId:day"); accept a missing id there and derive it
+  // before the empty-id rejection below.
+  if (kind === "habitLogs" && !id) {
+    const habitId = cut(item.habitId, 100);
+    const day = cut(item.day, 10);
+    if (!habitId || !DAY_PATTERN.test(day)) return null;
+    return habitLogRecord(habitId, day, item, cleanTime(item.updatedAt));
+  }
   if (!id) return null;
   const record = { id, updatedAt: cleanTime(item.updatedAt) };
   // Stored subjects/types use `name` after their first normalization; accept both so re-reading
-  // and merging an existing snapshot cannot silently drop the label.
-  const title = cut(item.title ?? item.name, MAX_TITLE);
-  if (title) record[kind === "subjects" || kind === "taskTypes" ? "name" : "title"] = title;
+  // and merging an existing snapshot cannot silently drop the label. Only the three original
+  // collections carry a title/name; the «حياتي» kinds name their label field explicitly below.
+  if (kind === "tasks" || kind === "subjects" || kind === "taskTypes") {
+    const title = cut(item.title ?? item.name, MAX_TITLE);
+    if (title) record[kind === "subjects" || kind === "taskTypes" ? "name" : "title"] = title;
+  }
 
   if (kind === "tasks") {
     const minutes = Number(item.minutes);
@@ -56,7 +77,83 @@ function cleanRecord(item, kind) {
     }
   }
   if (kind === "taskTypes" && item.archived === true) record.archived = true;
+  if (kind === "habits") {
+    const name = cut(item.name ?? item.title, MAX_TITLE);
+    if (name) record.name = name;
+    const createdAt = Number(item.createdAt);
+    if (Number.isSafeInteger(createdAt) && createdAt >= 0) record.createdAt = createdAt;
+    if (item.archived === true) record.archived = true;
+  }
+  if (kind === "habitLogs") return habitLogRecord(cut(item.habitId, 100), cut(item.day, 10), item, record.updatedAt, id);
+  if (kind === "wirdLogs") {
+    const day = cut(item.day, 10);
+    if (!DAY_PATTERN.test(day)) return null;
+    record.day = day;
+    const pages = Number(item.pages);
+    if (Number.isInteger(pages) && pages >= 1 && pages <= 604) record.pages = pages;
+    const surah = cut(item.surah, 100);
+    if (surah) record.surah = surah;
+  }
+  if (kind === "healthLogs") {
+    const day = cut(item.day, 10);
+    if (!DAY_PATTERN.test(day)) return null;
+    record.day = day;
+    const weight = Number(item.weight);
+    if (Number.isFinite(weight) && weight >= 20 && weight <= 500) record.weight = weight;
+    const sleepHours = Number(item.sleepHours);
+    if (Number.isFinite(sleepHours) && sleepHours >= 0 && sleepHours <= 24) record.sleepHours = sleepHours;
+    const waterCups = Number(item.waterCups);
+    if (Number.isInteger(waterCups) && waterCups >= 0 && waterCups <= 100) record.waterCups = waterCups;
+    const exerciseMinutes = Number(item.exerciseMinutes);
+    if (Number.isInteger(exerciseMinutes) && exerciseMinutes >= 0 && exerciseMinutes <= 1440) record.exerciseMinutes = exerciseMinutes;
+  }
+  if (kind === "transactions") {
+    const txKind = cut(item.kind, 24).toLowerCase();
+    if (MONEY_KINDS.has(txKind)) record.kind = txKind;
+    const amount = Number(item.amount);
+    if (Number.isFinite(amount) && amount > 0 && amount <= 1e12) record.amount = amount;
+    const category = cut(item.category, 100);
+    if (category) record.category = category;
+    const day = cut(item.day, 10);
+    if (!DAY_PATTERN.test(day)) return null;
+    record.day = day;
+    const createdAt = Number(item.createdAt);
+    if (Number.isSafeInteger(createdAt) && createdAt >= 0) record.createdAt = createdAt;
+    // `note` is deliberately never copied: a money note stays on its device, like task notes.
+  }
+  if (kind === "moodLogs") {
+    const day = cut(item.day, 10);
+    if (!DAY_PATTERN.test(day)) return null;
+    record.day = day;
+    const mood = Number(item.mood);
+    if (Number.isInteger(mood) && mood >= 1 && mood <= 5) record.mood = mood;
+  }
+  if (kind === "calorieLogs") {
+    const day = cut(item.day, 10);
+    if (!DAY_PATTERN.test(day)) return null;
+    record.day = day;
+    const name = cut(item.name ?? item.title, 48);
+    if (name) record.name = name;
+    const calories = Number(item.calories);
+    if (Number.isInteger(calories) && calories >= 1 && calories <= 10000) record.calories = calories;
+    const createdAt = Number(item.createdAt);
+    if (Number.isSafeInteger(createdAt) && createdAt >= 0) record.createdAt = createdAt;
+  }
   if (item.deleted === true) record.deleted = true;
+  return record;
+}
+
+/**
+ * One habit-log row: its id is "habitId:day" and its only state is presence. Un-marking a day
+ * is a delete, so `done: false` normalizes to a tombstone here and is never stored as a field.
+ */
+function habitLogRecord(habitId, day, item, updatedAt, id) {
+  if (!habitId || !DAY_PATTERN.test(day)) return null;
+  const record = { id: id || `${habitId}:${day}`, updatedAt };
+  record.habitId = habitId;
+  record.day = day;
+  if (item && item.done === false) record.deleted = true;
+  else if (item && item.deleted === true) record.deleted = true;
   return record;
 }
 

@@ -1,4 +1,4 @@
-const { readLatestRelease } = require("../lib/release-store");
+const { readLatestRelease, normalizeWindows } = require("../lib/release-store");
 const { readHistory } = require("../lib/release-history");
 const { readCatalog } = require("../lib/app-catalog");
 
@@ -26,6 +26,17 @@ module.exports = async function latestRelease(request, response) {
   let apps = [];
   try { apps = await readCatalog({ latest: release, history }); }
   catch (error) { console.error("App catalog unavailable", error?.message || "unknown error"); }
+  // The Windows MSI rides the same release: expose it only when the stored release carries
+  // a well-formed `windows` object (windows-sync contract §8–§9). A malformed stored value is
+  // omitted, never forwarded to clients.
+  const windows = normalizeWindows(release.windows);
+  const validWindows = windows && (() => {
+    try {
+      const url = new URL(windows.downloadUrl);
+      return url.protocol === "https:" && !url.username && !url.password &&
+        url.pathname.toLowerCase().endsWith(".msi") && /^\d+\.\d+\.\d+$/.test(windows.version);
+    } catch { return false; }
+  })() ? windows : null;
   const storeUrl = String(release.storeUrl || process.env.FOCUS_STORE_URL || "https://qubixstore.vercel.app/focus-study-updates");
   const releasePageUrl = String(release.releasePageUrl || "").startsWith("https://") ? release.releasePageUrl : `${origin}${release.releasePageUrl || "/#download"}`;
   const feed = {
@@ -44,8 +55,10 @@ module.exports = async function latestRelease(request, response) {
       versionName: release.versionName,
       apkUrl: String(release.apkUrl || ""),
       storeUrl,
-      releaseNotes: String(release.releaseNotes || "")
+      releaseNotes: String(release.releaseNotes || ""),
+      ...(validWindows ? { windows: validWindows } : {})
     },
+    ...(validWindows ? { windows: validWindows } : {}),
     releasePageUrl,
     releaseNotes: release.releaseNotes,
     history,
