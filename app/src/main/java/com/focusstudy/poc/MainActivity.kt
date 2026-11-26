@@ -400,6 +400,12 @@ class MainActivity : ComponentActivity() {
 
         }
 
+        if (intent.getBooleanExtra(ExerciseReminderScheduler.EXTRA_OPEN_LIFE, false)) {
+
+            NotificationNavigation.requestLife()
+
+        }
+
         val taskId = intent.getLongExtra(ReminderEngine.EXTRA_TASK_ID, 0L)
 
         if (taskId > 0L) NotificationNavigation.requestTask(taskId)
@@ -425,6 +431,12 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra(SkillReminderScheduler.EXTRA_OPEN_SKILLS, false) == true) {
 
             NotificationNavigation.requestSkills()
+
+        }
+
+        if (intent?.getBooleanExtra(ExerciseReminderScheduler.EXTRA_OPEN_LIFE, false) == true) {
+
+            NotificationNavigation.requestLife()
 
         }
 
@@ -761,6 +773,10 @@ private fun AppRoot(
     val prayerTimesRequest = NotificationNavigation.openPrayerTimesRequest
     LaunchedEffect(prayerTimesRequest) {
         if (prayerTimesRequest > 0) openSecondary("prayer_times")
+    }
+    val lifeRequest = NotificationNavigation.openLifeRequest
+    LaunchedEffect(lifeRequest) {
+        if (lifeRequest > 0) openSecondary("life")
     }
     val requestedTaskId = NotificationNavigation.requestedTaskId
     LaunchedEffect(requestedTaskId) {

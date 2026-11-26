@@ -139,6 +139,12 @@
             android:name=".SkillReminderReceiver"
             android:exported="false" />
         <receiver
+            android:name=".ExerciseReminderReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".AssistantFollowUpReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".ReminderReceiver"
             android:exported="false" />
 
