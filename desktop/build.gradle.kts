@@ -34,7 +34,11 @@ plugins {
 val appBuildScript = rootProject.file("app/build.gradle.kts").readText()
 fun appVersion(pattern: String, property: String, fallback: String): String {
     val fromApp = Regex(pattern).find(appBuildScript)?.groupValues?.getOrNull(1)
-    return providers.gradleProperty(property).orElse(fromApp ?: fallback).get()
+    // مصدر الحقيقة هو app/build.gradle.kts دائمًا: خاصية Gradle
+    // (-PdesktopVersion=0.34.0) وصلت في run 45752350562 بقيمة "0" —
+    // providers.gradleProperty تقطع القيمة عند أول نقطة لسبب غير معروف —
+    // فلا يُعتمد عليها. الخاصية تبقى احتياطيًا فقط إن غاب الإصدار من الملف.
+    return fromApp ?: providers.gradleProperty(property).orNull ?: fallback
 }
 val desktopVersionName = appVersion(
     """versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"""",
@@ -53,7 +57,9 @@ println(
     "MONAZZEM-DIAG desktopVersionName=[$desktopVersionName] " +
         "desktopVersionCode=[$desktopVersionCode] projectVersion=[$version] " +
         "gradlePropPresent=${providers.gradleProperty("desktopVersion").isPresent} " +
-        "gradlePropValue=${providers.gradleProperty("desktopVersion").orNull}"
+        "gradlePropValue=${providers.gradleProperty("desktopVersion").orNull} " +
+        "startParams=${gradle.startParameter.projectProperties} " +
+        "findProperty=${project.findProperty("desktopVersion")}"
 )
 
 group = "com.focusstudy.poc"
