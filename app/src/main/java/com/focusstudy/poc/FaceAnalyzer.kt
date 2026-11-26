@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
-import com.google.mlkit.common.MlKitContext
+import com.google.mlkit.common.MlKit
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceContour
@@ -50,7 +50,7 @@ internal object FaceAnalyzer {
      * الكرتون القديم، فلا ينكسر اختيار الصورة ولا الإقلاع.
      */
     private fun ensureMlKitInitialized(context: Context) {
-        runCatching { MlKitContext.getInstance().initialize(context.applicationContext) }
+        runCatching { MlKit.initialize(context.applicationContext) }
     }
 
     /**
