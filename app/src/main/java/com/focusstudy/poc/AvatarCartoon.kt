@@ -13,6 +13,11 @@ import android.graphics.Shader
  * On-device, deterministic layered cartoon avatar. The photo is used only as a seed: a few sampled
  * colours decide the skin, hair and backdrop of a drawn character. Nothing is uploaded, no model
  * download or network call is involved, and the same photo always produces the same character.
+ *
+ * Since the ML Kit phase the photo can also drive the drawing itself: [FaceAnalyzer] detects the
+ * face once (bundled model, offline) and [stylizeWithProfile] draws the face geometry, smile,
+ * glasses and beard from that [FaceProfile]. When no face is found the seed path below is kept,
+ * so the old behaviour is the fallback, not a failure.
  */
 internal data class AvatarPalette(val skin: Int, val hair: Int, val background: Int, val accent: Int)
 
@@ -114,6 +119,21 @@ internal object CartoonAvatar {
         val variation = (seedFor(pixels) and 0x7).toInt()
         if (sample !== source) sample.recycle()
         return draw(palette, variation, style, depth)
+    }
+
+    /**
+     * يرسم الكرتون من ملف ملامح مكتشف (ML Kit): هندسة الوجه والعينان
+     * والابتسامة والنظارة واللحية من الصورة. الخلفية واللمسة من ألوان الصورة
+     * ككل كما قبل؛ البشرة والشعر من الملف المكتشف. يُستدعى خارج الخيط الرئيسي.
+     */
+    fun stylizeWithProfile(source: Bitmap, profile: FaceProfile, style: Int, depth: AvatarDepth = AvatarDepth.FLAT): Bitmap {
+        val samples = 32
+        val sample = Bitmap.createScaledBitmap(source, samples, samples, true)
+        val pixels = IntArray(samples * samples)
+        sample.getPixels(pixels, 0, samples, 0, 0, samples, samples)
+        val base = paletteFrom(pixels, style)
+        if (sample !== source) sample.recycle()
+        return drawProfiled(base.copy(skin = profile.skinColor, hair = profile.hairColor), profile, style, depth)
     }
 
     /** Draws one of the built-in preset characters from its fixed seed — no photo needed. */
@@ -275,6 +295,216 @@ internal object CartoonAvatar {
         }
         canvas.drawCircle(178f, 286f, 18f, cheekPaint)
         canvas.drawCircle(334f, 286f, 18f, cheekPaint)
+        return out
+    }
+
+    /**
+     * الرسم المعامَل من ملف ملامح: نفس الطبقات السابقة لكن هندسة الوجه من
+     * الصورة — نسبة الأبعاد، تباعد العينين وحجمهما وارتفاعهما، ميل الحاجبين،
+     * الابتسامة، ميل الرأس، طول الشعر، النظارة واللحية. الكتفان لا يميلان
+     * مع الرأس (الجسم ثابت، والرأس فقط يدور حول مركزه).
+     */
+    private fun drawProfiled(palette: AvatarPalette, profile: FaceProfile, style: Int, depth: AvatarDepth): Bitmap {
+        val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        if (depth == AvatarDepth.DEPTH) {
+            val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = RadialGradient(
+                    256f, 210f, 430f,
+                    intArrayOf(lighten(palette.background, 0.22f), palette.background),
+                    null, Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, SIZE.toFloat(), SIZE.toFloat(), glow)
+        } else {
+            canvas.drawColor(palette.background)
+        }
+
+        val wash = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.accent
+            alpha = if (style == 1) 34 else 48
+        }
+        canvas.drawCircle(96f, 96f, 150f, wash)
+        canvas.drawCircle(430f, 420f, 190f, wash)
+
+        val skinPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.skin }
+        val hairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.hair }
+        val shirtPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.accent }
+        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.style = Paint.Style.STROKE
+            color = palette.hair
+            strokeWidth = if (style == 3) 9f else 4f
+        }
+
+        if (depth == AvatarDepth.DEPTH) {
+            val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = darken(palette.background, 0.55f)
+                alpha = 70
+            }
+            canvas.drawOval(RectF(96f, 566f, 416f, 636f), shadow)
+        }
+
+        // Shoulders and neck (unrotated — only the head tilts).
+        canvas.drawOval(RectF(46f, 338f, 466f, 640f), shirtPaint)
+        canvas.drawRect(228f, 300f, 284f, 400f, skinPaint)
+
+        // Face geometry from the profile.
+        val faceW = (232f * (profile.faceAspect / FaceProfile.DEFAULT.faceAspect)).coerceIn(186f, 267f)
+        val faceH = 270f
+        val face = RectF(256f - faceW / 2f, 112f, 256f + faceW / 2f, 112f + faceH)
+        val faceCenterY = face.centerY()
+        val eyeSpacingPx = profile.eyeSpacing * faceW
+        val leftEyeX = 256f - eyeSpacingPx / 2f
+        val rightEyeX = 256f + eyeSpacingPx / 2f
+        val eyeY = 112f + profile.eyeHeight * faceH
+        val eyeR = (profile.eyeSize * faceW / 2f).coerceIn(7f, 16f)
+
+        canvas.save()
+        canvas.rotate(profile.headTilt, 256f, faceCenterY)
+        canvas.drawOval(face, skinPaint)
+        if (style == 3) canvas.drawOval(face, linePaint)
+        if (depth == AvatarDepth.DEPTH) {
+            val shading = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(
+                    0f, face.top, 0f, face.bottom,
+                    intArrayOf(0x55FFFFFF, 0x00000000, 0x66000000),
+                    floatArrayOf(0f, 0.55f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawOval(face, shading)
+            val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.style = Paint.Style.STROKE
+                color = darken(palette.hair, 0.15f)
+                alpha = 90
+                strokeWidth = 5f
+            }
+            canvas.drawOval(face, edge)
+            val gloss = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFFFFFFF.toInt()
+                alpha = 46
+            }
+            canvas.drawCircle(face.left + 58f, 188f, 20f, gloss)
+            canvas.drawCircle(face.left + 76f, 138f, 26f, gloss)
+        }
+
+        // Hair: the style silhouette, scaled to the face width, plus side locks
+        // for long hair.
+        val hairScale = faceW / 232f
+        canvas.save()
+        canvas.translate(256f, 0f)
+        canvas.scale(hairScale, 1f)
+        canvas.translate(-256f, 0f)
+        val hair = Path()
+        when (style) {
+            0 -> {
+                hair.moveTo(134f, 216f)
+                hair.quadTo(126f, 92f, 256f, 92f)
+                hair.quadTo(390f, 92f, 378f, 216f)
+                hair.quadTo(330f, 150f, 256f, 158f)
+                hair.quadTo(184f, 150f, 134f, 216f)
+            }
+            1 -> {
+                hair.moveTo(132f, 200f)
+                hair.quadTo(140f, 96f, 256f, 96f)
+                hair.quadTo(372f, 96f, 380f, 200f)
+                hair.lineTo(132f, 200f)
+                canvas.drawRect(112f, 182f, 400f, 214f, hairPaint)
+            }
+            2 -> {
+                hair.moveTo(136f, 220f)
+                hair.quadTo(120f, 110f, 210f, 104f)
+                hair.quadTo(250f, 150f, 288f, 100f)
+                hair.quadTo(392f, 112f, 376f, 220f)
+                hair.quadTo(320f, 152f, 256f, 162f)
+                hair.quadTo(190f, 150f, 136f, 220f)
+            }
+            else -> {
+                hair.moveTo(138f, 206f)
+                hair.quadTo(140f, 98f, 256f, 98f)
+                hair.quadTo(372f, 98f, 374f, 206f)
+                hair.quadTo(300f, 144f, 256f, 152f)
+                hair.quadTo(206f, 142f, 138f, 206f)
+            }
+        }
+        hair.close()
+        canvas.drawPath(hair, hairPaint)
+        if (style == 3) canvas.drawPath(hair, linePaint)
+        canvas.restore()
+        val hairLength = profile.effectiveHairLength()
+        if (hairLength > 0.55f) {
+            val lockBottom = 200f + hairLength * 130f
+            canvas.drawRoundRect(RectF(face.left - 6f, 198f, face.left + 30f, lockBottom), 16f, 16f, hairPaint)
+            canvas.drawRoundRect(RectF(face.right - 30f, 198f, face.right + 6f, lockBottom), 16f, 16f, hairPaint)
+        }
+
+        // Beard: a jaw band along the chin, drawn before the mouth so the lips stay visible.
+        if (profile.effectiveBeard()) {
+            val beardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = palette.hair
+                alpha = 235
+            }
+            val beard = Path().apply {
+                moveTo(face.left + 24f, 296f)
+                quadTo(256f, 384f, face.right - 24f, 296f)
+                lineTo(face.right - 24f, 336f)
+                quadTo(256f, 368f, face.left + 24f, 336f)
+                close()
+            }
+            canvas.drawPath(beard, beardPaint)
+        }
+
+        // Eyes and brows from the profile.
+        val eyePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = darken(palette.hair, 0.25f)
+            this.style = if (style == 3) Paint.Style.STROKE else Paint.Style.FILL
+            strokeWidth = 6f
+        }
+        canvas.drawCircle(leftEyeX, eyeY, eyeR, eyePaint)
+        canvas.drawCircle(rightEyeX, eyeY, eyeR, eyePaint)
+        val browPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.hair
+            this.style = Paint.Style.STROKE
+            strokeWidth = 7f
+            strokeCap = Paint.Cap.ROUND
+        }
+        val browDy = kotlin.math.tan(Math.toRadians(profile.browAngle.toDouble())).toFloat() * 20f
+        canvas.drawLine(leftEyeX - 20f, eyeY - 34f + browDy, leftEyeX + 20f, eyeY - 30f, browPaint)
+        canvas.drawLine(rightEyeX + 20f, eyeY - 34f + browDy, rightEyeX - 20f, eyeY - 30f, browPaint)
+
+        // Glasses: round frames around the eyes, a bridge, and temples to the face edge.
+        if (profile.effectiveGlasses()) {
+            val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = darken(palette.hair, 0.2f)
+                this.style = Paint.Style.STROKE
+                strokeWidth = 5f
+            }
+            val frameR = eyeR + 9f
+            canvas.drawCircle(leftEyeX, eyeY, frameR, framePaint)
+            canvas.drawCircle(rightEyeX, eyeY, frameR, framePaint)
+            canvas.drawLine(leftEyeX + frameR, eyeY, rightEyeX - frameR, eyeY, framePaint)
+            canvas.drawLine(leftEyeX - frameR, eyeY, face.left + 6f, eyeY - 4f, framePaint)
+            canvas.drawLine(rightEyeX + frameR, eyeY, face.right - 6f, eyeY - 4f, framePaint)
+        }
+
+        // Smile: the mouth arc deepens with the profile smile.
+        val smile = profile.effectiveSmile()
+        val mouthH = 30f + smile * 34f
+        val mouthPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.hair
+            this.style = Paint.Style.STROKE
+            strokeWidth = 6f
+            strokeCap = Paint.Cap.ROUND
+        }
+        canvas.drawArc(RectF(216f, 276f, 296f, 276f + mouthH), 8f, 164f, false, mouthPaint)
+
+        val cheekPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.accent
+            alpha = 70
+        }
+        canvas.drawCircle(face.left + 38f, 286f, 18f, cheekPaint)
+        canvas.drawCircle(face.right - 38f, 286f, 18f, cheekPaint)
+        canvas.restore()
         return out
     }
 
