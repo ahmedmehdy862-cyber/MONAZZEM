@@ -514,7 +514,8 @@ object SyncApply {
 
     /** خرائط محتوى السجلات المحلية (id + حقول، بلا updatedAt) للمقارنة. */
     private class LocalContentMaps(repo: DesktopRepository) {
-        private val maps: Map<String, Map<String, Map<String, Any>>> = buildMap {
+        private val maps: MutableMap<String, MutableMap<String, Map<String, Any>>> =
+            mutableMapOf<String, MutableMap<String, Map<String, Any>>>().apply {
             for (kind in SyncProtocol.COLLECTIONS) {
                 put(kind, LinkedHashMap<String, Map<String, Any>>())
             }

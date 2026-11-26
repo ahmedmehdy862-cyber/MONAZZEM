@@ -1,7 +1,7 @@
 package com.focusstudy.poc.desktop
 
 import app.cash.sqldelight.db.SqlDriver
-import app.cash.sqldelight.sqlite.driver.JdbcSqliteDriver
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.focusstudy.poc.desktop.db.MonazzemDatabase
 import java.io.File
 
