@@ -3,6 +3,7 @@ package com.focusstudy.poc.desktop
 import com.sun.net.httpserver.HttpServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -63,8 +64,10 @@ class SyncClientRegisterTest {
         val outcome = client().register(profileId, passphrase)
         assertTrue(outcome is SyncOutcome.Ok)
         assertEquals(2, requests.size)
-        // المحاولة الثانية تحمل كلمة المرور نفسها كحالية.
-        assertTrue(requests[0].contains("\"currentPassphrase\":null"))
+        // المحاولة الأولى بلا currentPassphrase أصلًا (kotlinx-serialization
+        // تحذف الحقول null من JSON افتراضيًا)؛ والثانية تحمل كلمة المرور
+        // نفسها كحالية.
+        assertFalse(requests[0].contains("currentPassphrase"))
         assertTrue(requests[1].contains("\"currentPassphrase\":\"$passphrase\""))
         assertTrue(requests[1].contains("\"action\":\"register\""))
     }
