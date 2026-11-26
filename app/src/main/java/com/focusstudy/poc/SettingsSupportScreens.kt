@@ -278,6 +278,7 @@ internal fun PersonalizationScreen(
     var avatarPath by rememberSaveable(current.avatarPath) { mutableStateOf(current.avatarPath) }
     var avatarSourcePath by rememberSaveable(current.avatarSourcePath) { mutableStateOf(current.avatarSourcePath) }
     var avatarStyle by rememberSaveable(current.avatarStyle) { mutableIntStateOf(current.avatarStyle) }
+    var avatarFaceProfileJson by rememberSaveable(current.avatarFaceProfileJson) { mutableStateOf(current.avatarFaceProfileJson) }
     var avatarMode by rememberSaveable(current.avatarMode) { mutableStateOf(current.avatarMode) }
     var companionStyle by rememberSaveable(current.companionStyle) { mutableStateOf(current.companionStyle) }
     var tone by rememberSaveable(current.tonePreference) { mutableStateOf(current.tonePreference) }
@@ -323,6 +324,8 @@ internal fun PersonalizationScreen(
                             avatarSourcePath = image.sourcePath
                             avatarStyle = image.style
                         },
+                        faceProfile = FaceProfile.fromJson(avatarFaceProfileJson),
+                        onFaceProfileChanged = { avatarFaceProfileJson = it?.toJson().orEmpty() },
                         mode = avatarMode,
                         onModeChanged = { avatarMode = it }
                     )
@@ -473,6 +476,7 @@ internal fun PersonalizationScreen(
                     avatarPath = avatarPath,
                     avatarSourcePath = avatarSourcePath,
                     avatarStyle = avatarStyle,
+                    avatarFaceProfileJson = avatarFaceProfileJson,
                     avatarMode = avatarMode,
                     companionStyle = companionStyle,
                     reduceMotion = reduceMotion,

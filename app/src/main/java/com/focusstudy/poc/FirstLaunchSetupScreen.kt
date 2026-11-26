@@ -58,6 +58,7 @@ internal fun FirstLaunchSetupScreen(
     var avatar by rememberSaveable { mutableStateOf(current.avatarPath) }
     var avatarSource by rememberSaveable { mutableStateOf(current.avatarSourcePath) }
     var avatarStyle by rememberSaveable { mutableIntStateOf(current.avatarStyle) }
+    var faceProfileJson by rememberSaveable { mutableStateOf(current.avatarFaceProfileJson) }
     var style by rememberSaveable { mutableStateOf(current.companionStyle) }
     var profile by rememberSaveable { mutableStateOf(current.profile) }
     var timezoneId by rememberSaveable { mutableStateOf(current.timezoneId.ifBlank { AppTimeZone.deviceId() }) }
@@ -120,7 +121,9 @@ internal fun FirstLaunchSetupScreen(
                                     avatar = image.path
                                     avatarSource = image.sourcePath
                                     avatarStyle = image.style
-                                }
+                                },
+                                faceProfile = FaceProfile.fromJson(faceProfileJson),
+                                onFaceProfileChanged = { faceProfileJson = it?.toJson().orEmpty() }
                             )
                             Spacer(Modifier.height(10.dp))
                             CompanionStylePicker(style, onSelect = { style = it })
@@ -182,6 +185,7 @@ internal fun FirstLaunchSetupScreen(
                                 avatarPath = avatar,
                                 avatarSourcePath = avatarSource,
                                 avatarStyle = avatarStyle,
+                                avatarFaceProfileJson = faceProfileJson,
                                 companionStyle = style,
                                 profile = profile,
                                 timezoneId = AppTimeZone.sanitize(timezoneId),

@@ -56,6 +56,8 @@ data class FocusPreferences(
     val avatarSourcePath: String = "",
     /** Selected on-device cartoon style (0–3). */
     val avatarStyle: Int = 0,
+    /** Face likeness profile (ML Kit, bundled model) as JSON; empty means no face was detected. */
+    val avatarFaceProfileJson: String = "",
     /** كيف تُعرض الصورة الشخصية: كرتوني / ثلاثي الأبعاد / الصورة كما هي. */
     val avatarMode: AvatarMode = AvatarMode.CARTOON,
     val companionStyle: Int = 0,
@@ -87,6 +89,10 @@ data class FocusPreferences(
     /** Ids of the sections kept in the bottom bar, in display order. */
     val bottomTabs: List<String> = BottomTab.DEFAULT
 ) {
+    /** Parsed face profile, or null when no face was detected yet. */
+    val avatarFaceProfile: FaceProfile?
+        get() = FaceProfile.fromJson(avatarFaceProfileJson)
+
     companion object {
         internal const val FILE = "focus_study_preferences"
 
@@ -126,6 +132,7 @@ data class FocusPreferences(
                 avatarPath = prefs.getString("avatar_path", "").orEmpty(),
                 avatarSourcePath = prefs.getString("avatar_source_path", "").orEmpty(),
                 avatarStyle = prefs.getInt("avatar_style", 0).coerceIn(0, CartoonAvatar.STYLES.lastIndex),
+                avatarFaceProfileJson = prefs.getString("avatar_face_profile_json", "").orEmpty(),
                 avatarMode = AvatarMode.from(prefs.getString("avatar_mode", "cartoon")),
                 companionStyle = prefs.getInt("companion_style", 0).coerceIn(0, 3),
                 generalNotificationsEnabled = prefs.getBoolean("general_notifications_enabled", prefs.getBoolean("daily_reminder_enabled", true)),
@@ -174,6 +181,7 @@ data class FocusPreferences(
                 .putString("avatar_path", value.avatarPath)
                 .putString("avatar_source_path", value.avatarSourcePath)
                 .putInt("avatar_style", value.avatarStyle.coerceIn(0, CartoonAvatar.STYLES.lastIndex))
+                .putString("avatar_face_profile_json", value.avatarFaceProfileJson)
                 .putString("avatar_mode", value.avatarMode.key)
                 .putInt("companion_style", value.companionStyle.coerceIn(0, 3))
                 .putBoolean("general_notifications_enabled", value.generalNotificationsEnabled)

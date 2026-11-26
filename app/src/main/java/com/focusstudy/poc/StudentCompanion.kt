@@ -30,11 +30,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,38 +84,58 @@ private const val AVATAR_SOURCE_NAME = "student_companion_original.jpg"
 internal fun avatarSource(avatar: AvatarImage): String =
     if (avatar.sourcePath.isNotBlank()) avatar.sourcePath else avatar.path
 
+/**
+ * نتيجة اختيار صورة: الكرتون المولَّد + ملف الملامح المكتشف (null إن لم يوجد
+ * وجه واضح — عندها يُرسم الكرتون القديم من بذرة اللون).
+ */
+internal data class AvatarPhotoResult(val image: AvatarImage, val profile: FaceProfile?) {
+    val faceDetected: Boolean get() = profile != null
+}
+
 /** Picks a photo, keeps the original in app-private storage and draws the cartoon offline. */
-internal fun copyAvatarToAppFiles(context: Context, uri: Uri, style: Int, depth: AvatarDepth = AvatarDepth.FLAT): AvatarImage? = runCatching {
-    val resolver = context.contentResolver
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-    var sample = 1
-    while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
-    val options = BitmapFactory.Options().apply { inSampleSize = sample }
-    val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
-        ?: return@runCatching null
-    val scale = minOf(1f, 512f / maxOf(bitmap.width, bitmap.height))
-    val prepared = if (scale < 1f) Bitmap.createScaledBitmap(
-        bitmap,
-        (bitmap.width * scale).toInt().coerceAtLeast(1),
-        (bitmap.height * scale).toInt().coerceAtLeast(1),
-        true
-    ) else bitmap
-    val source = File(context.filesDir, AVATAR_SOURCE_NAME)
-    source.outputStream().use { prepared.compress(Bitmap.CompressFormat.JPEG, 88, it) }
-    val cartoon = CartoonAvatar.stylize(prepared, style, depth)
-    val output = File(context.filesDir, CartoonAvatar.fileName(style))
-    output.outputStream().use { cartoon.compress(Bitmap.CompressFormat.PNG, 100, it) }
-    cartoon.recycle()
-    if (prepared !== bitmap) prepared.recycle()
-    bitmap.recycle()
-    AvatarImage(output.absolutePath, source.absolutePath, style)
-}.getOrNull()
+internal suspend fun copyAvatarToAppFiles(context: Context, uri: Uri, style: Int, depth: AvatarDepth = AvatarDepth.FLAT): AvatarPhotoResult? {
+    return try {
+        val resolver = context.contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        val decoded = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            ?: return null
+        // صور الكاميرا مخزنة غالبًا مائلة 90°؛ نصحح الاتجاه قبل الحفظ والكشف.
+        val orientation = FaceAnalyzer.orientationFromUri(context, uri)
+        val bitmap = FaceAnalyzer.normalizeOrientation(decoded, orientation) ?: return null
+        if (bitmap !== decoded) decoded.recycle()
+        val scale = minOf(1f, 512f / maxOf(bitmap.width, bitmap.height))
+        val prepared = if (scale < 1f) Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * scale).toInt().coerceAtLeast(1),
+            (bitmap.height * scale).toInt().coerceAtLeast(1),
+            true
+        ) else bitmap
+        val source = File(context.filesDir, AVATAR_SOURCE_NAME)
+        source.outputStream().use { prepared.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+        // كشف الوجه مرة واحدة (نموذج مضمّن، دون إنترنت)؛ عند غيابه نرجع للبذرة.
+        val profile = runCatching { FaceAnalyzer.analyze(prepared) }.getOrNull()
+        val cartoon = if (profile != null) CartoonAvatar.stylizeWithProfile(prepared, profile, style, depth)
+        else CartoonAvatar.stylize(prepared, style, depth)
+        val output = File(context.filesDir, CartoonAvatar.fileName(style))
+        output.outputStream().use { cartoon.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        cartoon.recycle()
+        if (prepared !== bitmap) prepared.recycle()
+        bitmap.recycle()
+        AvatarPhotoResult(AvatarImage(output.absolutePath, source.absolutePath, style), profile)
+    } catch (_: Exception) {
+        null
+    }
+}
 
 /** Regenerates from the saved original with another style; still fully on-device. */
-internal fun regenerateCartoon(context: Context, sourcePath: String, style: Int, depth: AvatarDepth = AvatarDepth.FLAT): String? = runCatching {
+internal fun regenerateCartoon(context: Context, sourcePath: String, style: Int, depth: AvatarDepth = AvatarDepth.FLAT, profile: FaceProfile? = null): String? = runCatching {
     val source = BitmapFactory.decodeFile(sourcePath) ?: return@runCatching null
-    val cartoon = CartoonAvatar.stylize(source, style, depth)
+    val cartoon = if (profile != null) CartoonAvatar.stylizeWithProfile(source, profile, style, depth)
+    else CartoonAvatar.stylize(source, style, depth)
     val output = File(context.filesDir, CartoonAvatar.fileName(style))
     output.outputStream().use { cartoon.compress(Bitmap.CompressFormat.PNG, 100, it) }
     cartoon.recycle()
@@ -122,10 +144,12 @@ internal fun regenerateCartoon(context: Context, sourcePath: String, style: Int,
 }.getOrNull()
 
 /**
- * مختار الصورة الشخصية (المرحلة 5): صورة المستخدم تتحول إلى كرتوني أو إلى
+ * مختار الصورة الشخصية (المرحلة 5 + كشف الوجه ML Kit): صورة المستخدم تتحول إلى كرتوني أو إلى
  * «ثلاثي الأبعاد» المنمّق (عمق وتظليل على الجهاز، لا نموذج حقيقي — انظر
  * [AvatarDepth])، أو تبقى الصورة الأصلية كما هي، أو تُستبدل بإحدى الشخصيات
  * التوضيحية المدمجة دون صورة. كل شيء على الجهاز، بلا رفع وبلا خدمة خارجية.
+ * عند اختيار صورة يُكتشف الوجه مرة واحدة بنموذج مضمّن (دون إنترنت) فتُطابق
+ * الشخصية ملامح المستخدم، مع منزلقات تصحيح يدوي عند الحاجة.
  */
 @Composable
 internal fun AvatarChooser(
@@ -135,21 +159,28 @@ internal fun AvatarChooser(
     onAvatarChanged: (AvatarImage) -> Unit,
     modifier: Modifier = Modifier,
     mode: AvatarMode = AvatarMode.CARTOON,
-    onModeChanged: (AvatarMode) -> Unit = {}
+    onModeChanged: (AvatarMode) -> Unit = {},
+    /** ملف ملامح الوجه المكتشف (ML Kit)؛ null تعني لا وجه مكتشف أو لا صورة بعد. */
+    faceProfile: FaceProfile? = null,
+    onFaceProfileChanged: (FaceProfile?) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectedStyle by rememberSaveable(avatar.style) { mutableIntStateOf(avatar.style) }
     var selectedPresetSeed by rememberSaveable(avatar.path) { mutableStateOf<Long?>(null) }
     var busy by remember { mutableStateOf(false) }
+    /** نتيجة آخر كشف وجه: true وُجد، false لم يوجد، null لم يُحلل بعد. */
+    var faceDetected by remember { mutableStateOf<Boolean?>(null) }
     val depth = if (mode == AvatarMode.DEPTH_3D) AvatarDepth.DEPTH else AvatarDepth.FLAT
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
             busy = true
-            val saved = withContext(Dispatchers.IO) { copyAvatarToAppFiles(context, uri, selectedStyle, depth) }
-            saved?.let {
+            val result = withContext(Dispatchers.IO) { copyAvatarToAppFiles(context, uri, selectedStyle, depth) }
+            result?.let {
                 selectedPresetSeed = null
-                onAvatarChanged(it)
+                faceDetected = it.profile != null
+                onFaceProfileChanged(it.profile)
+                onAvatarChanged(it.image)
             }
             busy = false
         }
@@ -159,10 +190,24 @@ internal fun AvatarChooser(
         if (source.isBlank()) return
         scope.launch {
             busy = true
-            val path = withContext(Dispatchers.IO) { regenerateCartoon(context, source, style, regenerateDepth) }
+            val path = withContext(Dispatchers.IO) { regenerateCartoon(context, source, style, regenerateDepth, faceProfile) }
             if (path != null) {
                 selectedPresetSeed = null
                 onAvatarChanged(AvatarImage(path, if (avatar.sourcePath.isNotBlank()) avatar.sourcePath else source, style))
+            }
+            busy = false
+        }
+    }
+    /** يطبّق تصحيحًا يدويًا على الملامح ويعيد رسم الكرتون بالملف المحدَّث. */
+    fun applyCorrection(updated: FaceProfile) {
+        val source = avatarSource(avatar)
+        if (source.isBlank()) return
+        onFaceProfileChanged(updated)
+        scope.launch {
+            busy = true
+            val path = withContext(Dispatchers.IO) { regenerateCartoon(context, source, selectedStyle, depth, updated) }
+            if (path != null) {
+                onAvatarChanged(AvatarImage(path, if (avatar.sourcePath.isNotBlank()) avatar.sourcePath else source, selectedStyle))
             }
             busy = false
         }
@@ -181,6 +226,8 @@ internal fun AvatarChooser(
             }
             if (path != null) {
                 selectedPresetSeed = preset.seed
+                faceDetected = null
+                onFaceProfileChanged(null)
                 onAvatarChanged(AvatarImage(path, "", selectedStyle))
             }
             busy = false
@@ -206,6 +253,11 @@ internal fun AvatarChooser(
                     }
                 }
                 if (busy) Text("جارٍ رسم الكارتون على الجهاز...", style = MaterialTheme.typography.labelSmall, color = FocusColors.TextSecondary)
+                if (faceDetected == false) Text(
+                    "لم نجد وجهًا واضحًا في الصورة — رسمنا الكرتون من ألوانها. جرّب صورة أوضح لوجهك، بإضاءة جيدة ووجه مواجه للكاميرا، للحصول على مطابقة أفضل.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FocusColors.TextSecondary
+                )
             }
         }
         Text("طريقة العرض", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
@@ -254,6 +306,44 @@ internal fun AvatarChooser(
                 )
             }
         }
+        if (faceProfile != null) {
+            Text("تصحيح الملامح", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+            Text(
+                "الكشف التلقائي تقريبي — عدّل ما لم يطابق صورتك، ويُعاد رسم الكرتون فورًا.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            CorrectionChips(
+                label = "النظارة",
+                options = listOf("تلقائي" to 0, "نظارة" to 1, "بدون" to -1),
+                selected = faceProfile.glassesOverride,
+                onSelect = { applyCorrection(faceProfile.copy(glassesOverride = it)) }
+            )
+            CorrectionChips(
+                label = "اللحية",
+                options = listOf("تلقائي" to 0, "لحية" to 1, "بدون" to -1),
+                selected = faceProfile.beardOverride,
+                onSelect = { applyCorrection(faceProfile.copy(beardOverride = it)) }
+            )
+            var smileValue by remember(faceProfile) { mutableFloatStateOf(faceProfile.effectiveSmile()) }
+            Text("الابتسامة", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+            Slider(
+                value = smileValue,
+                onValueChange = { smileValue = it },
+                onValueChangeFinished = { applyCorrection(faceProfile.copy(smileAdjust = smileValue - faceProfile.smile)) },
+                valueRange = 0f..1f,
+                enabled = !busy
+            )
+            var hairValue by remember(faceProfile) { mutableFloatStateOf(faceProfile.effectiveHairLength()) }
+            Text("طول الشعر", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
+            Slider(
+                value = hairValue,
+                onValueChange = { hairValue = it },
+                onValueChangeFinished = { applyCorrection(faceProfile.copy(hairLengthAdjust = hairValue - faceProfile.hairLength)) },
+                valueRange = 0f..1f,
+                enabled = !busy
+            )
+        }
         Text("شخصيات جاهزة بدون صورة", style = MaterialTheme.typography.labelMedium, color = FocusColors.TextSecondary)
         Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CartoonAvatar.PRESETS.forEach { preset ->
@@ -266,8 +356,32 @@ internal fun AvatarChooser(
                 )
             }
         }
-        TextButton(onClick = { onAvatarChanged(avatar.copy(path = "", sourcePath = "", style = selectedStyle)) }) {
+        TextButton(onClick = {
+            faceDetected = null
+            onFaceProfileChanged(null)
+            onAvatarChanged(avatar.copy(path = "", sourcePath = "", style = selectedStyle))
+        }) {
             Text("تخطي الصورة")
+        }
+    }
+}
+
+/** صف تصحيح ثلاثي الخيارات (تلقائي / نعم / لا) لملمح ثنائي كالنظارة أو اللحية. */
+@Composable
+private fun CorrectionChips(
+    label: String,
+    options: List<Pair<String, Int>>,
+    selected: Int,
+    onSelect: (Int) -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary, modifier = Modifier.width(52.dp))
+        options.forEach { (text, value) ->
+            FilterChip(
+                selected = selected == value,
+                onClick = { onSelect(value) },
+                label = { Text(text) }
+            )
         }
     }
 }
