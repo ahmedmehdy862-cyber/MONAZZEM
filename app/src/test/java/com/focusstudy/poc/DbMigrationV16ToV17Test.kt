@@ -34,8 +34,17 @@ class DbMigrationV16ToV17Test {
         SQLiteOpenHelper(context, DB_FILE, null, 16) {
 
         override fun onCreate(db: SQLiteDatabase) {
+            // IF NOT EXISTS: FocusApp.onCreate (via SessionEngine.init) opens
+            // the app StudyDb singleton on a background thread at Application
+            // creation, and with binary resources enabled that creation can
+            // still be mid-onCreate (same file, version still 0, `tasks`
+            // already created) when this seed helper opens it — plain
+            // CREATE TABLE then throws "table tasks already exists"
+            // (CI run 45803901033). The seed only needs the three v16 tables
+            // to exist with the v16 columns; a partially-created file is a
+            // valid starting point for them.
             db.execSQL(
-                "CREATE TABLE tasks(" +
+                "CREATE TABLE IF NOT EXISTS tasks(" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     "title TEXT NOT NULL, " +
                     "planned_minutes INTEGER NOT NULL, " +
@@ -45,14 +54,14 @@ class DbMigrationV16ToV17Test {
                     "created_at INTEGER NOT NULL)"
             )
             db.execSQL(
-                "CREATE TABLE wird_settings(" +
+                "CREATE TABLE IF NOT EXISTS wird_settings(" +
                     "id INTEGER PRIMARY KEY, " +
                     "surah TEXT NOT NULL DEFAULT 'البقرة', " +
                     "start_page INTEGER NOT NULL DEFAULT 2, " +
                     "pages_per_day INTEGER NOT NULL DEFAULT 2)"
             )
             db.execSQL(
-                "CREATE TABLE wird_logs(" +
+                "CREATE TABLE IF NOT EXISTS wird_logs(" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     "day TEXT NOT NULL, " +
                     "pages INTEGER NOT NULL, " +
@@ -68,7 +77,21 @@ class DbMigrationV16ToV17Test {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
+        // Quiesce the app singleton before seeding (CI run 45803901033):
+        // FocusApp.onCreate -> SessionEngine.init opens the StudyDb singleton
+        // on a background thread at Application creation, and with binary
+        // resources enabled (isIncludeAndroidResources) that creation can
+        // still be running when the seed helper opens the same file — its
+        // onCreate then throws "table tasks already exists". Opening the
+        // singleton here blocks on the same instance until its onCreate
+        // finishes, and closing it lets deleteDatabase really remove the
+        // file (an open connection makes the delete a silent no-op).
+        runCatching { StudyDb.get(context).writableDatabase.close() }
+        runCatching { StudyDb.get(context).close() }
         context.deleteDatabase(DB_FILE)
+        listOf("-wal", "-shm", "-journal").forEach { suffix ->
+            runCatching { context.getDatabasePath(DB_FILE + suffix).delete() }
+        }
     }
 
     @After
