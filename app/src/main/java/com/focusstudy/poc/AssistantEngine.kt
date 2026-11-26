@@ -654,7 +654,17 @@ internal object AssistantEngine {
             return "لسه ما أعرفش عنك كتير يا $user — من التطبيق نفسه بس أعرف إن وردك ${snapshot.wirdTotalPages} صفحة إجمالي، وعندك ${snapshot.openTasksToday} مهام مفتوحة النهاردة. عرّفني عليك من تبويب «عرّفني عليك»، أو قولي هدفك وروتينك هنا في المحادثة."
         }
         val parts = ArrayList<String>()
-        if (profileText.isNotBlank()) parts.add("عندك ملف تعريفي مستورد (${profileText.length} حرف)، وبستخدمه عشان أفهمك.")
+        if (profileText.isNotBlank()) {
+            // م10: الملف التعريفي يُستخدم دلاليًا — مقتطف من أول 3 أسطر غير فارغة
+            // (حتى 240 حرفًا) بدل الإشارة إلى طوله فقط.
+            val excerpt = profileText.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .take(3)
+                .joinToString("؛ ")
+            val shown = if (excerpt.length > 240) excerpt.take(237) + "…" else excerpt
+            parts.add("من ملفك التعريفي: $shown.")
+        }
         if (facts.isNotEmpty()) {
             val listed = facts.take(3).joinToString("؛ ") { it.text }
             parts.add("اتعلمت منك: $listed.")
