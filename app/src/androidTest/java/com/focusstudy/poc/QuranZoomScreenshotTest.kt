@@ -176,6 +176,29 @@ class QuranZoomScreenshotTest {
         log("hierarchy $name ok=$ok size=${if (file.exists()) file.length() else -1}")
     }
 
+    /**
+     * نقر عنوان صف بالتحديد: آخر عقدة TextView بالنص المطلوب — يستبعد
+     * حقل البحث (EditText يحمل نص الاستعلام نفسه) واقتراح لوحة
+     * المفاتيح (نافذة IME تأتي أخيرة في الهرمية). احتياطًا إن لم
+     * يُوجد يعود إلى clickText المعتاد.
+     */
+    private fun clickRowText(label: String) {
+        val clicked = runCatching {
+            val row = device.findObjects(By.text(label))
+                .lastOrNull { it.className == "android.widget.TextView" }
+            if (row != null) {
+                row.click()
+                true
+            } else {
+                false
+            }
+        }.getOrDefault(false)
+        if (!clicked) clickText(label) else {
+            composeRule.waitForIdle()
+            Thread.sleep(800)
+        }
+    }
+
     private fun clickText(label: String) {
         val clicked = runCatching {
             device.wait(Until.hasObject(By.text(label)), 10000)
@@ -229,6 +252,37 @@ class QuranZoomScreenshotTest {
         }.getOrDefault(false)
     }
 
+    /**
+     * البحث عن صف داخل الورقة عبر حقل «ابحث عن قسم» بدل التمرير:
+     * كتابة العنوان تصفّي الصفوف فيظهر الصف وحده، ثم إخفاء Gboard
+     * (يغطي الصف ويبتلع النقرة — درس القفز في 45819576948) قبل
+     * النقر عليه. التمرير اليدوي بالسحب غير موثوق مهما أُبطئ: السحبة
+     * تُطلق قصورًا (fling) يتجاوز الصف بين الفحوصات، وwaitForIdle لا
+     * ينتظر استقرار القصور — فشل الفاتح في 45815159007 و45821520315
+     * رغم وصول الورقة لأسفلها.
+     */
+    private fun searchSheetRow(title: String): Boolean {
+        return runCatching {
+            val field = device.findObject(By.text("ابحث عن قسم")) ?: return false
+            field.click()
+            Thread.sleep(500)
+            field.text = title
+            Thread.sleep(800)
+            hideKeyboard()
+            // التمييز بالصنف: حقل البحث نفسه يحمل النص بعد الكتابة لكن
+            // صنفه EditText، أما عنوان الصف فصنفه TextView (مثبت من
+            // تفريغات الهرمية). انتظار ظهور الصف نفسه لا مجرد النص.
+            val deadline = System.currentTimeMillis() + 5000
+            while (System.currentTimeMillis() < deadline) {
+                val rowVisible = device.findObjects(By.text(title))
+                    .any { it.className == "android.widget.TextView" }
+                if (rowVisible) return true
+                Thread.sleep(300)
+            }
+            false
+        }.getOrDefault(false)
+    }
+
     private fun openSection(title: String) {
         clickText("الأقسام")
         val sheetOpen = runCatching {
@@ -242,9 +296,15 @@ class QuranZoomScreenshotTest {
             dumpHierarchy("nav-debug-home-$currentTheme")
         }
         assertTrue("sections sheet [كل الأقسام] must open after tapping [الأقسام]", sheetOpen)
-        val visible = scrollSheetTo(title)
-        log("SHEET SCROLL [$title]: visible=$visible")
-        clickText(title)
+        val found = searchSheetRow(title)
+        log("SHEET SEARCH [$title]: found=$found")
+        if (!found) {
+            val visible = scrollSheetTo(title)
+            log("SHEET SCROLL [$title]: visible=$visible")
+            clickText(title)
+        } else {
+            clickRowText(title)
+        }
         val arrived = runCatching {
             device.wait(Until.hasObject(By.text("رجوع")), 10000)
         }.getOrDefault(false)
