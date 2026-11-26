@@ -27,6 +27,9 @@ data class SessionRow(
  *   v15 — life tracking: habits, habit_logs, wird_settings, wird_logs, health_logs,
  *        transactions, mood_logs.
  *   v16 — fitness: fitness_profile, calorie_logs, exercise_logs.
+ *   v17 — user_profile (single-row display name, migrated once from preferences)
+ *        and support_messages (local copy of every support/suggestion message with
+ *        its send status and the private copies of its attached images).
  *
  * Every upgrade is additive: no column or table is dropped, so existing data survives.
  */
@@ -78,6 +81,7 @@ class StudyDb private constructor(context: Context) :
         migrateToV14(db)
         migrateToV15(db)
         migrateToV16(db)
+        migrateToV17(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -96,6 +100,7 @@ class StudyDb private constructor(context: Context) :
         if (oldVersion < 14) migrateToV14(db)
         if (oldVersion < 15) migrateToV15(db)
         if (oldVersion < 16) migrateToV16(db)
+        if (oldVersion < 17) migrateToV17(db)
     }
 
     private fun migrateToV4(db: SQLiteDatabase) {
@@ -1656,6 +1661,42 @@ class StudyDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_exercise_logs_day ON exercise_logs(day)")
     }
 
+    /**
+     * v17 — additive only: two new tables, no DROP and no ALTER of any existing table.
+     * user_profile keeps the display name as a single row (id = 1); support_messages
+     * keeps a local copy of every support/suggestion message so none is lost when the
+     * network is down — it is saved as «sending» before the POST and its status is
+     * updated to «sent»/«failed» from the result. Attached images are copied to
+     * filesDir/support_images and only their paths are stored here, never BLOBs.
+     */
+    private fun migrateToV17(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS user_profile(
+              id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL DEFAULT '',
+              updated_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS support_messages(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              user_name TEXT NOT NULL DEFAULT '',
+              sender_name TEXT NOT NULL DEFAULT '',
+              contact TEXT NOT NULL DEFAULT '',
+              body TEXT NOT NULL DEFAULT '',
+              image_paths TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'sending',
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_support_messages_created ON support_messages(created_at)")
+    }
+
     // ------------------------------------------------------- life tracking
 
     fun habits(): List<Habit> = readableDatabase.rawQuery(
@@ -1980,9 +2021,90 @@ class StudyDb private constructor(context: Context) :
         }
     }
 
+    // ------------------------------------------------------- user profile (v17)
+
+    /** Display name from the single-row user_profile table, or null when never saved. */
+    fun userName(): String? = readableDatabase.rawQuery(
+        "SELECT name FROM user_profile WHERE id = 1 LIMIT 1", null
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0).orEmpty() else null }
+
+    /** Single-row upsert (id = 1); the preferences mirror in FocusPreferences stays in sync. */
+    fun saveUserName(name: String) {
+        val values = ContentValues().apply {
+            put("id", 1)
+            put("name", name.trim().take(60))
+            put("updated_at", System.currentTimeMillis())
+        }
+        writableDatabase.insertWithOnConflict(
+            "user_profile", null, values, SQLiteDatabase.CONFLICT_REPLACE
+        )
+    }
+
+    // ------------------------------------------------------- support messages (v17)
+
+    /**
+     * Saves a support/suggestion message BEFORE it is sent, with status «sending».
+     * [userName] is the current profile name, attached to every message; [senderName] is
+     * the name typed in the form (used as the POST payload's name); [body] is the raw
+     * text as typed (the [اقتراح] tag and the image-count note are rebuilt on retry);
+     * [imagePaths] are the private filesDir copies, not the picked content URIs.
+     */
+    fun saveSupportMessage(
+        kind: SupportMessageKind,
+        userName: String,
+        senderName: String,
+        contact: String,
+        body: String,
+        imagePaths: List<String>
+    ): Long {
+        require(body.isNotBlank()) { "نص الرسالة مطلوب" }
+        val values = ContentValues().apply {
+            put("kind", kind.key)
+            put("user_name", userName.trim().take(60))
+            put("sender_name", senderName.trim().take(60))
+            put("contact", contact.trim().take(120))
+            put("body", body.trim())
+            put("image_paths", joinSupportImagePaths(imagePaths))
+            put("status", SupportMessageStatus.SENDING.key)
+            put("created_at", System.currentTimeMillis())
+        }
+        return writableDatabase.insert("support_messages", null, values)
+    }
+
+    fun updateSupportMessageStatus(id: Long, status: SupportMessageStatus) {
+        val values = ContentValues().apply { put("status", status.key) }
+        writableDatabase.update("support_messages", values, "id = ?", arrayOf(id.toString()))
+    }
+
+    /** Saved messages, newest first; the support screen's «رسائلي» section reads this. */
+    fun supportMessages(limit: Int = 50): List<SupportMessage> =
+        readableDatabase.rawQuery(
+            "SELECT id, kind, user_name, sender_name, contact, body, image_paths, status, created_at " +
+                "FROM support_messages ORDER BY created_at DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        SupportMessage(
+                            id = cursor.getLong(0),
+                            kind = SupportMessageKind.from(cursor.getString(1)),
+                            userName = cursor.getString(2).orEmpty(),
+                            senderName = cursor.getString(3).orEmpty(),
+                            contact = cursor.getString(4).orEmpty(),
+                            body = cursor.getString(5).orEmpty(),
+                            imagePaths = splitSupportImagePaths(cursor.getString(6).orEmpty()),
+                            status = SupportMessageStatus.from(cursor.getString(7)),
+                            createdAt = cursor.getLong(8)
+                        )
+                    )
+                }
+            }
+        }
+
     companion object {
         private const val DB_NAME = "focus_study.db"
-        private const val DB_VERSION = 16
+        private const val DB_VERSION = 17
         private const val STATE_ACTIVE = "active"
         private const val SEPARATOR = "\n"
 

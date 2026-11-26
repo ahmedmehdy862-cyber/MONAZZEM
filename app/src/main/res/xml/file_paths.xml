@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Private copies of images attached to support messages (phase 7b). -->
+    <files-path name="support_images" path="support_images/" />
+</paths>

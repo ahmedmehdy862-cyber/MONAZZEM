@@ -1,6 +1,7 @@
 package com.focusstudy.poc
 
 import android.content.Context
+import android.content.SharedPreferences
 
 /** How the app picks its palette: follow the phone, or force one mode. */
 enum class ThemeMode(val key: String, val label: String) {
@@ -89,10 +90,26 @@ data class FocusPreferences(
     companion object {
         internal const val FILE = "focus_study_preferences"
 
+        /**
+         * Display name, phase 7b: the database (user_profile, v17) is the source of truth
+         * and the preference is a synchronous mirror/fallback. First run after the update,
+         * a name that only exists in preferences is copied into the database once, so
+         * nothing typed before the update is lost; afterwards the database row wins.
+         */
+        private fun loadStudentName(context: Context, prefs: SharedPreferences): String {
+            val prefsName = prefs.getString("student_name", "").orEmpty()
+            val dbName = runCatching { StudyDb.get(context).userName() }.getOrNull()
+            if (dbName == null && prefsName.isNotBlank()) {
+                runCatching { StudyDb.get(context).saveUserName(prefsName) }
+                return prefsName
+            }
+            return dbName ?: prefsName
+        }
+
         fun load(context: Context): FocusPreferences {
             val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             return FocusPreferences(
-                studentName = prefs.getString("student_name", "").orEmpty(),
+                studentName = loadStudentName(context, prefs),
                 dailyGoalMinutes = prefs.getInt("daily_goal_minutes", 120).coerceIn(30, 720),
                 defaultSessionMinutes = prefs.getInt("session_minutes", 25).coerceIn(5, 120),
                 accentIndex = prefs.getInt("accent_index", 0).coerceIn(0, FocusColors.accents.lastIndex),
@@ -179,6 +196,10 @@ data class FocusPreferences(
                 .putString(AppTimeZone.PREF_KEY, AppTimeZone.sanitize(value.timezoneId))
                 .putString("bottom_tabs", BottomTab.normalize(value.bottomTabs).joinToString(","))
                 .apply()
+            // The database is the source of truth for the name (user_profile, v17); the
+            // preference above stays as a synchronous mirror and a fallback. A failure
+            // here never blocks saving preferences, and the next save retries it.
+            runCatching { StudyDb.get(context).saveUserName(value.studentName) }
         }
     }
 }

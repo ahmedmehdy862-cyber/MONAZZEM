@@ -55,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -502,8 +503,18 @@ private fun buildSupportBody(raw: String, isSuggestion: Boolean, imageCount: Int
  * تُفتح ورقة مشاركة يختار منها المستخدم واتساب؛ فإن لم يكن مثبّتًا ظهرت التطبيقات
  * الأخرى التي تقبل مشاركة الصور.
  */
-private fun shareSupportImages(context: Context, imageUris: List<String>, message: String) {
-    val uris = imageUris.map { Uri.parse(it) }
+private fun shareSupportImages(
+    context: Context,
+    imageUris: List<String>,
+    message: String,
+    copiedPaths: List<String> = emptyList()
+) {
+    // Phase 7b: the WhatsApp button shares the private filesDir copies (via FileProvider),
+    // not the picked content URIs — those can lose their grant after the app closes, while
+    // the copies stay. Before sending (or when a copy failed) there is no copy yet, so the
+    // picked URIs are shared as before.
+    val uris = supportImageShareUris(context, copiedPaths)
+        .ifEmpty { imageUris.map { Uri.parse(it) } }
     if (uris.isEmpty()) return
     val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
         type = "image/*"
@@ -575,6 +586,8 @@ private fun SupportImageThumbnail(uri: Uri, onRemove: () -> Unit) {
  * مع سطر يذكر عدد الصور، وتُشارك الصور نفسها كمرفقات إلى واتساب الدعم بالزر أدناه.
  * المنتقي (PickMultipleVisualMedia) هو منتقي صور النظام ولا يحتاج إذن تخزين إضافيًا،
  * وCoil غير مضمّنة في المشروع فالمصغّرات تُفكّ عبر ContentResolver وBitmapFactory.
+ * ومنذ المرحلة 7ب تُنسخ الصور عند الإرسال إلى filesDir/support_images وتُحفَظ مساراتها
+ * في قاعدة البيانات (support_messages)، ويشارك زر واتساب هذه النسخ عبر FileProvider.
  */
 @Composable
 private fun SupportImageAttachments(
@@ -688,6 +701,19 @@ internal fun SupportScreen(onBack: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     var complaintResult by remember { mutableStateOf("") }
     var suggestionResult by remember { mutableStateOf("") }
+    // Phase 7b: local copies of sent messages («رسائلي») and the private filesDir copies
+    // of their images, which are what the WhatsApp button shares after sending.
+    var savedMessages by remember { mutableStateOf(emptyList<SupportMessage>()) }
+    var messagesRefresh by remember { mutableIntStateOf(0) }
+    var complaintCopiedPaths by remember { mutableStateOf(listOf<String>()) }
+    var suggestionCopiedPaths by remember { mutableStateOf(listOf<String>()) }
+    var retryingId by remember { mutableStateOf<Long?>(null) }
+
+    LaunchedEffect(messagesRefresh) {
+        savedMessages = withContext(Dispatchers.IO) {
+            runCatching { StudyDb.get(context).supportMessages() }.getOrDefault(emptyList())
+        }
+    }
 
     val complaintPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_SUPPORT_IMAGES)
@@ -704,13 +730,85 @@ internal fun SupportScreen(onBack: () -> Unit) {
         }
     }
 
-    fun submit(isSuggestion: Boolean, text: String, images: List<String>, onResult: (Boolean) -> Unit) {
+    /**
+     * Phase 7b send flow: the images are first copied to private storage, then the message
+     * is saved in the database as «sending» — before any network call — and only then sent
+     * through the unchanged TeamMessages.sendSupport channel. The status is updated from
+     * the result, so no message is lost when the network is down; failed ones can be
+     * retried from «رسائلي». [onCopied] receives the private copies for the WhatsApp button.
+     */
+    fun submit(
+        isSuggestion: Boolean,
+        text: String,
+        images: List<String>,
+        onResult: (Boolean) -> Unit,
+        onCopied: (List<String>) -> Unit
+    ) {
         if (text.trim().length < 5 || sending) return
         sending = true
         scope.launch {
+            val copied = withContext(Dispatchers.IO) {
+                runCatching { copySupportImages(context, images.map { Uri.parse(it) }) }
+                    .getOrDefault(emptyList())
+            }
+            onCopied(copied)
+            val messageId = withContext(Dispatchers.IO) {
+                runCatching {
+                    // The profile name is attached to every message; the name typed in the
+                    // form is kept separately as the POST payload's name.
+                    val profileName = FocusPreferences.load(context).studentName
+                    StudyDb.get(context).saveSupportMessage(
+                        kind = if (isSuggestion) SupportMessageKind.SUGGESTION else SupportMessageKind.COMPLAINT,
+                        userName = profileName.ifBlank { name.trim() },
+                        senderName = name.trim(),
+                        contact = contact.trim(),
+                        body = text.trim(),
+                        imagePaths = copied
+                    )
+                }.getOrNull()
+            }
             val ok = TeamMessages.sendSupport(context, name, contact, buildSupportBody(text, isSuggestion, images.size))
+            if (messageId != null) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        StudyDb.get(context).updateSupportMessageStatus(
+                            messageId,
+                            if (ok) SupportMessageStatus.SENT else SupportMessageStatus.FAILED
+                        )
+                    }
+                }
+                messagesRefresh++
+            }
             sending = false
             onResult(ok)
+        }
+    }
+
+    /** Re-sends a failed saved message through the same channel, rebuilding its payload. */
+    fun retry(message: SupportMessage) {
+        if (retryingId != null || sending) return
+        retryingId = message.id
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { StudyDb.get(context).updateSupportMessageStatus(message.id, SupportMessageStatus.SENDING) }
+            }
+            messagesRefresh++
+            val ok = TeamMessages.sendSupport(
+                context,
+                message.senderName.ifBlank { message.userName },
+                message.contact,
+                buildSupportBody(message.body, message.kind == SupportMessageKind.SUGGESTION, message.imagePaths.size)
+            )
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    StudyDb.get(context).updateSupportMessageStatus(
+                        message.id,
+                        if (ok) SupportMessageStatus.SENT else SupportMessageStatus.FAILED
+                    )
+                }
+            }
+            retryingId = null
+            messagesRefresh++
         }
     }
 
@@ -771,7 +869,7 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         sendLabel = "إرسال إلى فريق مُنظِّم",
                         result = complaintResult,
                         onSend = {
-                            submit(false, complaintBody, complaintImages) { ok ->
+                            submit(false, complaintBody, complaintImages, onCopied = { copied -> complaintCopiedPaths = copied }) { ok ->
                                 complaintResult = if (ok) {
                                     if (complaintImages.isNotEmpty()) "وصلت شكوتك إلى الفريق. الصور المرفقة لا تصل مع هذه الرسالة النصية — أرسلها عبر واتساب بالزر أدناه."
                                     else "وصلت رسالتك إلى الفريق، وسنرد عليك في أقرب وقت."
@@ -783,7 +881,8 @@ internal fun SupportScreen(onBack: () -> Unit) {
                             shareSupportImages(
                                 context, complaintImages,
                                 "مرحبًا، هذه صور مرفقة مع شكواي إلى فريق مُنظِّم عبر التطبيق." +
-                                    if (complaintBody.isNotBlank()) "\n" + complaintBody.trim().take(300) else ""
+                                    if (complaintBody.isNotBlank()) "\n" + complaintBody.trim().take(300) else "",
+                                copiedPaths = complaintCopiedPaths
                             )
                         }
                     )
@@ -799,7 +898,7 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         sendLabel = "إرسال الاقتراح",
                         result = suggestionResult,
                         onSend = {
-                            submit(true, suggestionBody, suggestionImages) { ok ->
+                            submit(true, suggestionBody, suggestionImages, onCopied = { copied -> suggestionCopiedPaths = copied }) { ok ->
                                 suggestionResult = if (ok) {
                                     if (suggestionImages.isNotEmpty()) "وصل اقتراحك إلى الفريق، شكرًا لك. الصور المرفقة لا تصل مع هذه الرسالة النصية — أرسلها عبر واتساب بالزر أدناه."
                                     else "وصل اقتراحك إلى الفريق، شكرًا لك."
@@ -811,7 +910,8 @@ internal fun SupportScreen(onBack: () -> Unit) {
                             shareSupportImages(
                                 context, suggestionImages,
                                 "مرحبًا، هذه صور مرفقة مع اقتراحي إلى فريق مُنظِّم عبر التطبيق." +
-                                    if (suggestionBody.isNotBlank()) "\n" + suggestionBody.trim().take(300) else ""
+                                    if (suggestionBody.isNotBlank()) "\n" + suggestionBody.trim().take(300) else "",
+                                copiedPaths = suggestionCopiedPaths
                             )
                         }
                     )
@@ -848,6 +948,82 @@ internal fun SupportScreen(onBack: () -> Unit) {
             else "قبل الإرسال: اشرح الفكرة باختصار، وما المشكلة التي تحلها إن وجدت.",
             color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall
         )
+        Spacer(Modifier.height(14.dp))
+        Card(
+            colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("رسائلي", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "رسائلك المحفوظة على جهازك مع حالة كل رسالة. الرسالة الفاشلة تبقى هنا ويمكن إعادة إرسالها.",
+                    color = FocusColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (savedMessages.isEmpty()) {
+                    Text("لا توجد رسائل محفوظة بعد.", color = FocusColors.TextSecondary)
+                } else {
+                    savedMessages.forEach { saved ->
+                        SupportSavedMessageRow(
+                            message = saved,
+                            retrying = retryingId == saved.id,
+                            onRetry = { retry(saved) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One saved support message in «رسائلي»: kind, send status, date, the profile name it
+ * was sent with, a short preview, and a retry button for failed sends.
+ */
+@Composable
+private fun SupportSavedMessageRow(message: SupportMessage, retrying: Boolean, onRetry: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(FocusColors.SurfaceHigh).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(message.kind.label, fontWeight = FontWeight.SemiBold, color = FocusColors.TextPrimary)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                message.status.label,
+                color = when (message.status) {
+                    SupportMessageStatus.SENT -> FocusColors.onTint(FocusColors.Green)
+                    SupportMessageStatus.FAILED -> FocusColors.onTint(FocusColors.Rose)
+                    SupportMessageStatus.SENDING -> FocusColors.onTint(FocusColors.Amber)
+                },
+                style = MaterialTheme.typography.labelMedium
+            )
+            Spacer(Modifier.weight(1f))
+            Text(formatSupportDate(message.createdAt), color = FocusColors.TextMuted, style = MaterialTheme.typography.labelSmall)
+        }
+        if (message.userName.isNotBlank()) {
+            Text("باسم: ${message.userName}", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            message.body,
+            color = FocusColors.TextPrimary,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (message.imagePaths.isNotEmpty()) {
+            val count = message.imagePaths.size
+            Text(
+                if (count == 1) "صورة واحدة مرفقة، محفوظة على جهازك" else "$count صور مرفقة، محفوظة على جهازك",
+                color = FocusColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        if (message.status == SupportMessageStatus.FAILED) {
+            TextButton(onClick = onRetry, enabled = !retrying) {
+                Text(if (retrying) "جارٍ إعادة الإرسال…" else "إعادة الإرسال")
+            }
+        }
     }
 }
 
