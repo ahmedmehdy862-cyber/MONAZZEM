@@ -17,7 +17,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 /** نتيجة تحليل صورة: وجه بملف ملامح، أو لا وجه واضح، أو الكاشف نفسه غير متاح. */
@@ -51,13 +50,10 @@ internal object FaceAnalyzer {
         .setMinFaceSize(0.15f)
         .build()
 
-    /** مهلة انتظار اكتمال تهيئة ML Kit قبل اعتبار الكاشف غير متاح. */
-    private const val INIT_TIMEOUT_MS = 10_000L
-
     /**
-     * مهلة تذكّر فشل التهيئة (M2): على جهاز تفشل فيه التهيئة دائمًا، انتظار
-     * 10 ثوانٍ كاملة عند كل اختيار صورة عقوبة متكررة بلا معنى. يُخزَّن وقت
-     * آخر فشل، وأي محاولة خلال هذه المهلة ترجع false فورًا دون انتظار؛
+     * مهلة تذكّر فشل التهيئة (M2): على جهاز تفشل فيه التهيئة دائمًا، إعادة
+     * المحاولة عند كل اختيار صورة عقوبة متكررة بلا معنى. يُخزَّن وقت
+     * آخر فشل، وأي محاولة خلال هذه المهلة ترجع false فورًا دون محاولة؛
      * بعد انقضائها تُعاد محاولة كاملة واحدة — فالفشل قد يكون عابرًا
      * (تحديث خدمات مثلًا)، لذا لا يُخزَّن للأبد.
      */
@@ -70,36 +66,27 @@ internal object FaceAnalyzer {
      * تهيئة ML Kit كسولة (hotfix 0.33.1): موفّر التهيئة التلقائي معطَّل في
      * الـ manifest، فالتهيئة تتم هنا فقط عند أول تحليل صورة.
      *
-     * السبب الجذري لخلل 0.34.0 «شخصية ثابتة مهما رُفعت أي صورة»: النسخة
-     * السابقة كانت تستدعي `MlKit.initialize()` وترمي مهمتها (Task) فورًا،
-     * ثم تنشئ الكاشف في السطر التالي — قبل أن تكتمل التهيئة غالبًا —
-     * فيرمي `getClient` أن السياق غير مهيأ، فيبتلعه الـ catch العام،
-     * فيرجع التحليل null دائمًا، فيُستخدم كرتون بذرة اللون ذو الهندسة
-     * الثابتة لكل صورة. الإصلاح: انتظار اكتمال مهمة التهيئة (بمهلة)
-     * قبل إنشاء الكاشف، وتخزين نجاحها فلا تُعاد في كل صورة.
+     * تصحيح مهم (2026-11-26، كشفه بناء CI): `MlKit.initialize()` ترجع
+     * `void` في mlkit-common — مثبَت من الكلاس نفسه — فلا `Task` تُنتظَر
+     * أصلًا؛ الافتراض السابق (مهمة تُرمى قبل اكتمالها) كان خاطئًا،
+     * والاستدعاء متزامن: النجاح = عودته دون رمي استثناء، والفشل = استثناء.
+     * يُخزَّن النجاح فلا تُعاد التهيئة في كل صورة، ويُخزَّن الفشل مع
+     * مهلة 5 دقائق (M2) فلا تُعاد المحاولة عند كل صورة على جهاز يفشل
+     * فيه دائمًا.
      */
     @Volatile
     private var mlKitReady = false
 
     private suspend fun ensureMlKitInitialized(context: Context): Boolean {
         if (mlKitReady) return true
-        // فشل حديث (أقل من 5 دقائق): لا انتظار جديد — ارجع فورًا.
+        // فشل حديث (أقل من 5 دقائق): لا محاولة جديدة — ارجع فورًا.
         if (mlKitFailedAtMillis != 0L &&
             SystemClock.uptimeMillis() - mlKitFailedAtMillis < INIT_FAILURE_COOLDOWN_MS
         ) return false
-        val initialized = try {
-            withTimeoutOrNull(INIT_TIMEOUT_MS) {
-                suspendCancellableCoroutine { cont ->
-                    MlKit.initialize(context.applicationContext)
-                        .addOnSuccessListener { if (cont.isActive) cont.resume(true) }
-                        .addOnFailureListener { if (cont.isActive) cont.resume(false) }
-                }
-            } ?: false
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-            false
-        }
+        // التهيئة متزامنة (void): النجاح = عودة الاستدعاء دون رمي.
+        val initialized = runCatching {
+            MlKit.initialize(context.applicationContext)
+        }.isSuccess
         if (initialized) {
             mlKitReady = true
             mlKitFailedAtMillis = 0L
