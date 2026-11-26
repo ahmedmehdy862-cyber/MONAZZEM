@@ -88,8 +88,13 @@ jobs:
               fh.write(notes)
               fh.write("\nFOCUS_NOTES_EOF\n")
 
+      # لا تمرّر الإصدار عبر -P: على windows-latest تُقطَّع القيمة المنقّطة
+      # في سطر الأوامر — ‎-PdesktopVersion=0.34.0 وصلت إلى Gradle خاصية
+      # "0" + مهمة ".34.0" (run 45753643685) — فيفشل التحليل قبل البناء.
+      # الإصدار يُقرأ من app/build.gradle.kts داخل desktop/build.gradle.kts
+      # (مصدر الحقيقة الواحد) ويطابق الوسم دائمًا؛ لا حاجة لأي -P هنا.
       - name: Build MSI
-        run: .\gradlew.bat --no-daemon :desktop:packageMsi -PdesktopVersion=${{ steps.metadata.outputs.version_name }} -PdesktopVersionCode=${{ steps.metadata.outputs.version_code }}
+        run: .\gradlew.bat --no-daemon :desktop:packageMsi
 
       - name: Prepare stable MSI asset name
         id: msi

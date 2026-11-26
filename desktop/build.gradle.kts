@@ -35,9 +35,10 @@ val appBuildScript = rootProject.file("app/build.gradle.kts").readText()
 fun appVersion(pattern: String, property: String, fallback: String): String {
     val fromApp = Regex(pattern).find(appBuildScript)?.groupValues?.getOrNull(1)
     // مصدر الحقيقة هو app/build.gradle.kts دائمًا: خاصية Gradle
-    // (-PdesktopVersion=0.34.0) وصلت في run 45752350562 بقيمة "0" —
-    // providers.gradleProperty تقطع القيمة عند أول نقطة لسبب غير معروف —
-    // فلا يُعتمد عليها. الخاصية تبقى احتياطيًا فقط إن غاب الإصدار من الملف.
+    // (-PdesktopVersion=0.34.0) وصلت في run 45752350562 بقيمة "0" لأن سطر
+    // أوامر ويندوز يقطّع القيمة المنقّطة (خاصية "0" + مهمة ".34.0" كما
+    // أثبت run 45753643685) — فلا يُعتمد على -P للإصدار أبدًا. الخاصية
+    // تبقى احتياطيًا فقط إن غاب الإصدار من الملف.
     return fromApp ?: providers.gradleProperty(property).orNull ?: fallback
 }
 val desktopVersionName = appVersion(
@@ -51,16 +52,6 @@ val desktopVersionCode = appVersion(
     "41"
 )
 
-// تشخيص مؤقت: اطبع القيم المحسوبة وقت التهيئة في سجل CI — يُزال بعد
-// معرفة سبب رفض MSI للإصدار '0' في run 45750739160 رغم -PdesktopVersion=0.34.0.
-println(
-    "MONAZZEM-DIAG desktopVersionName=[$desktopVersionName] " +
-        "desktopVersionCode=[$desktopVersionCode] projectVersion=[$version] " +
-        "gradlePropPresent=${providers.gradleProperty("desktopVersion").isPresent} " +
-        "gradlePropValue=${providers.gradleProperty("desktopVersion").orNull} " +
-        "startParams=${gradle.startParameter.projectProperties} " +
-        "findProperty=${project.findProperty("desktopVersion")}"
-)
 
 group = "com.focusstudy.poc"
 version = desktopVersionName
