@@ -51,8 +51,14 @@ class SyncLiveWindowsTest {
         assertTrue(repo.tasks().any { it.title == "مهمة ثانية — اختبار حي" })
         assertEquals(1, repo.subjects().size)
         assertTrue(repo.subjects().any { it.name == "فيزياء — اختبار حي" })
-        assertEquals(1, repo.taskTypes().size)
-        assertTrue(repo.taskTypes().any { it.name == "مراجعة — اختبار حي" })
+        // أندرويد يدفع كل أنواع المهام بما فيها 4 أنواع مدمجة يزرعها
+        // (ديني/دراسة/حياة/تطوّع — StudyDb.seedTaskTypes)؛ فبعد أول سحب
+        // تكون في قاعدة ويندوز 5 أنواع لا نوعًا واحدًا. هذا سلوك صحيح
+        // لا خلل مزامنة: المجموعة تشمل الأنواع كلها بالمعرّفات نفسها.
+        assertEquals(
+            "task types after first sync: ${repo.taskTypes().map { it.name }}",
+            setOf("ديني", "دراسة", "حياة", "تطوّع", "مراجعة — اختبار حي"),
+            repo.taskTypes().map { it.name }.toSet())
         assertEquals(1, repo.allHabits().size)
         assertTrue(repo.allHabits().any { it.name == SyncLiveWindowsSupport.HABIT_NAME })
         assertEquals(1, repo.allHabitLogs().size)
