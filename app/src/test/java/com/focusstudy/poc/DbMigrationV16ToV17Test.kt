@@ -95,6 +95,9 @@ class DbMigrationV16ToV17Test {
 
         // 2) Opening through StudyDb runs onUpgrade(16, 17) → migrateToV17.
         val db = StudyDb.get(context)
+        // get() only constructs the helper; the upgrade runs on first open,
+        // so force it before asserting the new tables exist.
+        db.writableDatabase.close()
 
         // 3) The v17 tables exist and the v16 rows survived.
         assertTrue(hasTable("user_profile"))

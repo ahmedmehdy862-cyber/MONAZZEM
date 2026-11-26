@@ -268,8 +268,8 @@ class NotificationPolicyTest {
         val isha = now + 10 * minute
         assertEquals(now, NotificationPolicy.adjustOutsidePrayerWindows(now, listOf(isha + 2 * hour)))
         assertEquals(
-            now + 16 * minute,
-            NotificationPolicy.adjustOutsidePrayerWindows(now + 16 * minute, listOf(isha))
+            now + 26 * minute,
+            NotificationPolicy.adjustOutsidePrayerWindows(now + 26 * minute, listOf(isha))
         )
     }
 
