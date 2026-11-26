@@ -1192,7 +1192,7 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
 
     // يستعلم عن التنزيل كل ثانية حتى ينتهي؛ يبقى DownloadManager نفسه يعمل
     // حتى لو غادر المستخدم الشاشة، وتُستعاد الحالة عند العودة (انظر أدناه).
-    fun pollDownload(downloadId: Long) {
+    fun pollDownload(downloadId: Long, release: AppRelease) {
         scope.launch {
             while (true) {
                 delay(1000)
@@ -1213,6 +1213,8 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
                         downloadState = DirectDownloadState.Downloading(progress)
                     }
                     else -> {
+                        // م2: تنزيل فاشل لا يترك ملفًا جزئيًا يُظن جاهزًا لاحقًا.
+                        withContext(Dispatchers.IO) { DirectUpdateDownloader.deleteApk(context, release) }
                         downloadState = DirectDownloadState.Failed(
                             "تعذّر تنزيل التحديث. تحقق من الاتصال وحاول مجددًا، أو حمّله من المتجر."
                         )
@@ -1234,7 +1236,7 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
                     "تعذّر بدء التنزيل. تحقق من الاتصال وحاول مجددًا، أو حمّله من المتجر."
                 )
             } else {
-                pollDownload(downloadId)
+                pollDownload(downloadId, release)
             }
         }
     }
@@ -1291,7 +1293,7 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
                     query.downloadedBytes.toFloat() / query.totalBytes.toFloat()
                 } else -1f
                 downloadState = DirectDownloadState.Downloading(progress)
-                pollDownload(lastId)
+                pollDownload(lastId, release)
             }
         }
     }

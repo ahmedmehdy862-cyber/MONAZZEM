@@ -65,10 +65,38 @@ internal object DirectUpdateDownloader {
     fun apkFile(context: Context, release: AppRelease): File =
         File(updatesDir(context), apkFileName(release))
 
-    /** true إذا كان ملف APK لهذا الإصدار منزَّلًا كاملًا من قبل (فلا يُعاد تنزيله). */
-    fun hasDownloadedApk(context: Context, release: AppRelease): Boolean =
-        runCatching { apkFile(context, release) }.getOrNull()
-            ?.let { it.isFile && it.length() > 0L } == true
+    /**
+     * true إذا كان ملف APK لهذا الإصدار منزَّلًا كاملًا من قبل (فلا يُعاد تنزيله).
+     *
+     * الطول وحده لا يكفي (م2): ملف جزئي أو فاشل له طول أكبر من صفر. لا يُعتبر
+     * الملف جاهزًا إلا بحالة STATUS_SUCCESSFUL لآخر تنزيل بدأه التطبيق لهذا
+     * الإصدار، مع مطابقة طول الملف للحجم الكلي حين يعرفه DownloadManager.
+     * تنزيل منتهٍ بحالة نهائية غير ناجحة يُحذف ملفه حتى لا يُعرض زر تثبيت
+     * وهمي. وبلا سجل تنزيل مطابق (سجل مُسح أو ملف من مصدر آخر) لا يُعتبر
+     * الملف جاهزًا أبدًا — إعادة التنزيل آمنة ورخيصة.
+     */
+    fun hasDownloadedApk(context: Context, release: AppRelease): Boolean {
+        val file = runCatching { apkFile(context, release) }.getOrNull() ?: return false
+        val lastId = lastDownloadId(context)
+        if (lastId == 0L || lastDownloadVersionCode(context) != release.versionCode) return false
+        val query = queryDownload(context, lastId)
+        if (query.status != DownloadManager.STATUS_SUCCESSFUL) {
+            // الحالة النهائية غير الناجحة (ومنها غياب السجل) تُحذف ملفها.
+            if (query.status == DownloadManager.STATUS_FAILED) file.delete()
+            return false
+        }
+        if (!file.isFile || file.length() <= 0L) return false
+        if (query.totalBytes > 0 && file.length() != query.totalBytes) {
+            file.delete()
+            return false
+        }
+        return true
+    }
+
+    /** يحذف ملف APK لإصدار معين (يُستدعى عند فشل تنزيله حتى لا يبقى ملف جزئي). */
+    fun deleteApk(context: Context, release: AppRelease) {
+        runCatching { apkFile(context, release) }.getOrNull()?.delete()
+    }
 
     /** يحذف ملفات APK لإصدارات أخرى من مجلد التحديثات؛ ملف الإصدار الحالي يبقى. */
     private fun clearStaleApks(context: Context, keep: File?) {
@@ -138,6 +166,9 @@ internal object DirectUpdateDownloader {
      * يعيد false عند غياب الملف أو غياب تطبيق يعالج نية التثبيت.
      */
     fun installDownloadedApk(context: Context, release: AppRelease): Boolean {
+        // فحص أخير قبل فتح المثبّت: زر «تثبيت التحديث» قد يكون قديمًا (حالة
+        // ReadyToInstall من جلسة سابقة) فلا يُفتح المثبّت على ملف ناقص أو فاشل.
+        if (!hasDownloadedApk(context, release)) return false
         val file = runCatching { apkFile(context, release) }.getOrNull()
             ?.takeIf { it.isFile && it.length() > 0L } ?: return false
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
