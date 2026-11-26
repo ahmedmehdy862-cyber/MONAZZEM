@@ -69,7 +69,16 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // م7: تصغير R8 مفعّل — الزيادة ~10MB (PDFBox + Compose + الأيقونات)
+            // لا تُقبل بصمت. قواعد الحفظ في proguard-rules.pro (PDFBox/adhan/
+            // الخدمات). بناء سير عمل الإصدار هو البوابة الحقيقية: إن فشل على
+            // قاعدة keep فأصلح القاعدة ولا تُعطّل R8.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             if (hasReleaseKey) {
                 signingConfig = signingConfigs.getByName("release")
             }
