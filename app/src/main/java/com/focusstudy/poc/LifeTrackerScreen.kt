@@ -1567,25 +1567,29 @@ private fun FitnessBlock(
                 )
                 // النقر على اسم التمرين يفتح شاشة شرحه (0.34.0)؛
                 // مربع التحديد وحده يبدّل الإتمام دون فتح الشاشة.
-                Column(
+                // السهم داخل المنطقة القابلة للنقر (L5) لا خارجها.
+                Row(
                     Modifier.weight(1f)
                         .clickable { onOpenExercise(exercise) }
-                        .padding(vertical = 4.dp)
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        exercise.name,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = FocusColors.TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "${exercise.sets} مجموعات × ${exercise.reps} · راحة ${exercise.restSec} ث",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = FocusColors.TextSecondary
-                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            exercise.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = FocusColors.TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${exercise.sets} مجموعات × ${exercise.reps} · راحة ${exercise.restSec} ث",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FocusColors.TextSecondary
+                        )
+                    }
+                    Text("‹", style = MaterialTheme.typography.titleMedium, color = FocusColors.TextMuted)
                 }
-                Text("‹", style = MaterialTheme.typography.titleMedium, color = FocusColors.TextMuted)
             }
         }
         HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.6f))
