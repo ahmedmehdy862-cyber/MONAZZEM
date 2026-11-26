@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
+import com.google.mlkit.common.MlKitContext
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceContour
@@ -24,6 +25,12 @@ import kotlin.coroutines.resume
  * تمامًا وبلا اعتماد على Play Services، وبلا رفع أي صورة. يُستدعى مرة واحدة
  * عند اختيار الصورة؛ عند غياب الوجه يرجع null فيُستخدم الكرتون القديم
  * (بذرة اللون) مع رسالة ودية، فلا شيء ينكسر.
+ *
+ * التهيئة كسولة هنا (hotfix 0.33.1): موفّر التهيئة التلقائي
+ * (MlKitInitProvider) معطَّل في الـ manifest لأنه كان يعمل قبل
+ * Application.onCreate ويُسقط التطبيق عند الإقلاع على بعض الأجهزة دون أي
+ * واجهة — فلا شيء من ML Kit يعمل عند بدء التطبيق، والتهيئة تتم فقط عند
+ * أول تحليل صورة فعلًا.
  */
 internal object FaceAnalyzer {
 
@@ -36,43 +43,63 @@ internal object FaceAnalyzer {
         .build()
 
     /**
+     * تهيئة ML Kit كسولة (hotfix 0.33.1): موفّر التهيئة التلقائي معطَّل في
+     * الـ manifest، فالتهيئة تتم هنا فقط عند أول تحليل صورة. الاستدعاء
+     * المكرر بعد تهيئة سابقة يُبتلع خطؤه (فهو مهيأ أصلًا)؛ وإن فشلت التهيئة
+     * لسبب حقيقي فإنشاء الكاشف سيفشل بعدها ويرجع analyze null — فيُستخدم
+     * الكرتون القديم، فلا ينكسر اختيار الصورة ولا الإقلاع.
+     */
+    private fun ensureMlKitInitialized(context: Context) {
+        runCatching { MlKitContext.getInstance().initialize(context.applicationContext) }
+    }
+
+    /**
      * يحلل صورة ويرجع ملف ملامح أكبر وجه فيها، أو null إن لم يوجد وجه واضح
      * أو فشل الكشف. لا تُستدعى من الخيط الرئيسي إلا عبر coroutine (الكشف
      * غير متزامن داخلًا)؛ وإن أُلغيت الـ coroutine يُغلق الكاشف فورًا.
      * مستمع ML Kit يستلم الوجه فقط؛ وحساب الملف (قراءة بكسلات الصورة
      * وعيّنتها) يجري على Dispatchers.Default بعد الاستئناف، لا على مستمع
      * الكشف (الذي يعمل على الخيط الرئيسي افتراضيًا).
+     * لا ترمي أبدًا (عدا إلغاء الـ coroutine): أي فشل في ML Kit — غياب
+     * النموذج، فشل تحميل المكتبة الأصلية، تهيئة غير مكتملة — يرجع null.
      */
-    suspend fun analyze(bitmap: Bitmap): FaceProfile? {
-        val detectionBitmap = downscaleForDetection(bitmap)
-        try {
-            val face = suspendCancellableCoroutine<Face?> { cont ->
-                val detector = FaceDetection.getClient(detectorOptions())
-                // إغلاق مرة واحدة فقط: قد يتسابق الإلغاء مع نجاح/فشل الكشف.
-                val closed = AtomicBoolean(false)
-                fun closeOnce() {
-                    if (closed.compareAndSet(false, true)) detector.close()
+    suspend fun analyze(context: Context, bitmap: Bitmap): FaceProfile? {
+        ensureMlKitInitialized(context)
+        return try {
+            val detectionBitmap = downscaleForDetection(bitmap)
+            try {
+                val face = suspendCancellableCoroutine<Face?> { cont ->
+                    val detector = FaceDetection.getClient(detectorOptions())
+                    // إغلاق مرة واحدة فقط: قد يتسابق الإلغاء مع نجاح/فشل الكشف.
+                    val closed = AtomicBoolean(false)
+                    fun closeOnce() {
+                        if (closed.compareAndSet(false, true)) detector.close()
+                    }
+                    cont.invokeOnCancellation { closeOnce() }
+                    val image = InputImage.fromBitmap(detectionBitmap, 0)
+                    detector.process(image)
+                        .addOnSuccessListener { faces ->
+                            val largest = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
+                            closeOnce()
+                            if (cont.isActive) cont.resume(largest)
+                        }
+                        .addOnFailureListener {
+                            closeOnce()
+                            if (cont.isActive) cont.resume(null)
+                        }
+                } ?: return null
+                withContext(Dispatchers.Default) {
+                    runCatching { profileFromFace(face, detectionBitmap) }
+                        .onFailure { if (it is CancellationException) throw it }
+                        .getOrNull()
                 }
-                cont.invokeOnCancellation { closeOnce() }
-                val image = InputImage.fromBitmap(detectionBitmap, 0)
-                detector.process(image)
-                    .addOnSuccessListener { faces ->
-                        val largest = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
-                        closeOnce()
-                        if (cont.isActive) cont.resume(largest)
-                    }
-                    .addOnFailureListener {
-                        closeOnce()
-                        if (cont.isActive) cont.resume(null)
-                    }
-            } ?: return null
-            return withContext(Dispatchers.Default) {
-                runCatching { profileFromFace(face, detectionBitmap) }
-                    .onFailure { if (it is CancellationException) throw it }
-                    .getOrNull()
+            } finally {
+                if (detectionBitmap !== bitmap) detectionBitmap.recycle()
             }
-        } finally {
-            if (detectionBitmap !== bitmap) detectionBitmap.recycle()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
         }
     }
 

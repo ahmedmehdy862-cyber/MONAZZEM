@@ -23,6 +23,10 @@
 # the detector factory and the vision-face internals R8 might otherwise strip.
 -keep class com.google.mlkit.vision.face.** { *; }
 -keep class com.google.mlkit.vision.common.** { *; }
+# Hotfix 0.33.1: the ML Kit init path discovers components by reflection
+# (ComponentDiscovery loads the registrars by class name), so the common
+# internals must keep their names too — not just vision.*.
+-keep class com.google.mlkit.common.** { *; }
 -dontwarn com.google.mlkit.**
 
 # --- Adhan (prayer-time calculations) ---

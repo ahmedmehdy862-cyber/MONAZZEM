@@ -130,7 +130,7 @@ internal suspend fun copyAvatarToAppFiles(context: Context, uri: Uri, style: Int
         val source = File(context.filesDir, AVATAR_SOURCE_NAME)
         source.outputStream().use { prepared.compress(Bitmap.CompressFormat.JPEG, 88, it) }
         // كشف الوجه مرة واحدة (نموذج مضمّن، دون إنترنت)؛ عند غيابه نرجع للبذرة.
-        val profile = runCatching { FaceAnalyzer.analyze(prepared) }.getOrNull()
+        val profile = runCatching { FaceAnalyzer.analyze(context, prepared) }.getOrNull()
         val cartoon = if (profile != null) CartoonAvatar.stylizeWithProfile(prepared, profile, style, depth)
         else CartoonAvatar.stylize(prepared, style, depth)
         toRecycle += cartoon
