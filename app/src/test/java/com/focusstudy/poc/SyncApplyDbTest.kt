@@ -30,9 +30,28 @@ class SyncApplyDbTest {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
+        // Close any cached helper first: DbMigrationV16ToV17Test seeds a partial v16
+        // database in this same shared file, and a stale open connection can keep
+        // that file alive past deleteDatabase (CI run 45756885728: a v16 seed opened
+        // through StudyDb upgrades to v17 without the v15 life tables, so
+        // setHabitDone threw "no such table: habit_logs").
+        runCatching { StudyDb.get(context).close() }
         context.deleteDatabase(DB_FILE)
         db = StudyDb.get(context)
+        // If a stale partial-schema file survived the delete, recreate it now.
+        if (!hasTable("habit_logs")) {
+            runCatching { db.close() }
+            context.deleteDatabase(DB_FILE)
+            db = StudyDb.get(context)
+            check(hasTable("habit_logs")) { "fresh test database is missing habit_logs" }
+        }
     }
+
+    private fun hasTable(name: String): Boolean =
+        db.readableDatabase.rawQuery(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            arrayOf(name)
+        ).use { it.moveToFirst() }
 
     @After
     fun tearDown() {

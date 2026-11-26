@@ -73,6 +73,13 @@ class DbMigrationV16ToV17Test {
 
     @After
     fun tearDown() {
+        // Close the StudyDb helper opened in the test first: its readable
+        // connection stays open otherwise, and the seed file can survive
+        // deleteDatabase into the next test class (it shares this same file
+        // name) — a v16 seed opened through StudyDb upgrades to v17 without
+        // the v15 life tables (CI run 45756885728: "no such table: habit_logs"
+        // in SyncApplyDbTest).
+        runCatching { StudyDb.get(context).close() }
         runCatching { context.deleteDatabase(DB_FILE) }
     }
 
