@@ -825,7 +825,7 @@ private fun AssistantProfileTab(
                             Text(
                                 text = fact.category,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = FocusColors.Blue
+                                color = FocusColors.onTint(FocusColors.Blue)
                             )
                             Text(
                                 text = fact.text,

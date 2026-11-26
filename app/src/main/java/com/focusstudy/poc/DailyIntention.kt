@@ -99,7 +99,7 @@ internal fun DailyIntentionCard(openToday: Int, doneToday: Int) {
     ) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("نية اليوم", style = MaterialTheme.typography.labelMedium, color = FocusColors.Blue)
+                Text("نية اليوم", style = MaterialTheme.typography.labelMedium, color = FocusColors.onTint(FocusColors.Blue))
                 Spacer(Modifier.weight(1f))
                 if (streak > 1) {
                     Text("$streak أيام متتالية", style = MaterialTheme.typography.labelSmall, color = FocusColors.TextMuted)

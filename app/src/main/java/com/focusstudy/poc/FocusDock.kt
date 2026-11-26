@@ -107,7 +107,7 @@ private fun DockItem(
     onClick: () -> Unit
 ) {
     val pill by animateColorAsState(if (selected) FocusColors.SurfaceHigh else Color.Transparent, tween(220), label = "dock-pill")
-    val tint by animateColorAsState(if (selected) FocusColors.Blue else FocusColors.TextMuted, tween(220), label = "dock-tint")
+    val tint by animateColorAsState(if (selected) FocusColors.onTint(FocusColors.Blue) else FocusColors.TextMuted, tween(220), label = "dock-tint")
     Column(
         modifier = modifier
             .padding(horizontal = 2.dp)
@@ -246,7 +246,7 @@ private fun SectionRow(
         Box(
             Modifier.width(34.dp).height(34.dp).clip(RoundedCornerShape(12.dp)).background(FocusColors.SurfaceHigh),
             contentAlignment = Alignment.Center
-        ) { Icon(imageVector = entry.icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = FocusColors.Blue) }
+        ) { Icon(imageVector = entry.icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = FocusColors.onTint(FocusColors.Blue)) }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(entry.title, style = MaterialTheme.typography.bodyLarge, color = FocusColors.TextPrimary)
@@ -260,7 +260,7 @@ private fun SectionRow(
                         canPin -> "تثبيت"
                         else -> "ممتلئ"
                     },
-                    color = if (pinned) FocusColors.Blue else FocusColors.TextMuted
+                    color = if (pinned) FocusColors.onTint(FocusColors.Blue) else FocusColors.TextMuted
                 )
             }
         }

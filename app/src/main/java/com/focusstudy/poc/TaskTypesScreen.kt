@@ -82,7 +82,7 @@ fun TaskTypesScreen(onBack: () -> Unit) {
         }
         if (duplicate) {
             Spacer(Modifier.height(6.dp))
-            Text("هذا النوع موجود بالفعل.", style = MaterialTheme.typography.labelSmall, color = FocusColors.Amber)
+            Text("هذا النوع موجود بالفعل.", style = MaterialTheme.typography.labelSmall, color = FocusColors.onTint(FocusColors.Amber))
         }
         Spacer(Modifier.height(12.dp))
         if (state.types.isEmpty() && !state.loading) {
@@ -140,7 +140,7 @@ fun TaskTypesScreen(onBack: () -> Unit) {
             text = { Text("ستبقى كل المهام المرتبطة به، لكنها ستصبح بلا نوع. لا يمكن التراجع عن حذف النوع نفسه.") },
             confirmButton = {
                 TextButton(onClick = { viewModel.delete(target.id); deleteTarget = null }) {
-                    Text("حذف", color = FocusColors.Amber)
+                    Text("حذف", color = FocusColors.Error)
                 }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("إلغاء") } }

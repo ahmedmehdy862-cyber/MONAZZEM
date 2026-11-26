@@ -115,7 +115,7 @@ internal fun UnifiedTaskCard(
                 Checkbox(
                     checked = TaskState.completed(task),
                     onCheckedChange = { onToggleDone() },
-                    colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
+                    colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green, checkmarkColor = FocusColors.onAccentFill(FocusColors.Green))
                 )
             }
             Column(Modifier.weight(1f)) {
@@ -191,7 +191,7 @@ internal fun UnifiedTaskCard(
                         Checkbox(
                             checked = TaskState.completed(task),
                             onCheckedChange = { onToggleDone() },
-                            colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
+                            colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green, checkmarkColor = FocusColors.onAccentFill(FocusColors.Green))
                         )
                     }
                     Box(

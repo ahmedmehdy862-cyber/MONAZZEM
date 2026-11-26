@@ -265,7 +265,7 @@ internal fun NotificationCenterScreen(
                             "معطّلة: كل التنبيهات تعمل في أي ساعة، بما فيها ساعات الهدوء."
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (preferences.quietHoursEnabled) FocusColors.TextSecondary else FocusColors.Green
+                        color = if (preferences.quietHoursEnabled) FocusColors.TextSecondary else FocusColors.onTint(FocusColors.Green)
                     )
                     PreferenceSwitchRow(
                         "رسائل الفريق",
@@ -486,8 +486,8 @@ private fun PrayerCard(revision: Int, onChanged: () -> Unit) {
                             onChanged()
                         },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = androidx.compose.ui.graphics.Color.White,
-                            checkedTrackColor = FocusColors.Green,
+                            checkedThumbColor = FocusColors.onAccentFill(FocusColors.onTint(FocusColors.Green)),
+                            checkedTrackColor = FocusColors.onTint(FocusColors.Green),
                             uncheckedThumbColor = FocusColors.TextMuted,
                             uncheckedTrackColor = FocusColors.SurfaceHigh
                         )

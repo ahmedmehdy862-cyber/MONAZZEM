@@ -327,7 +327,7 @@ internal fun AvatarPortrait(
             if (bitmap != null) {
                 Image(bitmap, contentDescription = "صورة رفيق المذاكرة", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             } else {
-                Text(name.trim().take(1).ifBlank { "✦" }, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(name.trim().take(1).ifBlank { "✦" }, color = FocusColors.onTint(FocusColors.Blue), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             }
         }
         Box(

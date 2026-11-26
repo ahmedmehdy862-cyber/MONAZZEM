@@ -798,7 +798,7 @@ private fun HabitsSection(
                     Checkbox(
                         checked = doneToday,
                         onCheckedChange = { onToggleHabit(habit, it) },
-                        colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
+                        colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green, checkmarkColor = FocusColors.onAccentFill(FocusColors.Green))
                     )
                     Column(Modifier.weight(1f)) {
                         Text(
@@ -862,7 +862,7 @@ private fun HabitWeekRow(doneDays: Set<String>, today: LocalDate) {
                     Text(
                         "${day.dayOfMonth}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (done) Color.White else FocusColors.TextSecondary
+                        color = if (done) FocusColors.onAccentFill(FocusColors.Teal) else FocusColors.TextSecondary
                     )
                 }
             }
@@ -1169,8 +1169,8 @@ private fun MoneySection(
         onToggle = onToggle
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(FocusSpacing.item)) {
-            MoneySummary(label = "الدخل", amount = income, color = FocusColors.Green)
-            MoneySummary(label = "المصروف", amount = expense, color = FocusColors.Rose)
+            MoneySummary(label = "الدخل", amount = income, color = FocusColors.onTint(FocusColors.Green))
+            MoneySummary(label = "المصروف", amount = expense, color = FocusColors.onTint(FocusColors.Rose))
             MoneySummary(label = "الباقي", amount = income - expense, color = FocusColors.TextPrimary)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1305,7 +1305,7 @@ private fun KindChip(label: String, selected: Boolean, onSelect: () -> Unit) {
     Text(
         label,
         style = MaterialTheme.typography.labelMedium,
-        color = if (selected) Color.White else FocusColors.TextSecondary,
+        color = if (selected) FocusColors.onAccentFill(FocusColors.Teal) else FocusColors.TextSecondary,
         modifier = Modifier
             .clip(RoundedCornerShape(FocusSpacing.radiusChip))
             .background(if (selected) FocusColors.Teal else FocusColors.SurfaceHigh)
@@ -1554,7 +1554,7 @@ private fun FitnessBlock(
                 Checkbox(
                     checked = exercise.id in exerciseDoneToday,
                     onCheckedChange = { onToggleExercise(exercise.id, it) },
-                    colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green)
+                    colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green, checkmarkColor = FocusColors.onAccentFill(FocusColors.Green))
                 )
                 Column(Modifier.weight(1f)) {
                     Text(

@@ -89,7 +89,7 @@ internal fun FirstLaunchSetupScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp)
                             )
-                            if (name.trim().length < 2) Text("اكتب اسمًا من حرفين على الأقل للمتابعة.", color = FocusColors.Amber)
+                            if (name.trim().length < 2) Text("اكتب اسمًا من حرفين على الأقل للمتابعة.", color = FocusColors.onTint(FocusColors.Amber))
                         }
                     }
                     item {
@@ -243,8 +243,8 @@ internal fun PreferenceSwitchRow(title: String, description: String, checked: Bo
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = androidx.compose.material3.SwitchDefaults.colors(
-                checkedThumbColor = androidx.compose.ui.graphics.Color.White,
-                checkedTrackColor = FocusColors.Green,
+                checkedThumbColor = FocusColors.onAccentFill(FocusColors.onTint(FocusColors.Green)),
+                checkedTrackColor = FocusColors.onTint(FocusColors.Green),
                 uncheckedThumbColor = FocusColors.TextMuted,
                 uncheckedTrackColor = FocusColors.SurfaceHigh,
                 disabledCheckedTrackColor = FocusColors.SurfaceHigh,

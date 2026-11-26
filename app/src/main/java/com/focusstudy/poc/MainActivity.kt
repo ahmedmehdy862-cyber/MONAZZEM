@@ -1051,10 +1051,16 @@ private fun AppRoot(
                     onOpenGoals = { openSecondary("goals") },
                     showBack = backStack.isNotEmpty() && current == "tasks",
                     onBack = { returnToPreviousTab() },
+                    // يدور فاتح ← داكن ← حسب النظام ← فاتح: الوضع «نظام» كان يُفقد
+                    // عند أول ضغطة (يتحول إلى فاتح)، فصار جزءًا من الدورة.
                     onToggleTheme = {
                         onPreferencesChanged(
                             preferences.copy(
-                                themeMode = if (preferences.themeMode == ThemeMode.LIGHT) ThemeMode.DARK else ThemeMode.LIGHT
+                                themeMode = when (preferences.themeMode) {
+                                    ThemeMode.LIGHT -> ThemeMode.DARK
+                                    ThemeMode.DARK -> ThemeMode.SYSTEM
+                                    ThemeMode.SYSTEM -> ThemeMode.LIGHT
+                                }
                             )
                         )
                     }
@@ -1332,7 +1338,13 @@ private fun TasksScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)
             ) {
                 Text(
-                    if (preferences.themeMode == ThemeMode.LIGHT) "☾" else "☀",
+                    // رمز الوضع الفعّال الناتج عن الضغطة: ☾ نتيجة داكنة، ☀ نتيجة فاتحة.
+                    // من «داكن» الضغطة تذهب إلى «نظام» فيتبع رمزها وضع النظام الحالي.
+                    if (when (preferences.themeMode) {
+                        ThemeMode.LIGHT -> true
+                        ThemeMode.DARK -> isSystemInDarkTheme()
+                        ThemeMode.SYSTEM -> false
+                    }) "☾" else "☀",
                     style = MaterialTheme.typography.titleMedium,
                     color = FocusColors.TextSecondary
                 )

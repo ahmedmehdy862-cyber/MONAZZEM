@@ -116,12 +116,14 @@ object FocusColors {
     val Error get() = token(Color(0xFFF43F5E), Color(0xFFC81E43))
 
     /**
-     * Mark (✓) colour on a filled accent circle: dark ink on light fills such as Amber and
-     * Green, white on dark fills. A white ✓ on Amber/Green fails contrast; this keeps the
-     * selected accent readable in both modes.
+     * Mark (✓) colour on a filled accent circle: dark ink on light fills such as Amber, Green
+     * and Teal, white on dark fills such as Blue and Violet. The threshold is 0.30, between
+     * Violet's luminance (0.144) and Teal's (0.372): a white ✓ on Amber/Green/Teal fails
+     * contrast (2.15–2.49), while dark ink on them is 6.70–7.76. A 0.5 threshold was wrong —
+     * Amber (0.439) and Green (0.411) fell below it and got white.
      */
     fun onAccentFill(accent: Color): Color =
-        if (accent.luminance() > 0.5f) Color(0xFF101F30) else Color.White
+        if (accent.luminance() > 0.30f) Color(0xFF101F30) else Color.White
 
     /**
      * A stored subject colour (an arbitrary ARGB int from the database, no palette behind it)

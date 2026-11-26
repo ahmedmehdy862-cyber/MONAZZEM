@@ -291,7 +291,7 @@ private fun PrayerAlertScreen(
                     Text(
                         text = if (alertType == PrayerAlertType.AT) "حان وقت الأذان" else "قبل الصلاة",
                         style = MaterialTheme.typography.labelLarge,
-                        color = FocusColors.Blue,
+                        color = FocusColors.onTint(FocusColors.Blue),
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.height(4.dp))
@@ -327,7 +327,7 @@ private fun PrayerAlertScreen(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(18.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (confirmStop) FocusColors.Amber else FocusColors.TextSecondary
+                            contentColor = if (confirmStop) FocusColors.onTint(FocusColors.Amber) else FocusColors.TextSecondary
                         )
                     ) {
                         Text(if (confirmStop) "اضغط مجددًا لإيقاف الأذان" else "إيقاف الأذان")
