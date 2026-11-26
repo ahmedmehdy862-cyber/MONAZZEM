@@ -100,7 +100,15 @@ jobs:
           script: |
             ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace
             TEST_EXIT=$?
-            adb pull /sdcard/Android/data/com.focusstudy.poc/files/qa-screenshots ./qa-screenshots-api${{ matrix.api-level }} || echo "screenshot pull failed (app may have crashed before first shot)"
+            # سحب اللقطات: /sdcard/Android/data/<pkg> محجوب عن adb shell منذ
+            # Android 11 (scoped storage)، فـ adb pull يفشل بـ «No such file
+            # or directory» رغم وجود الملفات فعلًا. التطبيق debug فيعمل run-as:
+            # نسحب كل ملف على حدة إلى مجلد الواجهة.
+            mkdir -p "./qa-screenshots-api${{ matrix.api-level }}"
+            adb shell run-as com.focusstudy.poc sh -c 'ls files/qa-screenshots' 2>/dev/null | tr -d '\r' | while read -r f; do
+              if [ -n "$f" ]; then adb exec-out run-as com.focusstudy.poc cat "files/qa-screenshots/$f" > "./qa-screenshots-api${{ matrix.api-level }}/$f"; fi
+            done
+            ls "./qa-screenshots-api${{ matrix.api-level }}" || echo "screenshot pull failed (app may have crashed before first shot)"
             adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
             exit $TEST_EXIT
 

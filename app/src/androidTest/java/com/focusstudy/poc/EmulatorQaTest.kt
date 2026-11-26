@@ -9,10 +9,11 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Until
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -140,11 +141,23 @@ class EmulatorQaTest {
         log("shot $name ok=$ok size=${if (file.exists()) file.length() else -1}")
     }
 
-    /** ينقر نصًا؛ آخر عقدة مطابقة هي الأعلى في الشجرة (الشريط/الدرج فوق المحتوى). */
+    /**
+     * ينقر نصًا؛ آخر عقدة مطابقة هي الأعلى في الشجرة (الشريط/الدرج فوق المحتوى).
+     * UiAutomator أولًا: performScrollTo في Compose يفشل («no parent layout
+     * with a Scroll SemanticsAction») لعناصر الشريط السفلي والورقة والحوار
+     * لأنها بلا أب قابل للتمرير — فكانت كل خطوات openSection تفشل قبل النقر.
+     */
     private fun clickText(label: String) {
-        composeRule.onAllNodesWithText(label).onLast()
-            .performScrollTo()
-            .performClick()
+        val clicked = runCatching {
+            device.wait(Until.hasObject(By.text(label)), 5000)
+            device.findObjects(By.text(label)).lastOrNull()?.click() == true
+        }.getOrDefault(false)
+        if (!clicked) {
+            // احتياطي: مسار Compose المباشر بلا تمرير.
+            runCatching {
+                composeRule.onAllNodesWithText(label).onLast().performClick()
+            }
+        }
         composeRule.waitForIdle()
         Thread.sleep(800)
     }
