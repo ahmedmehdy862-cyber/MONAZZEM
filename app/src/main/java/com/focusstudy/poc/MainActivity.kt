@@ -1945,7 +1945,7 @@ private fun HeroCard(
                 val task = step.task
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("خطوتك التالية", color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelLarge)
+                        Text("خطوتك التالية", color = Color.White.copy(alpha = 0.95f), style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.height(3.dp))
                         Text(
                             task.title,
@@ -1956,14 +1956,14 @@ private fun HeroCard(
                         )
                         Text(
                             "لماذا الآن؟ ${step.reason}",
-                            color = Color.White.copy(alpha = 0.85f),
+                            color = Color.White.copy(alpha = 0.95f),
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             "${step.suggestedMinutes} دقيقة مقترحة · ${task.remainingMinutes} متبقية · ${task.priority.label}",
-                            color = Color.White.copy(alpha = 0.75f),
+                            color = Color.White.copy(alpha = 0.95f),
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -1984,7 +1984,7 @@ private fun HeroCard(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("جاهز لخطوتك الأولى؟", style = MaterialTheme.typography.titleSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text("أضف مهمة وسنساعدك على تنظيم وقتها.", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.85f))
+                        Text("أضف مهمة وسنساعدك على تنظيم وقتها.", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.95f))
                     }
                     TextButton(
                         onClick = onAddTask,

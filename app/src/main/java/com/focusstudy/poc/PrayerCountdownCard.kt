@@ -74,7 +74,7 @@ internal fun PrayerCountdownCard(onOpenPrayerSettings: () -> Unit) {
                         PrayerCountdownFormat.label(minutes),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = FocusColors.Blue
+                        color = FocusColors.onTint(FocusColors.Blue)
                     )
                 } else {
                     TextButton(onClick = onOpenPrayerSettings) { Text("تحديد الموقع") }

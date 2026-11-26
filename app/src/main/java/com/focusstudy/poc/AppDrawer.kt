@@ -153,7 +153,7 @@ internal fun AppDrawerContent(
                     colors = NavigationDrawerItemDefaults.colors(
                         selectedContainerColor = FocusColors.SurfaceHigh,
                         unselectedContainerColor = Color.Transparent,
-                        selectedIconColor = FocusColors.Blue,
+                        selectedIconColor = FocusColors.onTint(FocusColors.Blue),
                         unselectedIconColor = FocusColors.TextSecondary,
                         selectedTextColor = FocusColors.TextPrimary,
                         unselectedTextColor = FocusColors.TextPrimary

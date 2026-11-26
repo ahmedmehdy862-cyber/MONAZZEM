@@ -417,14 +417,14 @@ internal fun AssistantScreen(
                     Icon(
                         imageVector = Icons.Filled.Mic,
                         contentDescription = "تحدث",
-                        tint = if (avatarState == AssistantAvatarState.LISTENING) FocusColors.Blue else FocusColors.TextSecondary
+                        tint = if (avatarState == AssistantAvatarState.LISTENING) FocusColors.onTint(FocusColors.Blue) else FocusColors.TextSecondary
                     )
                 }
                 IconButton(onClick = { send(input) }, enabled = input.isNotBlank()) {
                     Icon(
                         imageVector = Icons.Filled.Send,
                         contentDescription = "إرسال",
-                        tint = FocusColors.Blue
+                        tint = FocusColors.onTint(FocusColors.Blue)
                     )
                 }
             }
@@ -897,7 +897,7 @@ internal fun AssistantHomeCard(assistantName: String, onOpenAssistant: () -> Uni
                 Icon(
                     imageVector = Icons.Filled.SmartToy,
                     contentDescription = null,
-                    tint = FocusColors.Blue,
+                    tint = FocusColors.onTint(FocusColors.Blue),
                     modifier = Modifier.size(26.dp)
                 )
             }
