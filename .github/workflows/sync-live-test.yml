@@ -1,6 +1,6 @@
 # Sync live test — Android emulator <-> Windows, against the LIVE /api/sync endpoint.
 #
-# يعمل يدويًا فقط (workflow_dispatch) على فرع sync-auto — لا يعمل على كل push:
+# يعمل يدويًا فقط (workflow_dispatch) من main — لا يعمل على كل push:
 # ينشئ ملف اختبار معزولًا جديدًا على الخادم الحي في كل تشغيل، ويستهلك
 # نحو 30–40 دقيقة من CI (محاكيان + windows-latest).
 #
@@ -22,12 +22,6 @@ name: Sync live test
 
 on:
   workflow_dispatch:
-  # مؤقت: GitHub لا يسمح بـ workflow_dispatch إلا لملف موجود على الفرع
-  # الافتراضي (main) — والملف هنا على sync-auto فقط — فيُشغَّل الاختبار
-  # الحي بالدفع على sync-auto. يُزال هذا المشغّل بعد أول تشغيل ناجح،
-  # فيبقى workflow_dispatch وحده.
-  push:
-    branches: [sync-auto]
 
 permissions:
   contents: read
