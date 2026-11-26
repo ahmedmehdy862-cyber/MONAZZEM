@@ -74,6 +74,7 @@ class AvatarRenderQaTest {
         val report = "AVATAR DIFF profileA-vs-profileB=%.2f%% profileA-vs-fallback=%.2f%%\n".format(ab, af)
         File(dir, "avatar-diff.txt").writeText(report)
         Log.i("EmuQA", report)
+        QaExport.exportDir(ctx, dir)
         bmpA.recycle()
         bmpB.recycle()
         bmpFallback.recycle()

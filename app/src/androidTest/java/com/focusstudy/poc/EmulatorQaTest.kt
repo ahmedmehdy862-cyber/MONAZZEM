@@ -58,6 +58,11 @@ class EmulatorQaTest {
     fun tearDown() {
         runCatching { scenario?.close() }
         scenario = null
+        // صدّر اللقطات إلى التنزيلات المشتركة قبل أن يلغي Gradle تثبيت
+        // التطبيق (فيحذف مجلده الخارجي) — انظر QaExport.
+        runCatching {
+            if (::shotDir.isInitialized) QaExport.exportDir(appContext(), shotDir)
+        }
     }
 
     private fun appContext(): Context =
@@ -135,10 +140,16 @@ class EmulatorQaTest {
         log("launched MainActivity theme=$theme")
     }
 
+    private var lastShotSize = -1L
+
     private fun shot(name: String) {
         val file = File(shotDir, "$name.png")
         val ok = runCatching { device.takeScreenshot(file) }.getOrDefault(false)
-        log("shot $name ok=$ok size=${if (file.exists()) file.length() else -1}")
+        val size = if (file.exists()) file.length() else -1
+        // prevSize تشخيص: لقطتان متتاليتان بنفس الحجم غالبًا نفس الشاشة
+        // (تنقل لم يحدث)، فيُرى ذلك في السجل بلا حاجة لفتح الصور.
+        log("shot $name ok=$ok size=$size prevSize=$lastShotSize")
+        lastShotSize = size
     }
 
     /**
@@ -181,6 +192,11 @@ class EmulatorQaTest {
     /** يفتح ورقة «كل الأقسام» من الشريط السفلي ثم يختار قسمًا بعنوانه. */
     private fun openSection(title: String) {
         clickText("الأقسام")
+        // تشخيص: هل انفتحت الورقة فعلًا؟ (ظهور أي عنوان قسم فيها)
+        val sheetOpen = runCatching {
+            device.wait(Until.hasObject(By.text("الخطة")), 3000)
+        }.getOrDefault(false)
+        log("SHEET CHECK after [الأقسام]: open=$sheetOpen")
         clickText(title)
         // تشخيص فقط (لا يفشل الخطوة): هل عنوان القسم ظاهر بعد النقر؟
         // بعض الشاشات تعرض عنوانًا مختلفًا (مثلًا المساعد يعرض اسم «منظم»).
