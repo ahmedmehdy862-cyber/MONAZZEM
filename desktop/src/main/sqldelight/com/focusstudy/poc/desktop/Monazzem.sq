@@ -1,0 +1,539 @@
+-- Monazzem.sq — مخطط قاعدة بيانات نسخة ويندوز (SQLDelight).
+--
+-- منسوخ حرفيًا من StudyDb.kt في :app (SQLiteOpenHelper يدوي بـ SQL خام،
+-- الإصدارات v1..v17)، ليكون ملف قاعدة البيانات على ويندوز مطابقًا لمخطط
+-- أندرويد عمودًا بعمود. لا توجد ترحيلات هنا: قاعدة ويندوز تُنشأ جديدة
+-- بالمخطط الكامل من أول تشغيل (Schema.create)، وجهاز ويندوز لا يرث ملف
+-- قاعدة هاتف أصلًا، فلا معنى لـ onUpgrade. أي جدول يضاف في أندرويد لاحقًا
+-- يجب أن يُضاف هنا معه (انظر desktop/README.md).
+--
+-- جدول إضافي واحد خاص بسطح المكتب: sync_meta (بصمات المزامنة + حالة آخر
+-- مزامنة). لا يوجد في أندرويد لأن أندرويد يحفظ البصمات في SharedPreferences
+-- (SyncMetadata)؛ على JVM لا SharedPreferences، فالجدول هو البديل.
+-- كلمة مرور المزامنة لا تُحفظ أبدًا — لا هنا ولا في أي ملف (انظر SyncStore).
+
+CREATE TABLE tasks(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  planned_minutes INTEGER NOT NULL,
+  done_minutes INTEGER NOT NULL DEFAULT 0,
+  is_done INTEGER NOT NULL DEFAULT 0,
+  blocked_packages TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT 'study',
+  priority INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'todo',
+  start_at INTEGER,
+  due_at INTEGER,
+  subject_id INTEGER,
+  notes TEXT NOT NULL DEFAULT '',
+  recurrence TEXT NOT NULL DEFAULT 'none',
+  completed_at INTEGER,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  original_due_at INTEGER,
+  type_id TEXT
+);
+
+CREATE TABLE sessions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  started_at INTEGER NOT NULL,
+  ends_at INTEGER NOT NULL,
+  blocked_packages TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL
+);
+
+CREATE INDEX idx_sessions_state ON sessions(state);
+CREATE INDEX idx_tasks_created ON tasks(created_at);
+CREATE INDEX idx_tasks_due ON tasks(due_at, status);
+CREATE INDEX idx_tasks_subject ON tasks(subject_id);
+CREATE INDEX idx_tasks_type ON tasks(type_id);
+
+CREATE TABLE subtasks(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  is_done INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_subtasks_task ON subtasks(task_id);
+
+CREATE TABLE semesters(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  university TEXT NOT NULL DEFAULT '',
+  year_label TEXT NOT NULL DEFAULT '',
+  starts_on INTEGER,
+  ends_on INTEGER
+);
+
+CREATE TABLE subjects(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  semester_id INTEGER,
+  name TEXT NOT NULL,
+  color INTEGER NOT NULL DEFAULT 4281558682,
+  icon TEXT NOT NULL DEFAULT 'book',
+  instructor TEXT NOT NULL DEFAULT '',
+  goal_minutes INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_subjects_semester ON subjects(semester_id);
+
+CREATE TABLE exams(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'exam'
+);
+CREATE INDEX idx_exams_subject_at ON exams(subject_id, at);
+
+CREATE TABLE events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'study',
+  subject_id INTEGER,
+  task_id INTEGER,
+  starts_at INTEGER NOT NULL,
+  ends_at INTEGER NOT NULL,
+  notes TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_events_range ON events(starts_at, ends_at);
+
+CREATE TABLE task_types(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  archived INTEGER NOT NULL DEFAULT 0,
+  built_in INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE reminders(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  fire_at INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_reminders_fire ON reminders(state, fire_at);
+
+CREATE TABLE notification_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  task_id INTEGER,
+  scheduled_at INTEGER NOT NULL,
+  delivered_at INTEGER,
+  action TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_notification_log_time ON notification_log(delivered_at);
+
+CREATE TABLE consents(
+  key TEXT PRIMARY KEY,
+  granted INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  at INTEGER NOT NULL,
+  last_granted_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE goals(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  target INTEGER NOT NULL,
+  current INTEGER NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT 'خطوة',
+  category TEXT NOT NULL DEFAULT '',
+  due_at INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE goal_links(
+  goal_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  ref_id INTEGER NOT NULL,
+  awarded INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(goal_id, kind, ref_id)
+);
+CREATE INDEX idx_goal_links_goal ON goal_links(goal_id, kind);
+CREATE INDEX idx_goal_links_ref ON goal_links(kind, ref_id);
+
+CREATE TABLE skills(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  level INTEGER NOT NULL DEFAULT 1,
+  target_level INTEGER NOT NULL DEFAULT 3,
+  minutes INTEGER NOT NULL DEFAULT 0,
+  last_practiced_at INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE notes(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT '',
+  pinned INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_notes_order ON notes(pinned DESC, updated_at DESC);
+
+CREATE TABLE habits(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE habit_logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  habit_id INTEGER NOT NULL,
+  day TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(habit_id, day)
+);
+CREATE INDEX idx_habit_logs_habit_day ON habit_logs(habit_id, day);
+
+CREATE TABLE wird_settings(
+  id INTEGER PRIMARY KEY,
+  surah TEXT NOT NULL DEFAULT 'البقرة',
+  start_page INTEGER NOT NULL DEFAULT 2,
+  pages_per_day INTEGER NOT NULL DEFAULT 2
+);
+
+CREATE TABLE wird_logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,
+  pages INTEGER NOT NULL,
+  surah TEXT NOT NULL DEFAULT 'البقرة',
+  logged_at INTEGER NOT NULL,
+  UNIQUE(day)
+);
+
+CREATE TABLE health_logs(
+  day TEXT PRIMARY KEY,
+  weight REAL,
+  sleep_hours REAL,
+  water_cups INTEGER NOT NULL DEFAULT 0,
+  exercise_minutes INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE transactions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  amount REAL NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  day TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_transactions_day ON transactions(day);
+
+CREATE TABLE mood_logs(
+  day TEXT PRIMARY KEY,
+  mood INTEGER NOT NULL,
+  logged_at INTEGER NOT NULL
+);
+
+CREATE TABLE fitness_profile(
+  id INTEGER PRIMARY KEY,
+  gender TEXT NOT NULL DEFAULT 'male',
+  age INTEGER NOT NULL DEFAULT 30,
+  height_cm REAL NOT NULL DEFAULT 170,
+  weight_kg REAL NOT NULL DEFAULT 70,
+  activity TEXT NOT NULL DEFAULT 'moderate',
+  goal TEXT NOT NULL DEFAULT 'maintain'
+);
+
+CREATE TABLE calorie_logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  calories INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_calorie_logs_day ON calorie_logs(day);
+
+CREATE TABLE exercise_logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  day TEXT NOT NULL,
+  exercise_id TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(day, exercise_id)
+);
+CREATE INDEX idx_exercise_logs_day ON exercise_logs(day);
+
+CREATE TABLE user_profile(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE support_messages(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  user_name TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT '',
+  contact TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  image_paths TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'sending',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_support_messages_created ON support_messages(created_at);
+
+-- خاص بسطح المكتب: بصمات المزامنة (key = "stamps") وحالة آخر مزامنة
+-- (key = "last_sync_json"). لا يوجد مقابل له في أندرويد.
+CREATE TABLE sync_meta(
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+-- ------------------------------------------------------------------ مهام
+
+selectTasks:
+SELECT id, title, planned_minutes, done_minutes, is_done, blocked_packages, created_at,
+  description, category, type_id, priority, status, start_at, due_at, subject_id,
+  notes, recurrence, completed_at, sort_order, original_due_at
+FROM tasks
+ORDER BY (status = 'done'), COALESCE(due_at, 9223372036854775807), id DESC;
+
+selectTaskById:
+SELECT id, title, planned_minutes, done_minutes, is_done, blocked_packages, created_at,
+  description, category, type_id, priority, status, start_at, due_at, subject_id,
+  notes, recurrence, completed_at, sort_order, original_due_at
+FROM tasks WHERE id = :id;
+
+setTaskDone:
+UPDATE tasks SET status = :status, is_done = :isDone, completed_at = :completedAt WHERE id = :id;
+
+deleteTask:
+DELETE FROM tasks WHERE id = :id;
+
+deleteSubtasksForTask:
+DELETE FROM subtasks WHERE task_id = :taskId;
+
+-- مزامنة pull: إدخال سجل قادم من الخادم دون مسح الأعمدة المحلية فقط
+-- (الوصف والملاحظات والحزم المحظورة لا تعبر السلك أبدًا).
+insertTaskFromSync:
+INSERT OR IGNORE INTO tasks(id, title, planned_minutes, done_minutes, is_done,
+  blocked_packages, created_at, description, category, type_id, priority, status,
+  start_at, due_at, subject_id, notes, recurrence, completed_at, sort_order, original_due_at)
+VALUES(:id, :title, :minutes, 0, :isDone, '', :createdAt, '', :category, :typeId,
+  :priority, :status, NULL, :dueAt, :subjectId, '', :recurrence, :completedAt, 0, NULL);
+
+updateTaskFromSync:
+UPDATE tasks SET title = :title, planned_minutes = :minutes, category = :category,
+  priority = :priority, status = :status, due_at = :dueAt, recurrence = :recurrence,
+  subject_id = :subjectId, type_id = :typeId, is_done = :isDone,
+  completed_at = :completedAt
+WHERE id = :id;
+
+-- ------------------------------------------------------- مواد وأنواع مهام
+
+selectSubjects:
+SELECT id, semester_id, name, color, icon, instructor, goal_minutes, created_at
+FROM subjects ORDER BY name COLLATE NOCASE;
+
+insertSubjectFromSync:
+INSERT OR IGNORE INTO subjects(id, semester_id, name, color, icon, instructor, goal_minutes, created_at)
+VALUES(:id, NULL, :name, 4281558682, 'book', '', 0, :createdAt);
+
+updateSubjectFromSync:
+UPDATE subjects SET name = :name WHERE id = :id;
+
+deleteSubject:
+DELETE FROM subjects WHERE id = :id;
+
+selectTaskTypes:
+SELECT id, name, sort_order, archived, built_in FROM task_types
+ORDER BY sort_order ASC, name COLLATE NOCASE;
+
+insertTaskTypeFromSync:
+INSERT OR IGNORE INTO task_types(id, name, sort_order, archived, built_in)
+VALUES(:id, :name, 0, :archived, 0);
+
+updateTaskTypeFromSync:
+UPDATE task_types SET name = :name, archived = :archived WHERE id = :id;
+
+deleteTaskType:
+DELETE FROM task_types WHERE id = :id;
+
+-- ------------------------------------------------------------ جلسات تركيز
+
+insertSession:
+INSERT INTO sessions(task_id, started_at, ends_at, blocked_packages, state)
+VALUES(:taskId, :startedAt, :endsAt, '', :state);
+
+-- ------------------------------------------------------------------ عادات
+
+selectHabits:
+SELECT id, name, created_at FROM habits WHERE archived = 0 ORDER BY created_at ASC;
+
+deleteHabit:
+DELETE FROM habits WHERE id = :id;
+
+deleteHabitLogs:
+DELETE FROM habit_logs WHERE habit_id = :habitId;
+
+habitDoneDays:
+SELECT day FROM habit_logs
+WHERE habit_id = :habitId AND done = 1 AND day >= :sinceDay ORDER BY day DESC;
+
+setHabitDone:
+INSERT OR IGNORE INTO habit_logs(habit_id, day, done) VALUES(:habitId, :day, 1);
+
+clearHabitDone:
+DELETE FROM habit_logs WHERE habit_id = :habitId AND day = :day;
+
+-- -------------------------------------------------------------------- ورد
+
+selectWirdSettings:
+SELECT surah, start_page, pages_per_day FROM wird_settings WHERE id = 1;
+
+saveWirdSettings:
+INSERT OR REPLACE INTO wird_settings(id, surah, start_page, pages_per_day)
+VALUES(1, :surah, :startPage, :pagesPerDay);
+
+logWird:
+INSERT OR IGNORE INTO wird_logs(day, pages, surah, logged_at)
+VALUES(:day, :pages, :surah, :loggedAt);
+
+countWirdForDay:
+SELECT COUNT(*) FROM wird_logs WHERE day = :day;
+
+wirdTotalPages:
+SELECT COALESCE(SUM(pages), 0) FROM wird_logs;
+
+-- ------------------------------------------------------------------- صحة
+
+selectHealthLog:
+SELECT day, weight, sleep_hours, water_cups, exercise_minutes
+FROM health_logs WHERE day = :day;
+
+saveHealthLog:
+INSERT OR REPLACE INTO health_logs(day, weight, sleep_hours, water_cups, exercise_minutes)
+VALUES(:day, :weight, :sleepHours, :waterCups, :exerciseMinutes);
+
+selectCalorieEntries:
+SELECT id, day, name, calories, created_at FROM calorie_logs
+WHERE day = :day ORDER BY created_at DESC;
+
+deleteCalorieEntry:
+DELETE FROM calorie_logs WHERE id = :id;
+
+deleteTransaction:
+DELETE FROM transactions WHERE id = :id;
+
+selectTransactionsForMonth:
+SELECT id, kind, amount, category, note, day, created_at FROM transactions
+WHERE day LIKE :monthPrefix ORDER BY day DESC, created_at DESC;
+
+-- ------------------------------------------------------------------- مزاج
+
+logMood:
+INSERT OR REPLACE INTO mood_logs(day, mood, logged_at) VALUES(:day, :mood, :loggedAt);
+
+moodForDay:
+SELECT mood FROM mood_logs WHERE day = :day;
+
+moodLogsSince:
+SELECT day, mood FROM mood_logs WHERE day >= :sinceDay ORDER BY day ASC;
+
+selectSyncMeta:
+SELECT value FROM sync_meta WHERE key = :key;
+
+putSyncMeta:
+INSERT OR REPLACE INTO sync_meta(key, value) VALUES(:key, :value);
+
+deleteSyncMeta:
+DELETE FROM sync_meta WHERE key = :key;
+
+-- ------------------------------------------- مزامنة: إدخال بمعرّفات صريحة
+-- عقد ويندوز §7: معرّف رقمي ينشئه ويندوز يجب أن يكون سالبًا (-epochMillis)
+-- حتى لا يصطدم أبدًا بمعرّف AUTOINCREMENT ينشئه أندرويد. هذه الاستعلامات
+-- تُستخدم عند إنشاء سجل جديد على ويندوز وعند تطبيق سجل وارد من pull.
+
+insertTaskWithId:
+INSERT INTO tasks(id, title, planned_minutes, done_minutes, is_done, blocked_packages, created_at,
+  description, category, type_id, priority, status, start_at, due_at, subject_id,
+  notes, recurrence, completed_at, sort_order, original_due_at)
+VALUES(:id, :title, :plannedMinutes, 0, 0, '', :createdAt, '', :category, :typeId, :priority,
+  'todo', NULL, :dueAt, :subjectId, '', :recurrence, NULL, 0, NULL);
+
+insertHabitWithId:
+INSERT INTO habits(id, name, created_at, archived) VALUES(:id, :name, :createdAt, 0);
+
+insertTransactionWithId:
+INSERT INTO transactions(id, kind, amount, category, note, day, created_at)
+VALUES(:id, :kind, :amount, :category, :note, :day, :createdAt);
+
+insertCalorieEntryWithId:
+INSERT INTO calorie_logs(id, day, name, calories, created_at)
+VALUES(:id, :day, :name, :calories, :createdAt);
+
+-- -------------------------------------------- مزامنة: قراءة كل المجموعات
+
+selectAllHabits:
+SELECT id, name, created_at, archived FROM habits ORDER BY created_at ASC;
+
+selectAllHabitLogs:
+SELECT habit_id, day FROM habit_logs ORDER BY day ASC;
+
+selectAllWirdLogs:
+SELECT day, pages, surah, logged_at FROM wird_logs ORDER BY day ASC;
+
+selectAllHealthLogs:
+SELECT day, weight, sleep_hours, water_cups, exercise_minutes FROM health_logs ORDER BY day ASC;
+
+selectAllTransactions:
+SELECT id, kind, amount, category, note, day, created_at FROM transactions ORDER BY created_at ASC;
+
+selectAllMoodLogs:
+SELECT day, mood, logged_at FROM mood_logs ORDER BY day ASC;
+
+selectAllCalorieLogs:
+SELECT id, day, name, calories, created_at FROM calorie_logs ORDER BY created_at ASC;
+
+selectTransactionById:
+SELECT id, kind, amount, category, note, day, created_at FROM transactions WHERE id = :id;
+
+selectCalorieEntryById:
+SELECT id, day, name, calories, created_at FROM calorie_logs WHERE id = :id;
+
+-- -------------------------------------------- مزامنة: تطبيق سجلات واردة
+
+insertHabitFromSync:
+INSERT OR IGNORE INTO habits(id, name, created_at, archived) VALUES(:id, :name, :createdAt, :archived);
+
+updateHabitFromSync:
+UPDATE habits SET name = :name, archived = :archived WHERE id = :id;
+
+insertHabitLogFromSync:
+INSERT OR IGNORE INTO habit_logs(habit_id, day, done) VALUES(:habitId, :day, 1);
+
+deleteHabitLog:
+DELETE FROM habit_logs WHERE habit_id = :habitId AND day = :day;
+
+upsertWirdFromSync:
+INSERT OR REPLACE INTO wird_logs(day, pages, surah, logged_at) VALUES(:day, :pages, :surah, :loggedAt);
+
+deleteWirdLog:
+DELETE FROM wird_logs WHERE day = :day;
+
+upsertHealthFromSync:
+INSERT OR REPLACE INTO health_logs(day, weight, sleep_hours, water_cups, exercise_minutes)
+VALUES(:day, :weight, :sleepHours, :waterCups, :exerciseMinutes);
+
+deleteHealthLog:
+DELETE FROM health_logs WHERE day = :day;
+
+upsertMoodFromSync:
+INSERT OR REPLACE INTO mood_logs(day, mood, logged_at) VALUES(:day, :mood, :loggedAt);
+
+deleteMoodLog:
+DELETE FROM mood_logs WHERE day = :day;

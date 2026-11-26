@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "FocusStudyPoc"
 include(":app")
 include(":storeapp")
+include(":desktop")
