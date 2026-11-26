@@ -11,6 +11,7 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -40,6 +41,8 @@ internal data class AlertChannel(
 )
 
 internal object AppNotifications {
+
+    private const val TAG = "AppNotifications"
 
     private const val MIGRATION_PREFS = "notification_channel_migrations"
     private const val TEAM_UPDATE_DEFAULTED = "team_update_default_v1"
@@ -155,14 +158,30 @@ internal object AppNotifications {
         val prefs = context.getSharedPreferences(MIGRATION_PREFS, Context.MODE_PRIVATE)
         if (prefs.getBoolean(TEAM_UPDATE_DEFAULTED, false)) return
         val manager = manager(context)
+        // م4: لا يُثبَّت علم الترحيل إلا بعد نجاح الحذف وإعادة الإنشاء فعلًا لكل
+        // قناة. قناة محظورة تُتخطى دون تثبيت العلم حتى يعمل الترحيل لاحقًا إن
+        // ألغى المستخدم حظرها؛ وفشل الحذف يُسجَّل وتُعاد المحاولة في المرة القادمة.
+        var allDone = true
         listOf(TEAM, UPDATE).forEach { channel ->
             val existing = runCatching { manager.getNotificationChannel(channel.id) }.getOrNull()
-            if (existing != null && existing.importance != NotificationManager.IMPORTANCE_NONE) {
-                runCatching { manager.deleteNotificationChannel(channel.id) }
-                ensure(context, channel)
+            when {
+                existing == null -> ensure(context, channel)
+                existing.importance == NotificationManager.IMPORTANCE_NONE -> {
+                    Log.i(TAG, "channel ${channel.id} is blocked; skipping importance downgrade")
+                    allDone = false
+                }
+                else -> {
+                    val deleted = runCatching { manager.deleteNotificationChannel(channel.id) }.isSuccess
+                    if (!deleted) {
+                        Log.w(TAG, "failed to delete channel ${channel.id} for importance downgrade")
+                        allDone = false
+                    } else {
+                        ensure(context, channel)
+                    }
+                }
             }
         }
-        prefs.edit().putBoolean(TEAM_UPDATE_DEFAULTED, true).apply()
+        if (allDone) prefs.edit().putBoolean(TEAM_UPDATE_DEFAULTED, true).apply()
     }
     /** Playback channel is created separately: it must stay silent whatever the dashboard selects. */
     fun ensurePlaybackChannel(context: Context) {
