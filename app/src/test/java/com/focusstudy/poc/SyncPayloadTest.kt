@@ -70,6 +70,71 @@ class SyncPayloadTest {
         assertEquals(7_000L, repeated.data.getValue("tasks").single()["updatedAt"])
     }
 
+    @Test fun lifeCollectionsCarryTheirIdsAndFields() {
+        val life = LifeSyncSnapshot(
+            habits = listOf(Habit(id = 3L, name = "قراءة", createdAt = 500L)),
+            habitLogs = listOf(HabitLogRow(habitId = 3L, day = "2026-11-26")),
+            wirdLogs = listOf(WirdLog(day = "2026-11-26", pages = 2, surah = "البقرة")),
+            healthLogs = listOf(HealthLog(day = "2026-11-26", weight = 70.5, sleepHours = 7.0, waterCups = 6, exerciseMinutes = 30)),
+            transactions = listOf(
+                MoneyTransaction(id = 8L, kind = MoneyKind.EXPENSE, amount = 12.5, category = "طعام", note = "ملاحظة مالية سرية", day = "2026-11-26", createdAt = 400L)
+            ),
+            moodLogs = listOf(MoodLog(day = "2026-11-26", mood = 4)),
+            calorieLogs = listOf(CalorieEntry(id = 5L, day = "2026-11-26", name = "أرز", calories = 300, createdAt = 400L))
+        )
+        val built = SyncPayload.build(emptyList(), emptyList(), emptyList(), emptyMap(), 1_000L, life)
+        assertEquals(setOf("tasks", "subjects", "taskTypes", "habits", "habitLogs", "wirdLogs", "healthLogs", "transactions", "moodLogs", "calorieLogs"), built.data.keys)
+        assertEquals("3", built.data.getValue("habits").single()["id"])
+        assertEquals("3:2026-11-26", built.data.getValue("habitLogs").single()["id"])
+        assertEquals("2026-11-26", built.data.getValue("wirdLogs").single()["id"])
+        assertEquals("2026-11-26", built.data.getValue("healthLogs").single()["id"])
+        assertEquals("2026-11-26", built.data.getValue("moodLogs").single()["id"])
+        // A money note never leaves the device, like task notes.
+        val serialized = built.data.toString()
+        assertFalse(serialized.contains("ملاحظة مالية سرية"))
+        assertFalse(serialized.contains("note"))
+        assertEquals(setOf("id", "kind", "amount", "category", "day", "createdAt", "updatedAt"),
+            built.data.getValue("transactions").single().keys)
+    }
+
+    @Test fun removedLifeRecordsBecomePersistentTombstones() {
+        val life = LifeSyncSnapshot(
+            habits = listOf(Habit(id = 3L, name = "قراءة", createdAt = 500L)),
+            wirdLogs = listOf(WirdLog(day = "2026-11-26", pages = 2, surah = "البقرة"))
+        )
+        val first = SyncPayload.build(emptyList(), emptyList(), emptyList(), emptyMap(), 1_000L, life)
+        val removed = SyncPayload.build(emptyList(), emptyList(), emptyList(), first.stamps, 7_000L, LifeSyncSnapshot())
+        assertEquals(true, removed.data.getValue("habits").single()["deleted"])
+        assertEquals("3", removed.data.getValue("habits").single()["id"])
+        assertEquals(true, removed.data.getValue("wirdLogs").single()["deleted"])
+        assertEquals("2026-11-26", removed.data.getValue("wirdLogs").single()["id"])
+        val repeated = SyncPayload.build(emptyList(), emptyList(), emptyList(), removed.stamps, 9_000L, LifeSyncSnapshot())
+        assertEquals(7_000L, repeated.data.getValue("habits").single()["updatedAt"])
+        assertEquals(7_000L, repeated.data.getValue("wirdLogs").single()["updatedAt"])
+    }
+
+    @Test fun unchangedLifeRecordsKeepTheirStamp() {
+        val life = LifeSyncSnapshot(
+            wirdLogs = listOf(WirdLog(day = "2026-11-26", pages = 2, surah = "البقرة")),
+            moodLogs = listOf(MoodLog(day = "2026-11-26", mood = 4))
+        )
+        val first = SyncPayload.build(emptyList(), emptyList(), emptyList(), emptyMap(), 1_000L, life)
+        val second = SyncPayload.build(emptyList(), emptyList(), emptyList(), first.stamps, 5_000L, life)
+        assertEquals(1_000L, second.data.getValue("wirdLogs").single()["updatedAt"])
+        assertEquals(1_000L, second.data.getValue("moodLogs").single()["updatedAt"])
+    }
+
+    @Test fun contentFingerprintIgnoresNumberTypes() {
+        assertEquals(
+            SyncPayload.contentFingerprint(mapOf("pages" to 2, "surah" to "البقرة")),
+            SyncPayload.contentFingerprint(mapOf("surah" to "البقرة", "pages" to 2L))
+        )
+        assertEquals(
+            SyncPayload.contentFingerprint(mapOf("amount" to 12.5)),
+            SyncPayload.contentFingerprint(mapOf("amount" to 12.5))
+        )
+    }
+
     @Test fun archivedTypesAreIncludedWithTheirFlag() {
         val type = TaskType(id = "work", name = "عمل", archived = true)
         val built = SyncPayload.build(emptyList(), emptyList(), listOf(type), emptyMap(), 1_000L)

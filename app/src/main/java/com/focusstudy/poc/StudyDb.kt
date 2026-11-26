@@ -2018,6 +2018,354 @@ class StudyDb private constructor(context: Context) :
         }
     }
 
+    // ------------------------------------------------------- sync snapshot (windows-sync)
+
+    /**
+     * Full «حياتي» reads for [SyncPayload] / [SyncAccount.push]. No filtering: the sync layer
+     * decides what crosses the wire, and notes never leave through it (see SyncPayload).
+     * [allHabits] includes archived habits so their `archived` flag syncs instead of looking
+     * like a delete; the «حياتي» screen still uses [habits], which hides them.
+     */
+    fun allHabits(): List<Habit> = readableDatabase.rawQuery(
+        "SELECT id, name, created_at, archived FROM habits ORDER BY created_at ASC",
+        null
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    Habit(
+                        id = cursor.getLong(0),
+                        name = cursor.getString(1).orEmpty(),
+                        createdAt = cursor.getLong(2),
+                        archived = cursor.getInt(3) == 1
+                    )
+                )
+            }
+        }
+    }
+
+    fun allHabitLogs(): List<HabitLogRow> = readableDatabase.rawQuery(
+        "SELECT habit_id, day FROM habit_logs WHERE done = 1 ORDER BY day ASC",
+        null
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(HabitLogRow(habitId = cursor.getLong(0), day = cursor.getString(1).orEmpty()))
+            }
+        }
+    }
+
+    fun allWirdLogs(): List<WirdLog> = readableDatabase.rawQuery(
+        "SELECT day, pages, surah, logged_at FROM wird_logs ORDER BY day ASC",
+        null
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    WirdLog(
+                        day = cursor.getString(0).orEmpty(),
+                        pages = cursor.getInt(1),
+                        surah = cursor.getString(2).orEmpty(),
+                        loggedAt = cursor.getLong(3)
+                    )
+                )
+            }
+        }
+    }
+
+    fun allHealthLogs(): List<HealthLog> = readableDatabase.rawQuery(
+        "SELECT day, weight, sleep_hours, water_cups, exercise_minutes FROM health_logs ORDER BY day ASC",
+        null
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    HealthLog(
+                        day = cursor.getString(0).orEmpty(),
+                        weight = if (cursor.isNull(1)) null else cursor.getDouble(1),
+                        sleepHours = if (cursor.isNull(2)) null else cursor.getDouble(2),
+                        waterCups = cursor.getInt(3),
+                        exerciseMinutes = cursor.getInt(4)
+                    )
+                )
+            }
+        }
+    }
+
+    fun allTransactions(): List<MoneyTransaction> = readableDatabase.rawQuery(
+        "SELECT id, kind, amount, category, note, day, created_at FROM transactions ORDER BY created_at ASC",
+        null
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    MoneyTransaction(
+                        id = cursor.getLong(0),
+                        kind = MoneyKind.from(cursor.getString(1)),
+                        amount = cursor.getDouble(2),
+                        category = cursor.getString(3).orEmpty(),
+                        note = cursor.getString(4).orEmpty(),
+                        day = cursor.getString(5).orEmpty(),
+                        createdAt = cursor.getLong(6)
+                    )
+                )
+            }
+        }
+    }
+
+    fun allMoodLogs(): List<MoodLog> = moodLogsSince("")
+
+    fun allCalorieLogs(): List<CalorieEntry> = readableDatabase.rawQuery(
+        "SELECT id, day, name, calories, created_at FROM calorie_logs ORDER BY created_at ASC",
+        null
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) {
+                add(
+                    CalorieEntry(
+                        id = cursor.getLong(0),
+                        day = cursor.getString(1).orEmpty(),
+                        name = cursor.getString(2).orEmpty(),
+                        calories = cursor.getInt(3),
+                        createdAt = cursor.getLong(4)
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Executes a pull [SyncPlan] in one transaction: deletes first, then upserts, in
+     * dependency order (subjects before tasks, habits before habit logs). Only the whitelisted
+     * sync fields are written — local-only columns (task notes, money notes, done minutes,
+     * blocked packages, sort order, created_at) are preserved on update, and a fresh insert
+     * gets neutral defaults for them. A record whose id cannot be stored locally (a
+     * non-numeric id in an INTEGER-keyed table, contract §7) is skipped, never crashed on.
+     * Caller saves the plan's stamps only after this returns, so a failure here leaves the
+     * old stamps — and the next pull retries the same snapshot.
+     */
+    fun applySyncPlan(plan: SyncPlan) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for ((kind, ids) in plan.deletes) {
+                for (id in ids) applySyncDelete(db, kind, id)
+            }
+            for (kind in listOf(
+                "subjects", "taskTypes", "tasks",
+                "habits", "habitLogs", "wirdLogs", "healthLogs",
+                "transactions", "moodLogs", "calorieLogs"
+            )) {
+                for (record in plan.upserts[kind].orEmpty()) applySyncUpsert(db, kind, record)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun applySyncDelete(db: SQLiteDatabase, kind: String, id: String) {
+        when (kind) {
+            "tasks" -> id.toLongOrNull()?.let { deleteTask(it) }
+            "subjects" -> id.toLongOrNull()?.let { subjectId ->
+                db.execSQL("UPDATE tasks SET subject_id = NULL WHERE subject_id = ?", arrayOf(subjectId))
+                db.delete("subjects", "id = ?", arrayOf(subjectId.toString()))
+            }
+            "taskTypes" -> {
+                val builtIn = db.rawQuery(
+                    "SELECT built_in FROM task_types WHERE id = ? LIMIT 1", arrayOf(id)
+                ).use { if (it.moveToFirst()) it.getInt(0) == 1 else false }
+                if (!builtIn) db.delete("task_types", "id = ?", arrayOf(id))
+            }
+            "habits" -> id.toLongOrNull()?.let { deleteHabit(it) }
+            "habitLogs" -> {
+                val habitId = id.substringBefore(':').toLongOrNull() ?: return
+                val day = id.substringAfter(':', "")
+                if (day.isNotEmpty()) {
+                    db.delete("habit_logs", "habit_id = ? AND day = ?", arrayOf(habitId.toString(), day))
+                }
+            }
+            "wirdLogs" -> db.delete("wird_logs", "day = ?", arrayOf(id))
+            "healthLogs" -> db.delete("health_logs", "day = ?", arrayOf(id))
+            "transactions" -> id.toLongOrNull()?.let { db.delete("transactions", "id = ?", arrayOf(it.toString())) }
+            "moodLogs" -> db.delete("mood_logs", "day = ?", arrayOf(id))
+            "calorieLogs" -> id.toLongOrNull()?.let { db.delete("calorie_logs", "id = ?", arrayOf(it.toString())) }
+        }
+    }
+
+    private fun applySyncUpsert(db: SQLiteDatabase, kind: String, record: Map<String, Any>) {
+        val id = record["id"]?.toString().orEmpty()
+        if (id.isEmpty()) return
+        val updatedAt = (record["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
+        val text = { key: String -> record[key]?.toString().orEmpty() }
+        // JSON numbers arrive as Long/Double, but be tolerant of numeric strings too.
+        val long = { key: String ->
+            (record[key] as? Number)?.toLong() ?: (record[key] as? String)?.toLongOrNull()
+        }
+        val int = { key: String ->
+            (record[key] as? Number)?.toInt() ?: (record[key] as? String)?.toIntOrNull()
+        }
+        val double = { key: String ->
+            (record[key] as? Number)?.toDouble() ?: (record[key] as? String)?.toDoubleOrNull()
+        }
+        when (kind) {
+            "subjects" -> {
+                val subjectId = id.toLongOrNull() ?: return
+                val name = text("name").ifBlank { return }
+                val exists = db.rawQuery(
+                    "SELECT 1 FROM subjects WHERE id = ? LIMIT 1", arrayOf(subjectId.toString())
+                ).use { it.moveToFirst() }
+                if (exists) {
+                    db.execSQL("UPDATE subjects SET name = ? WHERE id = ?", arrayOf(name, subjectId))
+                } else {
+                    db.execSQL(
+                        "INSERT INTO subjects(id, name, semester_id, color, icon, instructor, goal_minutes, created_at) " +
+                            "VALUES(?, ?, NULL, ?, '', '', 0, ?)",
+                        arrayOf<Any?>(subjectId, name, 0xFF3B82F6.toInt(), updatedAt)
+                    )
+                }
+            }
+            "taskTypes" -> {
+                val name = text("name").ifBlank { return }
+                val archived = if (record["archived"] == true) 1 else 0
+                val exists = db.rawQuery(
+                    "SELECT 1 FROM task_types WHERE id = ? LIMIT 1", arrayOf(id)
+                ).use { it.moveToFirst() }
+                if (exists) {
+                    db.execSQL(
+                        "UPDATE task_types SET name = ?, archived = ? WHERE id = ?",
+                        arrayOf(name, archived, id)
+                    )
+                } else {
+                    val order = db.rawQuery(
+                        "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM task_types", null
+                    ).use { if (it.moveToFirst()) it.getInt(0) else 1 }
+                    db.execSQL(
+                        "INSERT INTO task_types(id, name, sort_order, archived, built_in) VALUES(?, ?, ?, ?, 0)",
+                        arrayOf<Any?>(id, name, order, archived)
+                    )
+                }
+            }
+            "tasks" -> {
+                val taskId = id.toLongOrNull() ?: return
+                val title = text("title").ifBlank { return }
+                val minutes = int("minutes")?.coerceIn(1, 720) ?: return
+                val subjectId = long("subjectId")?.takeIf { subjectExists(it) }
+                val existing = task(taskId)
+                if (existing != null) {
+                    updateTask(
+                        existing.copy(
+                            title = title,
+                            plannedMinutes = minutes,
+                            category = TaskCategory.from(text("category").ifBlank { null }),
+                            priority = TaskPriority.from(int("priority") ?: existing.priority.level),
+                            status = TaskStatus.from(text("status").ifBlank { null }),
+                            dueAt = long("dueAt"),
+                            recurrence = Recurrence.from(text("recurrence").ifBlank { null }),
+                            subjectId = subjectId,
+                            typeId = text("typeId").ifBlank { null }
+                        )
+                    )
+                } else {
+                    val status = TaskStatus.from(text("status").ifBlank { null })
+                    db.execSQL(
+                        "INSERT INTO tasks(id, title, planned_minutes, done_minutes, is_done, blocked_packages, " +
+                            "created_at, description, category, priority, status, due_at, subject_id, notes, " +
+                            "recurrence, type_id, completed_at, sort_order) " +
+                            "VALUES(?, ?, ?, 0, ?, '', ?, '', ?, ?, ?, ?, ?, '', ?, ?, ?, 0)",
+                        arrayOf<Any?>(
+                            taskId, title, minutes, if (status == TaskStatus.DONE) 1 else 0,
+                            updatedAt, TaskCategory.from(text("category").ifBlank { null }).key,
+                            TaskPriority.from(int("priority") ?: TaskPriority.MEDIUM.level).level,
+                            status.key, long("dueAt"), subjectId,
+                            Recurrence.from(text("recurrence").ifBlank { null }).key,
+                            text("typeId").ifBlank { null },
+                            if (status == TaskStatus.DONE) updatedAt else null
+                        )
+                    )
+                }
+            }
+            "habits" -> {
+                val habitId = id.toLongOrNull() ?: return
+                val name = text("name").ifBlank { return }
+                val values = ContentValues().apply {
+                    put("id", habitId)
+                    put("name", name)
+                    put("created_at", long("createdAt") ?: updatedAt)
+                    put("archived", if (record["archived"] == true) 1 else 0)
+                }
+                db.insertWithOnConflict("habits", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            "habitLogs" -> {
+                val habitId = long("habitId") ?: text("habitId").toLongOrNull() ?: return
+                val day = text("day").ifBlank { return }
+                db.execSQL(
+                    "INSERT OR REPLACE INTO habit_logs(habit_id, day, done) VALUES(?, ?, 1)",
+                    arrayOf<Any?>(habitId, day)
+                )
+            }
+            "wirdLogs" -> {
+                val day = text("day").ifBlank { return }
+                val pages = int("pages")?.coerceIn(1, 604) ?: return
+                val values = ContentValues().apply {
+                    put("day", day)
+                    put("pages", pages)
+                    put("surah", text("surah").ifBlank { "البقرة" })
+                    put("logged_at", updatedAt)
+                }
+                db.insertWithOnConflict("wird_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            "healthLogs" -> {
+                val day = text("day").ifBlank { return }
+                val values = ContentValues().apply {
+                    put("day", day)
+                    double("weight")?.let { put("weight", it) } ?: putNull("weight")
+                    double("sleepHours")?.let { put("sleep_hours", it) } ?: putNull("sleep_hours")
+                    put("water_cups", int("waterCups")?.coerceAtLeast(0) ?: 0)
+                    put("exercise_minutes", int("exerciseMinutes")?.coerceAtLeast(0) ?: 0)
+                }
+                db.insertWithOnConflict("health_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            "transactions" -> {
+                val transactionId = id.toLongOrNull() ?: return
+                val amount = double("amount")?.takeIf { it > 0 } ?: return
+                val day = text("day").ifBlank { return }
+                val values = ContentValues().apply {
+                    put("id", transactionId)
+                    put("kind", MoneyKind.from(text("kind").ifBlank { null }).key)
+                    put("amount", amount)
+                    put("category", text("category"))
+                    put("note", "")
+                    put("day", day)
+                    put("created_at", long("createdAt") ?: updatedAt)
+                }
+                db.insertWithOnConflict("transactions", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            "moodLogs" -> {
+                val day = text("day").ifBlank { return }
+                val mood = int("mood")?.coerceIn(1, 5) ?: return
+                val values = ContentValues().apply {
+                    put("day", day)
+                    put("mood", mood)
+                    put("logged_at", updatedAt)
+                }
+                db.insertWithOnConflict("mood_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            "calorieLogs" -> {
+                val entryId = id.toLongOrNull() ?: return
+                val calories = int("calories")?.coerceIn(1, 10000) ?: return
+                val values = ContentValues().apply {
+                    put("id", entryId)
+                    put("day", text("day"))
+                    put("name", text("name"))
+                    put("calories", calories)
+                    put("created_at", long("createdAt") ?: updatedAt)
+                }
+                db.insertWithOnConflict("calorie_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+        }
+    }
+
     // ------------------------------------------------------- user profile (v17)
 
     /** Display name from the single-row user_profile table, or null when never saved. */

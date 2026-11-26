@@ -17,6 +17,13 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.time.ZonedDateTime
 
+/** نسخة ويندوز (MSI) للإصدار نفسه، عندما ينشرها الموجز؛ غيابها يعني لا نسخة ويندوز بعد. */
+internal data class WindowsRelease(
+    val downloadUrl: String,
+    val version: String,
+    val sizeBytes: Long
+)
+
 internal data class AppRelease(
     val packageName: String,
     val versionCode: Long,
@@ -25,7 +32,9 @@ internal data class AppRelease(
     val releasePageUrl: String,
     val releaseNotes: String,
     /** رابط ملف APK المباشر من الموجز؛ فارغ إن لم ينشره الموجز بعد. */
-    val apkUrl: String
+    val apkUrl: String,
+    /** نسخة ويندوز من الموجز؛ null عند غياب الحقل أو فساده (لا يفشل فحص التحديث). */
+    val windows: WindowsRelease? = null
 )
 
 internal sealed interface UpdateCheckResult {
@@ -113,7 +122,8 @@ internal object AppUpdateManager {
                 releasePageUrl = releasePage,
                 releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة."),
                 apkUrl = json.optString("apkUrl").trim().takeIf { it.isNotEmpty() }
-                    ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty()
+                    ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty(),
+                windows = parseWindows(json)
             )
 
             preferences.edit()
@@ -138,26 +148,53 @@ internal object AppUpdateManager {
         }
     }
 
+    /** The last release the feed reported, even when the Android app is already up to date. */
+    fun cachedRelease(context: Context): AppRelease? {
+        val raw = context.getSharedPreferences(FEED_PREFS, Context.MODE_PRIVATE)
+            .getString("latest_release", null) ?: return null
+        return runCatching { parseRelease(JSONObject(raw)) }.getOrNull()
+    }
+
+    private fun parseRelease(json: JSONObject): AppRelease = AppRelease(
+        packageName = json.getString("packageName"),
+        versionCode = json.getLong("versionCode"),
+        versionName = json.optString("versionName", ""),
+        storeUrl = json.optString("storeUrl").trim().takeIf { it.isNotEmpty() }
+            ?.let { requireHttps(it, "رابط المتجر") }.orEmpty(),
+        releasePageUrl = requireHttps(json.getString("releasePageUrl"), "صفحة الإصدار"),
+        releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة."),
+        apkUrl = json.optString("apkUrl").trim().takeIf { it.isNotEmpty() }
+            ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty(),
+        windows = parseWindows(json)
+    )
+
     private fun readCachedResult(context: Context): UpdateCheckResult {
         val raw = context.getSharedPreferences(FEED_PREFS, Context.MODE_PRIVATE)
             .getString("latest_release", null) ?: return UpdateCheckResult.Failed("تعذر قراءة نتيجة الفحص السابق.")
         return runCatching {
-            val json = JSONObject(raw)
-            val release = AppRelease(
-                packageName = json.getString("packageName"),
-                versionCode = json.getLong("versionCode"),
-                versionName = json.optString("versionName", ""),
-                storeUrl = json.optString("storeUrl").trim().takeIf { it.isNotEmpty() }
-                    ?.let { requireHttps(it, "رابط المتجر") }.orEmpty(),
-                releasePageUrl = requireHttps(json.getString("releasePageUrl"), "صفحة الإصدار"),
-                releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة."),
-                apkUrl = json.optString("apkUrl").trim().takeIf { it.isNotEmpty() }
-                    ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty()
-            )
+            val release = parseRelease(JSONObject(raw))
             if (release.versionCode > currentVersionCode(context)) UpdateCheckResult.Available(release)
             else UpdateCheckResult.UpToDate
         }.getOrElse { UpdateCheckResult.Failed("تعذر قراءة بيانات الإصدار المحفوظة.") }
     }
+
+    /**
+     * Reads the optional `windows` object from the feed (`{downloadUrl, version, sizeBytes}`).
+     * Never throws: a malformed object is the same as no Windows release, so a bad feed value
+     * can never break the Android update check.
+     */
+    private fun parseWindows(json: JSONObject): WindowsRelease? = runCatching {
+        val obj = json.optJSONObject("windows") ?: return null
+        val downloadUrl = obj.optString("downloadUrl").trim().takeIf { it.isNotEmpty() }
+            ?.let { requireHttps(it, "رابط نسخة ويندوز") } ?: return null
+        val uri = Uri.parse(downloadUrl)
+        require(uri.path.orEmpty().lowercase().endsWith(".msi")) { "رابط نسخة ويندوز يجب أن ينتهي بـ .msi." }
+        val version = obj.optString("version").trim()
+        require(Regex("""\d+\.\d+\.\d+""").matches(version)) { "رقم نسخة ويندوز غير صالح." }
+        val sizeBytes = obj.optLong("sizeBytes", 0L)
+        require(sizeBytes > 0) { "حجم نسخة ويندوز غير صالح." }
+        WindowsRelease(downloadUrl = downloadUrl, version = version, sizeBytes = sizeBytes)
+    }.getOrNull()
 
     private fun requireHttps(value: String, label: String): String {
         val uri = Uri.parse(value)

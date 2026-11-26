@@ -185,7 +185,23 @@ data class FocusSessionMetric(val startedAt: Long, val endsAt: Long, val taskId:
 data class Habit(
     val id: Long,
     val name: String,
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    /** مؤرشفة: تبقى في المزامنة (تُرسل archived=true) لكن شاشة «حياتي» تخفيها. */
+    val archived: Boolean = false
+)
+
+/** سطر واحد في habit_logs: إنجاز عادة في يوم؛ الغياب يعني عدم الإنجاز. */
+data class HabitLogRow(
+    val habitId: Long,
+    val day: String
+)
+
+/** سجل ورد يوم واحد؛ المعرّف المتزامَن هو `day` نفسه. */
+data class WirdLog(
+    val day: String,
+    val pages: Int,
+    val surah: String,
+    val loggedAt: Long = 0L
 )
 
 /** إعدادات الورد اليومي؛ الافتراضي صفحتان يوميًا من سورة البقرة بداية من صفحة 2. */

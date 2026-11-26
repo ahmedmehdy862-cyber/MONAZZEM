@@ -1186,6 +1186,9 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
     var downloadState by remember { mutableStateOf<DirectDownloadState>(DirectDownloadState.Idle) }
     var installDialog by remember { mutableStateOf<InstallGateDialogKind?>(null) }
     var pendingRelease by remember { mutableStateOf<AppRelease?>(null) }
+    // نسخة ويندوز من الموجز: تظهر حتى عندما يكون تطبيق أندرويد محدثًا، لذا تُقرأ أيضًا
+    // من آخر إصدار محفوظ لا من نتيجة الفحص وحدها.
+    var windowsRelease by remember { mutableStateOf<WindowsRelease?>(null) }
 
     fun runCheck(manual: Boolean) {
         if (checking || !AppUpdateManager.configured()) return
@@ -1283,6 +1286,8 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
     // وتنزيل جارٍ لنفس الإصدار ← متابعة الاستعلام عنه (بلا إعادة تنزيل).
     LaunchedEffect(result) {
         val release = (result as? UpdateCheckResult.Available)?.release ?: return@LaunchedEffect
+        windowsRelease = (result as? UpdateCheckResult.Available)?.release?.windows
+            ?: withContext(Dispatchers.IO) { AppUpdateManager.cachedRelease(context)?.windows }
         if (downloadState !is DirectDownloadState.Idle) return@LaunchedEffect
         if (DirectUpdateDownloader.hasDownloadedApk(context, release)) {
             downloadState = DirectDownloadState.ReadyToInstall
@@ -1404,6 +1409,32 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp)
         ) { Text(if (checking) "جارٍ الفحص…" else "فحص الآن") }
+        // مدخل ويندوز (windows-sync): يظهر فقط عندما ينشر الموجز نسخة ويندوز، وضغطته
+        // تفتح رابط MSI في المتصفح — بلا تنزيل داخل التطبيق وبلا أذونات جديدة.
+        windowsRelease?.let { windows ->
+            Spacer(Modifier.height(14.dp))
+            PreferenceCard(
+                title = "نسخة ويندوز",
+                description = "مُنظِّم على حاسوبك بنفس مهامك وبيانات «حياتي»، وتتزامن مع هاتفك."
+            ) {
+                Text(
+                    "الإصدار ${windows.version} لنظام ويندوز · الحجم ${formatWindowsSize(windows.sizeBytes)}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "ثبّت نسخة ويندوز على حاسوبك، ثم سجّل فيها بنفس معرّف حسابك وكلمة مرور المزامنة لتظهر مهامك وبياناتك هناك.",
+                    color = FocusColors.TextSecondary
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { openWindowsLink(context, windows) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp)
+                ) { Text("تنزيل نسخة ويندوز") }
+            }
+        }
         installDialog?.let { kind ->
             InstallPermissionDialog(
                 kind = kind,
@@ -1419,6 +1450,17 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             Text("سيظل الإصدار الحالي يعمل. لإشعارات الإصدارات القادمة، يجب ربط موجز الإصدارات وصفحة التطبيق في المتجر.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+private fun formatWindowsSize(bytes: Long): String {
+    val mb = bytes.toDouble() / (1024.0 * 1024.0)
+    return if (mb >= 100) "${mb.toInt()} م.ب" else "${"%.1f".format(mb)} م.ب"
+}
+
+private fun openWindowsLink(context: Context, windows: WindowsRelease) {
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(windows.downloadUrl)))
     }
 }
 

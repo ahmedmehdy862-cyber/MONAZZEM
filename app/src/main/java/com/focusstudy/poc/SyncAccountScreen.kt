@@ -50,6 +50,8 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
     var pushPassphrase by remember { mutableStateOf("") }
     var pushBusy by remember { mutableStateOf(false) }
     var pushStatus by remember { mutableStateOf("") }
+    var pullBusy by remember { mutableStateOf(false) }
+    var pullStatus by remember { mutableStateOf("") }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -159,7 +161,7 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("رفع البيانات إلى الويب", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "أدخل كلمة مرور المزامنة نفسها لرفع نسخة من مهامك وموادك وأنواع المهام.",
+                    "أدخل كلمة مرور المزامنة نفسها لرفع نسخة من مهامك وموادك وأنواع المهام وبيانات «حياتي» (العادات والورد والصحة والمال والمزاج والسعرات).",
                     color = FocusColors.TextSecondary,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -202,8 +204,45 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
                 if (pushStatus.isNotBlank()) {
                     Text(pushStatus, style = MaterialTheme.typography.bodySmall)
                 }
+                Button(
+                    onClick = {
+                        when {
+                            !SyncPassphrase.isValid(pushPassphrase) ->
+                                pullStatus = "أدخل كلمة مرور المزامنة."
+                            pullBusy -> Unit
+                            else -> {
+                                pullBusy = true
+                                pullStatus = ""
+                                scope.launch {
+                                    val outcome = SyncAccount.pull(context, pushPassphrase)
+                                    pullBusy = false
+                                    pullStatus = when (outcome) {
+                                        SyncAccount.Result.SUCCESS -> "تم سحب البيانات وتطبيقها."
+                                        SyncAccount.Result.INVALID_PASSPHRASE -> "كلمة المرور لا تحقق الشرط."
+                                        SyncAccount.Result.PROFILE_NOT_READY -> "معرّف الحساب غير جاهز بعد."
+                                        SyncAccount.Result.NETWORK_ERROR ->
+                                            "تعذّر السحب؛ تحقق من الاتصال وكلمة المرور ثم حاول مرة أخرى."
+                                        SyncAccount.Result.REJECTED -> "تعذّر سحب البيانات."
+                                    }
+                                    if (outcome == SyncAccount.Result.SUCCESS) pushPassphrase = ""
+                                }
+                            }
+                        }
+                    },
+                    enabled = !pullBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp)
+                ) { Text(if (pullBusy) "جارٍ السحب…" else "سحب البيانات من الويب") }
+                if (pullStatus.isNotBlank()) {
+                    Text(pullStatus, style = MaterialTheme.typography.bodySmall)
+                }
                 Text(
-                    "لا تُرفع النوتة ولا ملاحظات المهام ولا معرّفات الجهاز أو الإشعارات.",
+                    "السحب يجلب أحدث نسخة من الويب: السجل الأحدث يفوز، والمحذوف هناك يُحذف هنا، وبياناتك المحلية التي لم تُرفع بعد لا تُستبدل.",
+                    color = FocusColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "لا تُرفع النوتة ولا ملاحظات المهام أو المعاملات المالية ولا معرّفات الجهاز أو الإشعارات.",
                     color = FocusColors.TextSecondary,
                     style = MaterialTheme.typography.bodySmall
                 )
