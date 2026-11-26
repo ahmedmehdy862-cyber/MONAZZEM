@@ -1,0 +1,192 @@
+name: Build and publish مُنظِّم Windows MSI
+
+# يُشغَّل بعد نشر GitHub Release (الذي ينشئه workflow أندرويد من الوسم)،
+# فيبني MSI لنفس الإصدار ويرفعه إلى الـ Release نفسه، ثم يبلّغ الموجز
+# المركزي بحقل windows. لا ينشئ Release ولا وسمًا ولا يمس إصدار أندرويد.
+#
+# يعتمد على دعم الخادم لحقل windows في /api/admin/publish-ci (جزء أ — يضيف
+# "windows" إلى حقول الإصدار المنشورة ويعيده /api/latest). حتى يصل ذلك
+# الدعم، خطوة «Verify feed shows Windows build» ستفشل بصوت عالٍ بدل أن
+# يمر التشغيل أخضر دون أن يظهر ويندوز في المتجر — هذا مقصود.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    if: startsWith(github.event.release.tag_name, 'focus-v')
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Ensure WiX Toolset (MSI packaging)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command light.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset -y
+          }
+          if (-not (Get-Command light.exe -ErrorAction SilentlyContinue)) {
+            throw "WiX Toolset (light.exe) is not available; jpackage cannot build an MSI"
+          }
+
+      - name: Read release metadata
+        id: metadata
+        shell: python
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          import json, os, re, subprocess
+          tag = os.environ["TAG_NAME"]
+          repo = os.environ["REPOSITORY"]
+          # Version is read from the Android app module; the tag must match it,
+          # same rule as the Android release workflow.
+          text = open("app/build.gradle.kts", encoding="utf-8").read()
+          code = re.search(r"versionCode\s*=\s*(\d+)", text)
+          name = re.search(r'versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', text)
+          if not code or not name:
+              raise SystemExit("Could not read versionCode/versionName from app/build.gradle.kts")
+          if tag != f"focus-v{name.group(1)}":
+              raise SystemExit(f"Tag {tag} does not match app version {name.group(1)}")
+          # The Release already exists (published by the Android workflow):
+          # read apkUrl + releaseNotes from it, so the feed payload stays whole.
+          env = dict(os.environ)
+          out = subprocess.check_output(
+              ["gh", "api", f"repos/{repo}/releases/tags/{tag}"], env=env, text=True
+          )
+          release = json.loads(out)
+          apk_url = next(
+              (a["browser_download_url"] for a in release.get("assets", []) if a["name"] == "MONAZZEM.apk"),
+              "",
+          )
+          if not apk_url:
+              raise SystemExit("MONAZZEM.apk asset not found on the release yet")
+          notes = release.get("body") or ""
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"version_code={code.group(1)}\n")
+              fh.write(f"version_name={name.group(1)}\n")
+              fh.write(f"apk_url={apk_url}\n")
+              fh.write("release_notes<<FOCUS_NOTES_EOF\n")
+              fh.write(notes)
+              fh.write("\nFOCUS_NOTES_EOF\n")
+
+      - name: Build MSI
+        run: .\gradlew.bat --no-daemon :desktop:packageMsi -PdesktopVersion=${{ steps.metadata.outputs.version_name }} -PdesktopVersionCode=${{ steps.metadata.outputs.version_code }}
+
+      - name: Prepare stable MSI asset name
+        id: msi
+        shell: pwsh
+        env:
+          VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
+        run: |
+          $files = @(Get-ChildItem -Path desktop/build/compose/binaries/main/msi -Filter *.msi)
+          if ($files.Count -ne 1) {
+            throw "Expected exactly one MSI under desktop/build/compose/binaries/main/msi, found $($files.Count)"
+          }
+          $asset = "MONAZZEM-Setup-$env:VERSION_NAME.msi"
+          Copy-Item $files[0].FullName $asset
+          $size = (Get-Item $asset).Length
+          "asset=$asset" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "size_bytes=$size" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload MSI to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        shell: pwsh
+        run: gh release upload $env:TAG_NAME ${{ steps.msi.outputs.asset }} --clobber
+
+      - name: Publish Windows build to central feed
+        shell: python
+        env:
+          SYNC_TOKEN: ${{ secrets.FOCUS_RELEASE_SYNC_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
+          VERSION_CODE: ${{ steps.metadata.outputs.version_code }}
+          APK_URL: ${{ steps.metadata.outputs.apk_url }}
+          RELEASE_NOTES: ${{ steps.metadata.outputs.release_notes }}
+          MSI_ASSET: ${{ steps.msi.outputs.asset }}
+          MSI_SIZE_BYTES: ${{ steps.msi.outputs.size_bytes }}
+        run: |
+          import json, os, urllib.request, urllib.error
+          token = os.environ["SYNC_TOKEN"]
+          if not token:
+              raise SystemExit("FOCUS_RELEASE_SYNC_TOKEN is empty")
+          tag = os.environ["TAG_NAME"]
+          asset = os.environ["MSI_ASSET"]
+          payload = {
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": os.environ["VERSION_NAME"],
+              "releaseNotes": os.environ.get("RELEASE_NOTES") or "تحديث جديد من مُنظِّم: تحسينات وإصلاحات وتجربة أفضل.",
+              "apkUrl": os.environ["APK_URL"],
+              "storeUrl": "https://qubixstore.vercel.app/focus-study-updates",
+              "description": "نظّم مهامك وموادك وجلسات تركيزك وخطتك الدراسية في مساحة واحدة.",
+              "windows": {
+                  "downloadUrl": f"https://github.com/{os.environ['REPOSITORY']}/releases/download/{tag}/{asset}",
+                  "version": os.environ["VERSION_NAME"],
+                  "sizeBytes": int(os.environ["MSI_SIZE_BYTES"]),
+              },
+          }
+          request = urllib.request.Request(
+              "https://update-site-sigma.vercel.app/api/admin/publish-ci",
+              data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+              method="POST",
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  print("publish-ci:", response.status, response.read().decode("utf-8", "replace"))
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f"publish-ci failed: {error.code} {error.read().decode('utf-8', 'replace')}")
+
+      - name: Verify feed shows Windows build
+        shell: python
+        env:
+          VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          MSI_ASSET: ${{ steps.msi.outputs.asset }}
+        run: |
+          import json, os, time, urllib.request
+          expected_url = (
+              f"https://github.com/{os.environ['REPOSITORY']}/releases/download/"
+              f"{os.environ['TAG_NAME']}/{os.environ['MSI_ASSET']}"
+          )
+          expected_name = os.environ["VERSION_NAME"]
+          last = "no response"
+          for attempt in range(1, 13):
+              try:
+                  with urllib.request.urlopen(
+                      f"https://update-site-sigma.vercel.app/api/latest?verify={int(time.time())}",
+                      timeout=10,
+                  ) as response:
+                      feed = json.load(response)
+                  windows = feed.get("windows") or {}
+                  if (
+                      str(feed.get("versionName")) == expected_name
+                      and windows.get("downloadUrl") == expected_url
+                      and str(windows.get("version")) == expected_name
+                  ):
+                      print(f"Feed verified: windows {expected_name} -> {expected_url}")
+                      break
+                  last = json.dumps(feed.get("windows"), ensure_ascii=False)
+              except Exception as error:
+                  last = str(error)
+              if attempt < 12:
+                  time.sleep(10)
+          else:
+              raise SystemExit(
+                  f"Feed did not report windows {expected_name} after sync; last={last}"
+              )
