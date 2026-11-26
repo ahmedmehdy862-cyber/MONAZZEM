@@ -3,7 +3,7 @@ package com.focusstudy.poc
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import androidx.security.crypto.MasterKeys
 
 /**
  * Opt-in encrypted storage for the sync passphrase, behind one explicit user toggle.
@@ -65,13 +65,14 @@ internal class SyncCredentialStore(
 
         /** Null when the Keystore/encrypted prefs cannot be opened on this device. */
         fun defaultEncryptedPrefs(context: Context): SharedPreferences? = runCatching {
-            val masterKey = MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
+            // security-crypto 1.0.0 (stable): MasterKeys.getOrCreate is the API of this
+            // version — MasterKey.Builder only exists from 1.1.0-alpha. The 1.0.0
+            // EncryptedSharedPreferences.create takes (fileName, masterKeyAlias, context, …).
+            val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
             EncryptedSharedPreferences.create(
-                context,
                 FILE_NAME,
-                masterKey,
+                masterKeyAlias,
+                context,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
