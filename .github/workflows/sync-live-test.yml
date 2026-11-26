@@ -120,6 +120,22 @@ jobs:
             fi
             echo "network restored"
 
+      - name: Dump emulator logcat
+        if: always()
+        run: adb logcat -d > ./logcat-seed.txt || true
+
+      - name: Upload Android test results and logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-seed-test-results
+          path: |
+            app/build/outputs/androidTest-results/connected/
+            app/build/reports/androidTests/connected/
+            logcat-seed.txt
+          retention-days: 1
+          if-no-files-found: ignore
+
       - name: Upload live-test credentials
         uses: actions/upload-artifact@v4
         with:
@@ -277,11 +293,14 @@ jobs:
             ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveVerifyTest
             adb logcat -d > ./logcat-verify.txt || true
 
-      - name: Upload verify logcat
+      - name: Upload verify logcat and test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sync-live-verify-logcat
-          path: logcat-verify.txt
+          path: |
+            logcat-verify.txt
+            app/build/outputs/androidTest-results/connected/
+            app/build/reports/androidTests/connected/
           retention-days: 1
           if-no-files-found: ignore

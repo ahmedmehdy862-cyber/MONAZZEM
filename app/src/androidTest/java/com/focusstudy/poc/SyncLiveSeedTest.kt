@@ -37,7 +37,10 @@ class SyncLiveSeedTest {
         assertEquals(profileId, UserIdentity.profileId(context))
 
         SyncLiveTestSupport.runLive {
-            assertEquals(SyncAccount.Result.SUCCESS, SyncAccount.register(context, passphrase))
+            assertEquals(
+                SyncAccount.Result.SUCCESS,
+                SyncLiveTestSupport.retrySync("sync-register") { SyncAccount.register(context, passphrase) },
+            )
         }
 
         // 2) زرع المجموعات العشر عبر دوال الكتابة الحقيقية.
@@ -70,10 +73,16 @@ class SyncLiveSeedTest {
         db.logMood(day, 4)
         db.addCalorieEntry(SyncLiveTestSupport.SEED_CALORIE_NAME, 350, day)
 
-        // 3) دفع ثم سحب عبر الكود الحقيقي للمزامنة.
+        // 3) دفع ثم سحب عبر الكود الحقيقي للمزامنة (مع إعادة محاولة عند بدء بارد).
         SyncLiveTestSupport.runLive {
-            assertEquals(SyncAccount.Result.SUCCESS, SyncAccount.push(context, passphrase))
-            assertEquals(SyncAccount.Result.SUCCESS, SyncAccount.pull(context, passphrase))
+            assertEquals(
+                SyncAccount.Result.SUCCESS,
+                SyncLiveTestSupport.retrySync("sync-push") { SyncAccount.push(context, passphrase) },
+            )
+            assertEquals(
+                SyncAccount.Result.SUCCESS,
+                SyncLiveTestSupport.retrySync("sync-pull") { SyncAccount.pull(context, passphrase) },
+            )
         }
 
         // 4) تحقق محلي: كل المجموعات العشر موجودة بعد الجولة.

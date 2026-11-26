@@ -1,6 +1,8 @@
 package com.focusstudy.poc
 
 import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -44,7 +46,10 @@ internal object SyncLiveTestSupport {
 
     /**
      * يسجّل مستخدم اختبار جديد عبر /api/messages (نفس مصافحة التطبيق عند
-     * أول تشغيل) ويعيد profileId الصادر من الخادم.
+     * أول تشغيل) ويعيد profileId الصادر من الخادم. يعيد المحاولة عند فشل
+     * الشبكة العابر: دوال Vercel بلا خادم دائم تبدأ باردة أحيانًا، ومهلة
+     * عميل التطبيق 6 ثوانٍ فقط — فمحاولة واحدة قد تنتهي قبل أن تستيقظ
+     * الدالة، وهذا ليس فشل مزامنة.
      */
     fun registerTestProfile(): String {
         val payload = JSONObject()
@@ -54,11 +59,47 @@ internal object SyncLiveTestSupport {
             .put("profile", "general")
             .put("versionName", "0.34.0")
             .put("versionCode", 43)
-        val response = TeamMessages.request("${TeamMessages.BASE}/api/messages", "POST", payload.toString())
+        val response = retryHttp("messages-register") {
+            TeamMessages.request("${TeamMessages.BASE}/api/messages", "POST", payload.toString())
+        }
         val profileId = JSONObject(response).optString("profileId")
         check(profileId.isNotBlank()) { "messages register did not issue a profileId: $response" }
         check(UserIdentity.isValidProfileId(profileId)) { "issued profileId is not a valid UUID: $profileId" }
+        Log.d("SyncLive", "registered test profile $profileId")
         return profileId
+    }
+
+    /** يعيد المحاولة عند أي فشل شبكة عابر (مهلة، بدء بارد) — لا عند رفض صريح. */
+    fun retryHttp(name: String, attempts: Int = 3, block: () -> String): String {
+        var lastError: Exception? = null
+        repeat(attempts) { attempt ->
+            Log.d("SyncLive", "$name attempt ${attempt + 1}/$attempts")
+            try {
+                return block()
+            } catch (error: Exception) {
+                lastError = error
+                Log.w("SyncLive", "$name attempt ${attempt + 1} failed: $error")
+                if (attempt + 1 < attempts) Thread.sleep(10_000)
+            }
+        }
+        throw lastError!!
+    }
+
+    /** يعيد محاولة عملية مزامنة ما دامت نتيجتها NETWORK_ERROR فقط. */
+    suspend fun retrySync(
+        name: String,
+        attempts: Int = 3,
+        block: suspend () -> SyncAccount.Result,
+    ): SyncAccount.Result {
+        var last: SyncAccount.Result = SyncAccount.Result.NETWORK_ERROR
+        repeat(attempts) { attempt ->
+            Log.d("SyncLive", "$name attempt ${attempt + 1}/$attempts")
+            last = block()
+            if (last != SyncAccount.Result.NETWORK_ERROR) return last
+            Log.w("SyncLive", "$name attempt ${attempt + 1} -> NETWORK_ERROR")
+            if (attempt + 1 < attempts) delay(10_000)
+        }
+        return last
     }
 
     /** سحب خام من الخادم (مستقل عن منطق التطبيق) — للتحقق أن البيانات وصلت فعلًا. */
@@ -67,7 +108,9 @@ internal object SyncLiveTestSupport {
             .put("action", "pull")
             .put("profileId", profileId)
             .put("passphrase", passphrase)
-        val response = TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
+        val response = retryHttp("sync-raw-pull") {
+            TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
+        }
         return JSONObject(response)
     }
 

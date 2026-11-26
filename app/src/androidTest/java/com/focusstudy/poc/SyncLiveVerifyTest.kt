@@ -36,7 +36,10 @@ class SyncLiveVerifyTest {
         UserIdentity.storeProfileId(context, profileId)
 
         SyncLiveTestSupport.runLive {
-            assertEquals(SyncAccount.Result.SUCCESS, SyncAccount.pull(context, passphrase))
+            assertEquals(
+                SyncAccount.Result.SUCCESS,
+                SyncLiveTestSupport.retrySync("sync-pull") { SyncAccount.pull(context, passphrase) },
+            )
         }
 
         val db = StudyDb.get(context)
