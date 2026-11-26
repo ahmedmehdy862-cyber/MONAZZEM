@@ -223,6 +223,18 @@ private val POSE_HIP_THRUST = FigurePose(hipY = 108f, torsoAngle = 70f, legAngle
 private val POSE_GLUTE_BRIDGE = FigurePose(hipY = 105f, torsoAngle = 90f, legAngle = 40f, legBend = -40f, thighLen = 22f, shinLen = 22f)
 private val POSE_STEP_UP = FigurePose(legAngle = 45f, legBend = -20f, legAngle2 = 0f, equipment = Equipment.BOX)
 private val POSE_PUSH_UP = FigurePose(hipY = 108f, torsoAngle = 90f, armAngle = 40f, armBend = 40f, legAngle = 270f)
+// الضغط الواسع والمثلث (M4): رسم الضغط العادي نفسه لثلاثة تمارين مختلفة
+// كان مضلِّلًا. الشخصية العصوية منظر جانبي فلا تُرى مسافة اليدين حرفيًا،
+// فيُميَّز كل متغير بزاوية المرفقين: الواسع بمرفقين مفتوحين وإحدى الذراعين
+// أبعد، والمثلث (التراي) بذراعين قريبتين من الجسم ومرفقين مثنيين أكثر.
+private val POSE_PUSH_UP_WIDE = POSE_PUSH_UP.copy(armAngle = 55f, armBend = 55f, armAngle2 = 25f, armBend2 = 55f)
+private val POSE_PUSH_UP_DIAMOND = POSE_PUSH_UP.copy(armAngle = 10f, armBend = 60f, armAngle2 = 10f, armBend2 = 60f)
+// السمانة (M4): كانت POSE_STAND العامة — وهي نفسها احتياطي «بلا وضعية» —
+// فلا فرق بصريًا بين مسجَّل وغير مسجَّل. رفع السمانة يُميَّز بجسم أعلى
+// (على أطراف الأصابع) وذراعين مفتوحتين قليلًا للتوازن؛ ونسخة الجيم ببار
+// على الكتفين.
+private val POSE_CALF_RAISE = FigurePose(hipY = 84f, armAngle = 15f)
+private val POSE_CALF_RAISE_BAR = POSE_CALF_RAISE.copy(equipment = Equipment.BARBELL, barAnchor = BarAnchor.SHOULDERS)
 private val POSE_KNEE_PUSH_UP = FigurePose(hipY = 105f, torsoAngle = 90f, armAngle = 40f, armBend = 40f, legAngle = 20f, legBend = 60f, thighLen = 20f, shinLen = 20f)
 private val POSE_PIKE_PUSH_UP = FigurePose(hipY = 110f, torsoAngle = 150f, armAngle = 0f, armBend = 30f, legAngle = 300f)
 private val POSE_INCLINE_PUSH_UP = FigurePose(hipY = 100f, torsoAngle = 80f, armAngle = 30f, armBend = 20f, legAngle = 270f, equipment = Equipment.TABLE)
@@ -277,7 +289,7 @@ private val poseByExercise: Map<String, FigurePose> = mapOf(
     "gym_m_c2" to POSE_LEG_PRESS,
     "gym_m_c3" to POSE_DEADLIFT,
     "gym_m_c4" to POSE_LEG_CURL,
-    "gym_m_c5" to POSE_STAND,
+    "gym_m_c5" to POSE_CALF_RAISE_BAR,
     "gym_m_c6" to POSE_PLANK,
     "gym_f_a1" to POSE_SQUAT,
     "gym_f_a2" to POSE_HIP_THRUST,
@@ -298,8 +310,8 @@ private val poseByExercise: Map<String, FigurePose> = mapOf(
     "gym_f_c5" to POSE_RUSSIAN_TWIST,
     "gym_f_c6" to POSE_GLUTE_BRIDGE,
     "home_m_a1" to POSE_PUSH_UP,
-    "home_m_a2" to POSE_PUSH_UP,
-    "home_m_a3" to POSE_PUSH_UP,
+    "home_m_a2" to POSE_PUSH_UP_WIDE,
+    "home_m_a3" to POSE_PUSH_UP_DIAMOND,
     "home_m_a4" to POSE_PIKE_PUSH_UP,
     "home_m_a5" to POSE_DIP_BODYWEIGHT,
     "home_m_a6" to POSE_PLANK,
@@ -307,7 +319,7 @@ private val poseByExercise: Map<String, FigurePose> = mapOf(
     "home_m_b2" to POSE_BULGARIAN,
     "home_m_b3" to POSE_LUNGE,
     "home_m_b4" to POSE_GLUTE_BRIDGE,
-    "home_m_b5" to POSE_STAND,
+    "home_m_b5" to POSE_CALF_RAISE,
     "home_m_b6" to POSE_LEG_RAISE,
     "home_m_c1" to POSE_SUPERMAN,
     "home_m_c2" to POSE_SNOW_ANGEL,
@@ -320,7 +332,7 @@ private val poseByExercise: Map<String, FigurePose> = mapOf(
     "home_f_a3" to POSE_DONKEY_KICK,
     "home_f_a4" to POSE_FIRE_HYDRANT,
     "home_f_a5" to POSE_SIDE_LEG_RAISE,
-    "home_f_a6" to POSE_STAND,
+    "home_f_a6" to POSE_CALF_RAISE,
     "home_f_b1" to POSE_PLANK,
     "home_f_b2" to POSE_RUSSIAN_TWIST,
     "home_f_b3" to POSE_KNEE_PUSH_UP,
