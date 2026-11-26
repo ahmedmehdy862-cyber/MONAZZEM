@@ -30,25 +30,6 @@ class QuranZoomTest {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
-        // تشخيص مؤقت (يُحذف بعد معرفة السبب): أي خطوة من تحميل الفهرس
-        // تفشل تحت Robolectric؟ يُطبع في Standard output للتقرير.
-        try {
-            println("DIAG quran list=" + context.assets.list("quran")?.joinToString(","))
-        } catch (e: Exception) {
-            println("DIAG quran list failed: $e")
-        }
-        try {
-            val bytes = context.assets.open("quran/quran-uthmani.txt").use { it.readBytes() }
-            println("DIAG quran txt bytes=" + bytes.size)
-        } catch (e: Exception) {
-            println("DIAG quran txt failed: $e")
-        }
-        try {
-            val bytes = context.assets.open("quran/pages.json").use { it.readBytes() }
-            println("DIAG pages json bytes=" + bytes.size)
-        } catch (e: Exception) {
-            println("DIAG pages json failed: $e")
-        }
         index = QuranData.loadIndex(context) ?: error("تعذّر تحميل فهرس المصحف")
     }
 
