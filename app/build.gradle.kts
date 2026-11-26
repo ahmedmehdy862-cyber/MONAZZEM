@@ -128,6 +128,23 @@ dependencies {
     implementation("com.google.mlkit:face-detection:16.1.7")
     // EXIF orientation for camera photos picked for the avatar (see FaceAnalyzer).
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    // 3D companion «منظم» (0.34.0): SceneView فوق Filament — العارض التصريحي
+    // لـ Compose، خليفة Sceneform المدعوم. الاختيار مقابل Filament الخام:
+    // Filament وحده يحتاج ModelViewer يدويًا بلا تكامل Compose ولا إدارة
+    // دورة حياة؛ SceneView يعطي SceneView { ModelNode(...) } مع تدمير
+    // تلقائي للمحرك والنموذج، وتحميل GLB من assets، وتحكم بالحركات
+    // بالاسم (animationName)، وخلفية شفافة (isOpaque=false)، وإيقاف
+    // رندر (isRendering) عند عدم الظهور. minSdk 24 في المكتبة ≤ 26 هنا،
+    // وبلا ARCore (نستخدم وحدة 3D فقط، لا arsceneview).
+    // الإصدار 4.18.0 تحديدًا — وليس 4.73.0 الأحدث — لأن 4.73 يتطلب
+    // compileSdk 37 + Kotlin 2.3 + JVM 21 (توثيق SceneView الرسمي)،
+    // والمشروع على compileSdk 36 + Kotlin 2.2.10 + JVM 17؛ و4.18.0 هو
+    // «أحدث إصدار يُبنى على AGP 8 / compileSdk 36 / Kotlin 2.2» حسب
+    // التوثيق نفسه. رفع toolchain المشروع إلى 4.73 خارج نطاق 0.34.0.
+    // تكلفة APK تقديرية (تُقاس من assembleRelease): الـ GLB ‏1.31MB +
+    // ‏SceneView/Filament بنحو 6–12MB إضافية في APK موحد (natives لأربع
+    // ‏ABIs)؛ القياس الحقيقي في دليل التكامل عند أول بناء إصدار.
+    implementation("io.github.sceneview:sceneview:4.18.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     // Robolectric for the DB migration test (DbMigrationV16ToV17Test): the migration

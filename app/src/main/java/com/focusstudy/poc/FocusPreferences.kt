@@ -61,6 +61,10 @@ data class FocusPreferences(
     /** كيف تُعرض الصورة الشخصية: كرتوني / ثلاثي الأبعاد / الصورة كما هي. */
     val avatarMode: AvatarMode = AvatarMode.CARTOON,
     val companionStyle: Int = 0,
+    /** الرفيق ثلاثي الأبعاد «منظم» (0.34.0): إظهاره على الرئيسية. */
+    val companion3dEnabled: Boolean = true,
+    /** حركات الرفيق ثلاثي الأبعاد؛ إيقافها يعرض صورته الثابتة بدل العارض. */
+    val companion3dAnimationsEnabled: Boolean = true,
     val generalNotificationsEnabled: Boolean = true,
     /**
      * رسائل الفريق لها مفتاحها المستقل منذ المرحلة 4. قبلها كان مفتاح «رسائل الفريق» هو نفسه
@@ -133,6 +137,8 @@ data class FocusPreferences(
                 avatarFaceProfileJson = prefs.getString("avatar_face_profile_json", "").orEmpty(),
                 avatarMode = AvatarMode.from(prefs.getString("avatar_mode", "cartoon")),
                 companionStyle = prefs.getInt("companion_style", 0).coerceIn(0, 3),
+                companion3dEnabled = prefs.getBoolean("companion_3d_enabled", true),
+                companion3dAnimationsEnabled = prefs.getBoolean("companion_3d_animations_enabled", true),
                 generalNotificationsEnabled = prefs.getBoolean("general_notifications_enabled", prefs.getBoolean("daily_reminder_enabled", true)),
                 // First run after the split: inherit the old shared switch, so a person who had
                 // silenced team messages does not get them back without asking.
@@ -183,6 +189,8 @@ data class FocusPreferences(
                 .putString("avatar_face_profile_json", value.avatarFaceProfileJson)
                 .putString("avatar_mode", value.avatarMode.key)
                 .putInt("companion_style", value.companionStyle.coerceIn(0, 3))
+                .putBoolean("companion_3d_enabled", value.companion3dEnabled)
+                .putBoolean("companion_3d_animations_enabled", value.companion3dAnimationsEnabled)
                 .putBoolean("general_notifications_enabled", value.generalNotificationsEnabled)
                 .putBoolean("team_messages_enabled", value.teamMessagesEnabled)
                 .putBoolean("morning_message_enabled", value.morningMessageEnabled)

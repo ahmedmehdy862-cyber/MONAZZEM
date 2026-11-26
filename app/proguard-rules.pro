@@ -29,6 +29,21 @@
 -keep class com.google.mlkit.common.** { *; }
 -dontwarn com.google.mlkit.**
 
+# --- SceneView 3D companion (0.34.0) + Filament ---
+# Lesson of 0.33.0: any library that reaches classes by name must have an
+# explicit keep — a stripped registrar/init class crashes the app at launch
+# before any screen appears. SceneView/Filament load their renderer through
+# JNI and resolve glTF/node classes across the library boundary, and
+# SceneView ships consumer rules of its own; these keeps are the same
+# explicit insurance on top, so an R8 upgrade never silently breaks the
+# companion (or the launch) the way ML Kit did in 0.33.0.
+-keep class io.github.sceneview.** { *; }
+-keep class com.google.android.filament.** { *; }
+-keep class com.google.android.filament.gltfio.** { *; }
+-keep class com.google.android.filament.utils.** { *; }
+-dontwarn io.github.sceneview.**
+-dontwarn com.google.android.filament.**
+
 # --- Adhan (prayer-time calculations) ---
 -keep class com.batoulapps.adhan.** { *; }
 -dontwarn com.batoulapps.adhan.**
