@@ -46,7 +46,7 @@ internal object FaceAnalyzer {
     suspend fun analyze(bitmap: Bitmap): FaceProfile? {
         val detectionBitmap = downscaleForDetection(bitmap)
         try {
-            val face = suspendCancellableCoroutine { cont ->
+            val face = suspendCancellableCoroutine<Face?> { cont ->
                 val detector = FaceDetection.getClient(detectorOptions())
                 // إغلاق مرة واحدة فقط: قد يتسابق الإلغاء مع نجاح/فشل الكشف.
                 val closed = AtomicBoolean(false)
