@@ -2144,7 +2144,12 @@ class StudyDb private constructor(context: Context) :
      * Caller saves the plan's stamps only after this returns, so a failure here leaves the
      * old stamps — and the next pull retries the same snapshot.
      */
-    fun applySyncPlan(plan: SyncPlan) {
+    // internal — SyncPlan نفسه internal (SyncApply.kt)، ودالة public تعرّض
+    // نوعًا internal خطأ تجميع في Kotlin (كسر تشغيل إصدار 0.34.0 الثاني،
+    // run 45748044844: 'public' function exposes its 'internal' parameter
+    // type 'SyncPlan'). المستدعون كلهم داخل الوحدة (SyncAccount + اختبار
+    // الوحدة)، فـ internal كافية.
+    internal fun applySyncPlan(plan: SyncPlan) {
         val db = writableDatabase
         db.beginTransaction()
         try {
