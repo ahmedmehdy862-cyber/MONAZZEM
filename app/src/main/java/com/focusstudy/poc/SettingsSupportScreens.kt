@@ -71,7 +71,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-private const val SUPPORT_USERNAME = "techsup402"
+// TODO(دعم واتساب): ضع هنا رقم هاتف الدعم الحقيقي بالصيغة الدولية بدون "+" أو
+// مسافات (مثال: "2010xxxxxxxx") — يصل من أحمد. رابط wa.me لا يقبل اسم مستخدم
+// (مثل "techsup402") فلا يفتح محادثة؛ حتى يُملأ الرقم يبقى زر المراسلة المباشرة
+// معطّلًا وتعمل مشاركة الصور عبر ورقة المشاركة دون رقم.
+private const val SUPPORT_WHATSAPP_NUMBER = ""
+
+/** مرجع قصير لرسالة دعم محفوظة، يظهر في سطر ملاحظة الصور وفي نص واتساب لربط الصور بالرسالة. */
+private fun supportReference(localId: Long): String = "دعم-$localId"
 
 @Composable
 internal fun PrayerTimesScreen(
@@ -490,14 +497,32 @@ private const val MAX_SUPPORT_IMAGES = 4
  * والصور لا تمر عبر هذه القناة إطلاقًا (انظر تعليق [SupportImageAttachments]):
  * يُضاف سطر واحد فقط بعددها حتى يعرف الفريق أن صورًا ستصله عبر واتساب.
  */
-private fun buildSupportBody(raw: String, isSuggestion: Boolean, imageCount: Int): String {
+private fun buildSupportBody(raw: String, isSuggestion: Boolean, imageCount: Int, reference: String? = null): String {
     val tag = if (isSuggestion) "[اقتراح] " else ""
     val note = if (imageCount > 0) {
         val countText = if (imageCount == 1) "صورة واحدة" else "$imageCount صور"
-        "\n[أرفق المستخدم $countText؛ الصور لا تصل عبر هذه الرسالة النصية وستُرسل عبر واتساب.]"
+        val ref = if (reference != null) " (مرجع الرسالة: $reference)" else ""
+        "\n[أرفق المستخدم $countText؛ الصور لا تصل عبر هذه الرسالة النصية وستُرسل عبر واتساب$ref.]"
     } else ""
     return (tag + raw.trim()).take((2000 - note.length).coerceAtLeast(0)) + note
 }
+
+/**
+ * نص واتساب المرفق بصور رسالة دعم: يحمل مرجع الرسالة القصير (وربما معرّف
+ * الخادم) حتى يربط الفريق الصور بالرسالة النصية التي وصلته عبر القناة.
+ */
+private fun supportWhatsAppText(intro: String, bodyExcerpt: String, reference: String?, serverId: String?): String {
+    val refs = listOfNotNull(
+        reference?.let { "مرجع الرسالة: $it" },
+        serverId?.let { "معرّف الخادم: $it" }
+    )
+    val suffix = if (refs.isNotEmpty()) " (${refs.joinToString("، ")})" else ""
+    return intro + suffix + if (bodyExcerpt.isNotBlank()) "\n" + bodyExcerpt.trim().take(300) else ""
+}
+
+/** ملاحظة تُلحق بنتيجة الإرسال حين تعذّر نسخ بعض الصور، حتى لا تختفي بصمت. */
+private fun copyFailureNote(failed: Int): String =
+    if (failed <= 0) "" else " (تعذّر نسخ ${if (failed == 1) "صورة واحدة" else "$failed صور"} من جهازك؛ أُرسلت الرسالة دونها.)"
 
 /**
  * يشارك الصور المرفقة مع دعم واتساب كمرفقات حقيقية (ACTION_SEND_MULTIPLE مع
@@ -510,14 +535,14 @@ private fun shareSupportImages(
     imageUris: List<String>,
     message: String,
     copiedPaths: List<String> = emptyList()
-) {
+): Boolean {
     // Phase 7b: the WhatsApp button shares the private filesDir copies (via FileProvider),
     // not the picked content URIs — those can lose their grant after the app closes, while
     // the copies stay. Before sending (or when a copy failed) there is no copy yet, so the
     // picked URIs are shared as before.
     val uris = supportImageShareUris(context, copiedPaths)
         .ifEmpty { imageUris.map { Uri.parse(it) } }
-    if (uris.isEmpty()) return
+    if (uris.isEmpty()) return false
     val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
         type = "image/*"
         putExtra(Intent.EXTRA_TEXT, message)
@@ -527,10 +552,11 @@ private fun shareSupportImages(
         }
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    runCatching { context.startActivity(Intent.createChooser(intent, "إرسال الصور إلى الدعم عبر واتساب")) }
+    // يعيد true إن فُتحت ورقة المشاركة فعلًا، حتى يمسح المستدعي النموذج بعدها فقط.
+    return runCatching { context.startActivity(Intent.createChooser(intent, "إرسال الصور إلى الدعم عبر واتساب")) }
         .onFailure {
             Toast.makeText(context, "تعذّر فتح المشاركة. تأكد من تثبيت واتساب وحاول مرة أخرى.", Toast.LENGTH_LONG).show()
-        }
+        }.isSuccess
 }
 
 /** يفكّ مصغّرة للصورة (بحد أقصى 256 بكسل للضلع) عبر ContentResolver دون أي إذن تخزين. */
@@ -710,11 +736,27 @@ internal fun SupportScreen(onBack: () -> Unit) {
     var complaintCopiedPaths by remember { mutableStateOf(listOf<String>()) }
     var suggestionCopiedPaths by remember { mutableStateOf(listOf<String>()) }
     var retryingId by remember { mutableStateOf<Long?>(null) }
+    // مرجع الرسالة المحلية ومعرّف الخادم لآخر رسالة أُرسلت في كل تبويب، ليحملهما
+    // نص واتساب عند مشاركة الصور (ح1(ب)).
+    var complaintSentReference by remember { mutableStateOf<String?>(null) }
+    var complaintServerId by remember { mutableStateOf<String?>(null) }
+    var suggestionSentReference by remember { mutableStateOf<String?>(null) }
+    var suggestionServerId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(messagesRefresh) {
         savedMessages = withContext(Dispatchers.IO) {
             runCatching { StudyDb.get(context).supportMessages() }.getOrDefault(emptyList())
         }
+    }
+
+    // م11: رسالة عالقة بحالة «قيد الإرسال» تعني أن التطبيق قُتل أثناء الإرسال؛
+    // تُسوَّى إلى «فاشلة» مرة واحدة عند فتح الشاشة حتى تظهر مع زر إعادة الإرسال.
+    // لا تُستدعى عند كل تحديث حتى لا تقلب رسالة يُرسلها المستخدم الآن.
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            runCatching { StudyDb.get(context).failStuckSendingSupportMessages() }
+        }
+        messagesRefresh++
     }
 
     val complaintPicker = rememberLauncherForActivityResult(
@@ -738,21 +780,25 @@ internal fun SupportScreen(onBack: () -> Unit) {
      * through the unchanged TeamMessages.sendSupport channel. The status is updated from
      * the result, so no message is lost when the network is down; failed ones can be
      * retried from «رسائلي». [onCopied] receives the private copies for the WhatsApp button.
+     * [onResult] receives success, how many images failed to copy, the short local
+     * reference and the server id, so the WhatsApp text can link the photos to the
+     * message (ح1(ب)) and the user is told about any uncopied images (م12).
      */
     fun submit(
         isSuggestion: Boolean,
         text: String,
         images: List<String>,
-        onResult: (Boolean) -> Unit,
+        onResult: (Boolean, Int, String?, String?) -> Unit,
         onCopied: (List<String>) -> Unit
     ) {
         if (text.trim().length < 5 || sending) return
         sending = true
         scope.launch {
-            val copied = withContext(Dispatchers.IO) {
+            val copyResult = withContext(Dispatchers.IO) {
                 runCatching { copySupportImages(context, images.map { Uri.parse(it) }) }
-                    .getOrDefault(emptyList())
+                    .getOrDefault(SupportImageCopyResult(emptyList(), images.size))
             }
+            val copied = copyResult.copied
             onCopied(copied)
             val messageId = withContext(Dispatchers.IO) {
                 runCatching {
@@ -769,7 +815,12 @@ internal fun SupportScreen(onBack: () -> Unit) {
                     )
                 }.getOrNull()
             }
-            val ok = TeamMessages.sendSupport(context, name, contact, buildSupportBody(text, isSuggestion, images.size))
+            val reference = messageId?.let { supportReference(it) }
+            val serverId = TeamMessages.sendSupport(
+                context, name, contact,
+                buildSupportBody(text, isSuggestion, images.size, reference)
+            )
+            val ok = serverId != null
             if (messageId != null) {
                 withContext(Dispatchers.IO) {
                     runCatching {
@@ -782,11 +833,15 @@ internal fun SupportScreen(onBack: () -> Unit) {
                 messagesRefresh++
             }
             sending = false
-            onResult(ok)
+            onResult(ok, copyResult.failed, reference, serverId)
         }
     }
 
-    /** Re-sends a failed saved message through the same channel, rebuilding its payload. */
+    /**
+     * Re-sends a failed saved message through the same channel, rebuilding its payload.
+     * ح1(هـ): إعادة الإرسال تعيد النص والصور معًا — بعد نجاح النص تُشارك النسخ
+     * المحفوظة عبر واتساب بنفس مرجع الرسالة، وإلا بقيت الصور بلا رسالة تربطها.
+     */
     fun retry(message: SupportMessage) {
         if (retryingId != null || sending) return
         retryingId = message.id
@@ -795,12 +850,18 @@ internal fun SupportScreen(onBack: () -> Unit) {
                 runCatching { StudyDb.get(context).updateSupportMessageStatus(message.id, SupportMessageStatus.SENDING) }
             }
             messagesRefresh++
-            val ok = TeamMessages.sendSupport(
+            val serverId = TeamMessages.sendSupport(
                 context,
                 message.senderName.ifBlank { message.userName },
                 message.contact,
-                buildSupportBody(message.body, message.kind == SupportMessageKind.SUGGESTION, message.imagePaths.size)
+                buildSupportBody(
+                    message.body,
+                    message.kind == SupportMessageKind.SUGGESTION,
+                    message.imagePaths.size,
+                    supportReference(message.id)
+                )
             )
+            val ok = serverId != null
             withContext(Dispatchers.IO) {
                 runCatching {
                     StudyDb.get(context).updateSupportMessageStatus(
@@ -811,6 +872,17 @@ internal fun SupportScreen(onBack: () -> Unit) {
             }
             retryingId = null
             messagesRefresh++
+            if (ok && message.imagePaths.isNotEmpty()) {
+                shareSupportImages(
+                    context, emptyList(),
+                    supportWhatsAppText(
+                        if (message.kind == SupportMessageKind.SUGGESTION) "مرحبًا، هذه صور مرفقة مع اقتراحي إلى فريق مُنظِّم عبر التطبيق."
+                        else "مرحبًا، هذه صور مرفقة مع شكواي إلى فريق مُنظِّم عبر التطبيق.",
+                        message.body, supportReference(message.id), serverId
+                    ),
+                    copiedPaths = message.imagePaths
+                )
+            }
         }
     }
 
@@ -871,21 +943,36 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         sendLabel = "إرسال إلى فريق مُنظِّم",
                         result = complaintResult,
                         onSend = {
-                            submit(false, complaintBody, complaintImages, onCopied = { copied -> complaintCopiedPaths = copied }) { ok ->
+                            submit(false, complaintBody, complaintImages, onCopied = { copied -> complaintCopiedPaths = copied }) { ok, copyFailures, reference, serverId ->
+                                complaintSentReference = reference
+                                complaintServerId = serverId
                                 complaintResult = if (ok) {
                                     if (complaintImages.isNotEmpty()) "وصلت شكوتك إلى الفريق. الصور المرفقة لا تصل مع هذه الرسالة النصية — أرسلها عبر واتساب بالزر أدناه."
                                     else "وصلت رسالتك إلى الفريق، وسنرد عليك في أقرب وقت."
-                                } else "تعذر الإرسال الآن. تحقق من الاتصال أو استخدم واتساب."
-                                if (ok) complaintBody = ""
+                                } else "تعذّر الإرسال الآن. تحقق من الاتصال أو استخدم واتساب."
+                                complaintResult += copyFailureNote(copyFailures)
+                                // ح1(ج): يُمسح النص فورًا فقط حين لا توجد صور تنتظر المشاركة؛
+                                // مع وجود صور يبقى النص حتى تُشارك الصور بالزر أدناه.
+                                if (ok && complaintImages.isEmpty()) complaintBody = ""
                             }
                         },
                         onShareImages = {
-                            shareSupportImages(
+                            val shared = shareSupportImages(
                                 context, complaintImages,
-                                "مرحبًا، هذه صور مرفقة مع شكواي إلى فريق مُنظِّم عبر التطبيق." +
-                                    if (complaintBody.isNotBlank()) "\n" + complaintBody.trim().take(300) else "",
+                                supportWhatsAppText(
+                                    "مرحبًا، هذه صور مرفقة مع شكواي إلى فريق مُنظِّم عبر التطبيق.",
+                                    complaintBody, complaintSentReference, complaintServerId
+                                ),
                                 copiedPaths = complaintCopiedPaths
                             )
+                            // ح1(ج): يُمسح النموذج بعد فتح ورقة المشاركة فعلًا فقط، لا قبلها.
+                            if (shared) {
+                                complaintBody = ""
+                                complaintImages = emptyList()
+                                complaintCopiedPaths = emptyList()
+                                complaintSentReference = null
+                                complaintServerId = null
+                            }
                         }
                     )
                 } else {
@@ -900,48 +987,72 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         sendLabel = "إرسال الاقتراح",
                         result = suggestionResult,
                         onSend = {
-                            submit(true, suggestionBody, suggestionImages, onCopied = { copied -> suggestionCopiedPaths = copied }) { ok ->
+                            submit(true, suggestionBody, suggestionImages, onCopied = { copied -> suggestionCopiedPaths = copied }) { ok, copyFailures, reference, serverId ->
+                                suggestionSentReference = reference
+                                suggestionServerId = serverId
                                 suggestionResult = if (ok) {
                                     if (suggestionImages.isNotEmpty()) "وصل اقتراحك إلى الفريق، شكرًا لك. الصور المرفقة لا تصل مع هذه الرسالة النصية — أرسلها عبر واتساب بالزر أدناه."
                                     else "وصل اقتراحك إلى الفريق، شكرًا لك."
-                                } else "تعذر الإرسال الآن. تحقق من الاتصال أو استخدم واتساب."
-                                if (ok) suggestionBody = ""
+                                } else "تعذّر الإرسال الآن. تحقق من الاتصال أو استخدم واتساب."
+                                suggestionResult += copyFailureNote(copyFailures)
+                                // ح1(ج): يُمسح النص فورًا فقط حين لا توجد صور تنتظر المشاركة.
+                                if (ok && suggestionImages.isEmpty()) suggestionBody = ""
                             }
                         },
                         onShareImages = {
-                            shareSupportImages(
+                            val shared = shareSupportImages(
                                 context, suggestionImages,
-                                "مرحبًا، هذه صور مرفقة مع اقتراحي إلى فريق مُنظِّم عبر التطبيق." +
-                                    if (suggestionBody.isNotBlank()) "\n" + suggestionBody.trim().take(300) else "",
+                                supportWhatsAppText(
+                                    "مرحبًا، هذه صور مرفقة مع اقتراحي إلى فريق مُنظِّم عبر التطبيق.",
+                                    suggestionBody, suggestionSentReference, suggestionServerId
+                                ),
                                 copiedPaths = suggestionCopiedPaths
                             )
+                            // ح1(ج): يُمسح النموذج بعد فتح ورقة المشاركة فعلًا فقط، لا قبلها.
+                            if (shared) {
+                                suggestionBody = ""
+                                suggestionImages = emptyList()
+                                suggestionCopiedPaths = emptyList()
+                                suggestionSentReference = null
+                                suggestionServerId = null
+                            }
                         }
                     )
                 }
                 Text("أو راسلنا على واتساب مباشرة:", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("اسم الدعم", color = FocusColors.TextSecondary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("@$SUPPORT_USERNAME", fontWeight = FontWeight.SemiBold)
+                if (SUPPORT_WHATSAPP_NUMBER.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("رقم الدعم", color = FocusColors.TextSecondary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(SUPPORT_WHATSAPP_NUMBER, fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = {
+                            val url = "https://wa.me/$SUPPORT_WHATSAPP_NUMBER?text=" +
+                                Uri.encode("مرحبًا، أحتاج مساعدة بخصوص تطبيق مُنظِّم.")
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                                .onFailure { Toast.makeText(context, "تعذّر فتح واتساب. انسخ الرقم وحاول مرة أخرى.", Toast.LENGTH_LONG).show() }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp)
+                    ) { Text("مراسلة الدعم على واتساب") }
+                    TextButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("WhatsApp support", SUPPORT_WHATSAPP_NUMBER))
+                            Toast.makeText(context, "تم نسخ رقم الدعم", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) { Text("نسخ رقم الدعم") }
+                } else {
+                    // رقم الدعم لم يصل من أحمد بعد (انظر TODO عند SUPPORT_WHATSAPP_NUMBER):
+                    // لا زر وهمي برابط مكسور، بل تنبيه صريح بأن المراسلة المباشرة غير مفعّلة.
+                    Text(
+                        "مراسلة واتساب المباشرة غير مفعّلة بعد (لم يُضبط رقم الدعم في التطبيق). يمكنك إرسال رسالتك هنا، ومشاركة صورك عبر زر واتساب أعلاه.",
+                        color = FocusColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
-                Button(
-                    onClick = {
-                        val url = "https://wa.me/$SUPPORT_USERNAME?text=" +
-                            Uri.encode("مرحبًا، أحتاج مساعدة بخصوص تطبيق مُنظِّم.")
-                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                            .onFailure { Toast.makeText(context, "تعذر فتح واتساب. انسخ اسم المستخدم وحاول مرة أخرى.", Toast.LENGTH_LONG).show() }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp)
-                ) { Text("مراسلة الدعم على واتساب") }
-                TextButton(
-                    onClick = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("WhatsApp support", SUPPORT_USERNAME))
-                        Toast.makeText(context, "تم نسخ اسم الدعم", Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                ) { Text("نسخ اسم المستخدم") }
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -969,7 +1080,18 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         SupportSavedMessageRow(
                             message = saved,
                             retrying = retryingId == saved.id,
-                            onRetry = { retry(saved) }
+                            onRetry = { retry(saved) },
+                            onShareImages = {
+                                shareSupportImages(
+                                    context, emptyList(),
+                                    supportWhatsAppText(
+                                        if (saved.kind == SupportMessageKind.SUGGESTION) "مرحبًا، هذه صور مرفقة مع اقتراحي إلى فريق مُنظِّم عبر التطبيق."
+                                        else "مرحبًا، هذه صور مرفقة مع شكواي إلى فريق مُنظِّم عبر التطبيق.",
+                                        saved.body, supportReference(saved.id), null
+                                    ),
+                                    copiedPaths = saved.imagePaths
+                                )
+                            }
                         )
                     }
                 }
@@ -983,7 +1105,12 @@ internal fun SupportScreen(onBack: () -> Unit) {
  * was sent with, a short preview, and a retry button for failed sends.
  */
 @Composable
-private fun SupportSavedMessageRow(message: SupportMessage, retrying: Boolean, onRetry: () -> Unit) {
+private fun SupportSavedMessageRow(
+    message: SupportMessage,
+    retrying: Boolean,
+    onRetry: () -> Unit,
+    onShareImages: () -> Unit
+) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(FocusColors.SurfaceHigh).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -1013,6 +1140,11 @@ private fun SupportSavedMessageRow(message: SupportMessage, retrying: Boolean, o
             maxLines = 3,
             overflow = TextOverflow.Ellipsis
         )
+        Text(
+            "مرجع الرسالة: ${supportReference(message.id)}",
+            color = FocusColors.TextMuted,
+            style = MaterialTheme.typography.labelSmall
+        )
         if (message.imagePaths.isNotEmpty()) {
             val count = message.imagePaths.size
             Text(
@@ -1021,9 +1153,15 @@ private fun SupportSavedMessageRow(message: SupportMessage, retrying: Boolean, o
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        if (message.status == SupportMessageStatus.FAILED) {
-            TextButton(onClick = onRetry, enabled = !retrying) {
-                Text(if (retrying) "جارٍ إعادة الإرسال…" else "إعادة الإرسال")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // ح1(د): زر واتساب لكل رسالة يعيد مشاركة نسخها المحفوظة بنفس المرجع.
+            if (message.imagePaths.isNotEmpty()) {
+                TextButton(onClick = onShareImages) { Text("إرسال الصور عبر واتساب") }
+            }
+            if (message.status == SupportMessageStatus.FAILED) {
+                TextButton(onClick = onRetry, enabled = !retrying) {
+                    Text(if (retrying) "جارٍ إعادة الإرسال…" else "إعادة الإرسال")
+                }
             }
         }
     }

@@ -183,8 +183,15 @@ object TeamMessages {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
     }.getOrDefault("")
 
-    /** Sends a support message to the team inbox; returns true when the server accepted it. */
-    suspend fun sendSupport(context: Context, name: String, contact: String, body: String): Boolean =
+    /**
+     * Sends a support message to the team inbox.
+     *
+     * Returns the message id the server assigned (`{ ok: true, id: "s-..." }`, see
+     * update-site/api/support.js) when the server accepted it, or null on any failure
+     * (network, HTTP error, malformed reply). Callers treat null as "not sent" and
+     * keep the local copy as failed/retryable.
+     */
+    suspend fun sendSupport(context: Context, name: String, contact: String, body: String): String? =
         withContext(Dispatchers.IO) {
             runCatching {
                 val payload = JSONObject()
@@ -194,9 +201,9 @@ object TeamMessages {
                     .put("version", versionName(context))
                     .put("uid", UserIdentity.id(context))
                     .toString()
-                request("$BASE/api/support", "POST", payload)
-                true
-            }.getOrDefault(false)
+                val reply = request("$BASE/api/support", "POST", payload)
+                JSONObject(reply).optString("id").takeIf { it.isNotBlank() }
+            }.getOrNull()
         }
 }
 

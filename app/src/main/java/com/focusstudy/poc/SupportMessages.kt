@@ -61,17 +61,23 @@ internal fun joinSupportImagePaths(paths: List<String>): String = paths.joinToSt
 internal fun splitSupportImagePaths(raw: String): List<String> =
     raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
 
+/** نتيجة نسخ صور الدعم: النسخ الناجحة، وعدد الصور التي تعذّر نسخها (تُبلَّغ للمستخدم). */
+data class SupportImageCopyResult(val copied: List<String>, val failed: Int)
+
 /**
  * ينسخ الصور المختارة إلى تخزين خاص بالتطبيق (filesDir/support_images) ويعيد
  * المسارات المطلقة للنسخ الناجحة فقط. روابط المحتوى الأصلية من منتقي الصور قد
  * تفقد صلاحيتها بعد إغلاق التطبيق، أما النسخ فتبقى — وهي نفسها التي تُشارَك مع
  * واتساب وتُحفَظ مساراتها في قاعدة البيانات. يُستدعى من خيط IO فقط.
+ * [failed] يعدّ الصور التي تعذّر نسخها (مصدر محذوف أو غير قابل للقراءة) حتى
+ * يُبلَّغ المستخدم أن رسالته أُرسلت دونها بدل أن تختفي بصمت.
  */
-fun copySupportImages(context: Context, uris: List<Uri>): List<String> {
-    if (uris.isEmpty()) return emptyList()
+fun copySupportImages(context: Context, uris: List<Uri>): SupportImageCopyResult {
+    if (uris.isEmpty()) return SupportImageCopyResult(emptyList(), 0)
     val dir = File(context.filesDir, "support_images").apply { if (!exists()) mkdirs() }
     val resolver = context.contentResolver
-    return uris.mapNotNull { uri ->
+    var failed = 0
+    val copied = uris.mapNotNull { uri ->
         runCatching {
             val extension = when (resolver.getType(uri)) {
                 "image/png" -> "png"
@@ -83,8 +89,9 @@ fun copySupportImages(context: Context, uris: List<Uri>): List<String> {
                 target.outputStream().use { output -> input.copyTo(output) }
             } ?: error("cannot open $uri")
             target.absolutePath
-        }.getOrNull()
+        }.onFailure { failed++ }.getOrNull()
     }
+    return SupportImageCopyResult(copied, failed)
 }
 
 /**

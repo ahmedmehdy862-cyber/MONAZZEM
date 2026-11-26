@@ -2076,6 +2076,20 @@ class StudyDb private constructor(context: Context) :
         writableDatabase.update("support_messages", values, "id = ?", arrayOf(id.toString()))
     }
 
+    /**
+     * يحوّل رسائل الدعم العالقة بحالة «قيد الإرسال» إلى «فاشلة» (م11): رسالة تبقى
+     * عالقة إن قُتل التطبيق أثناء الإرسال، فلا تظهر أبدًا كفاشلة قابلة لإعادة
+     * الإرسال. تُستدعى مرة واحدة عند فتح شاشة الدعم — لا أثناء إرسال جارٍ، لأن
+     * الإرسال الجاري يحدّث حالته بنفسه فور انتهائه. يعيد عدد الرسائل التي سُوّيت.
+     */
+    fun failStuckSendingSupportMessages(): Int {
+        val values = ContentValues().apply { put("status", SupportMessageStatus.FAILED.key) }
+        return writableDatabase.update(
+            "support_messages", values, "status = ?",
+            arrayOf(SupportMessageStatus.SENDING.key)
+        )
+    }
+
     /** Saved messages, newest first; the support screen's «رسائلي» section reads this. */
     fun supportMessages(limit: Int = 50): List<SupportMessage> =
         readableDatabase.rawQuery(
