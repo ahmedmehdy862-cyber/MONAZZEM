@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.Point
 import android.graphics.Rect
 import android.util.Log
-import androidx.compose.ui.test.fetchSemanticsNodes
+import androidx.compose.ui.test.fetchSemanticsNode
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -305,21 +305,19 @@ class EmulatorQaTest {
         }
         // بديل Compose عند فشل UiAutomator (كما في التشغيل الثاني حين حجبه
         // حوار ANR فعاد fabFound=false رغم وجود الزرين). الحدود هنا بوحدات
-        // بكسل الجذر نفسه؛ نأخذ عقدة «الأقسام» الأدنى (تبويب الشريط السفلي).
+        // بكسل الجذر نفسه؛ نأخذ آخر عقدة «الأقسام» (تبويب الشريط السفلي).
+        // ملاحظة: fetchSemanticsNodes (جمع) غير موجود في إصدار Compose
+        // هنا — نستخدم onFirst/onLast + fetchSemanticsNode (مفرد) الثابتين.
         runCatching {
             val fabNode = composeRule.onAllNodesWithContentDescription("إضافة سريعة")
-                .fetchSemanticsNodes().firstOrNull()
+                .onFirst().fetchSemanticsNode()
             val sectionsNode = composeRule.onAllNodesWithText("الأقسام")
-                .fetchSemanticsNodes().maxByOrNull { it.boundsInRoot.top }
-            if (fabNode != null && sectionsNode != null) {
-                val f = fabNode.boundsInRoot
-                val s = sectionsNode.boundsInRoot
-                val overlap = f.overlaps(s)
-                val verticalGapPx = (s.top - f.bottom).toInt()
-                log("FAB_SECTIONS_CHECK [$tag] via=compose: fab=$f sections=$s overlap=$overlap verticalGapPx=$verticalGapPx")
-            } else {
-                log("FAB_SECTIONS_CHECK [$tag]: compose fallback incomplete fabFound=${fabNode != null} sectionsFound=${sectionsNode != null}")
-            }
+                .onLast().fetchSemanticsNode()
+            val f = fabNode.boundsInRoot
+            val s = sectionsNode.boundsInRoot
+            val overlap = f.overlaps(s)
+            val verticalGapPx = (s.top - f.bottom).toInt()
+            log("FAB_SECTIONS_CHECK [$tag] via=compose: fab=$f sections=$s overlap=$overlap verticalGapPx=$verticalGapPx")
         }.onFailure {
             log("FAB_SECTIONS_CHECK [$tag]: uiautomator fabFound=${fab != null} sectionsFound=${sections != null} composeFallbackFailed=${it.message}")
         }
