@@ -82,7 +82,7 @@ internal fun NotificationCenterScreen(
     val dhikrEnabled = remember(localRevision) { DhikrPrefs.enabled(context) }
     val wirdSettings = remember(localRevision) { WirdPrefs.load(context) }
     val skillSettings = remember(localRevision) { SkillReminderPrefs.load(context) }
-    var wirdRange by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var wirdToday by remember { mutableStateOf<WirdRange?>(null) }
 
     // The permission dialog is async: re-check when the activity resumes instead of immediately
     // after the request click, which used to leave the card stuck on "denied". A later grant of
@@ -115,12 +115,11 @@ internal fun NotificationCenterScreen(
                     .take(6)
             }.getOrDefault(emptyList())
         }
-        wirdRange = withContext(Dispatchers.IO) {
+        wirdToday = withContext(Dispatchers.IO) {
             runCatching {
                 val db = StudyDb.get(context.applicationContext)
-                val settings = db.wirdSettings()
-                val first = settings.startPage + db.wirdTotalPages()
-                first to first + settings.pagesPerDay - 1
+                // نطاق مقصوص عند 604 مع كشف الختم الكامل (انظر [wirdRange]).
+                wirdRange(db.wirdSettings(), db.wirdTotalPages())
             }.getOrNull()
         }
     }
@@ -305,10 +304,11 @@ internal fun NotificationCenterScreen(
                         WirdReminderScheduler.schedule(context)
                         localRevision++
                     }
-                    val range = wirdRange
+                    val range = wirdToday
                     if (range != null) {
                         Text(
-                            "ورد اليوم: صفحات ${range.first}–${range.second}.",
+                            if (range.completed) "ورد اليوم: ختمت المصحف كاملًا — ابدأ ختمة جديدة من «حياتي»."
+                            else "ورد اليوم: صفحات ${range.firstPage}–${range.lastPage}.",
                             style = MaterialTheme.typography.bodySmall,
                             color = FocusColors.TextSecondary
                         )

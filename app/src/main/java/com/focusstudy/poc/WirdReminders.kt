@@ -157,15 +157,16 @@ internal object WirdReminderScheduler {
         }
         val settings = runCatching { db.wirdSettings() }.getOrDefault(WirdSettings())
         val totalPages = runCatching { db.wirdTotalPages() }.getOrDefault(0)
-        val firstPage = settings.startPage + totalPages
-        val lastPage = firstPage + settings.pagesPerDay - 1
+        // نطاق ورد اليوم مقصوص عند 604 مع كشف الختم الكامل (انظر [wirdRange]) —
+        // الحساب اليدوي هنا كان ينتج نطاقات وهمية بعد الختم (مثل «صفحات 606–607»).
+        val range = wirdRange(settings, totalPages)
         if (test) {
-            post(app, slot, settings, firstPage, lastPage, test = true)
+            post(app, slot, settings, range, test = true)
             return
         }
         when (val decision = NotificationDelivery.decide(app, WirdPrefs.load(app).enabled, now)) {
             ReminderDecision.Send -> {
-                post(app, slot, settings, firstPage, lastPage, test = false)
+                post(app, slot, settings, range, test = false)
                 NotificationDelivery.logSent(app, "wird", now, now)
                 schedule(app)
             }
@@ -201,8 +202,7 @@ internal object WirdReminderScheduler {
         context: Context,
         slot: String,
         settings: WirdSettings,
-        firstPage: Int,
-        lastPage: Int,
+        range: WirdRange,
         test: Boolean
     ) {
         val openQuran = PendingIntent.getActivity(
@@ -214,7 +214,11 @@ internal object WirdReminderScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val title = if (test) "هكذا يظهر تذكير الورد" else "ورد اليوم 📖"
-        val body = "صفحات $firstPage–$lastPage من سورة ${settings.surah} (${settings.pagesPerDay} صفحات). اضغط لفتح المصحف على صفحة ورد اليوم."
+        val body = if (range.completed) {
+            "أكملت ختم المصحف! اضغط لبدء ختمة جديدة من سورة ${settings.surah}."
+        } else {
+            "صفحات ${range.firstPage}–${range.lastPage} من سورة ${settings.surah} (${settings.pagesPerDay} صفحات). اضغط لفتح المصحف على صفحة ورد اليوم."
+        }
         val notification = AppNotifications.builder(
             context = context,
             channel = AppNotifications.DAILY,
