@@ -31,6 +31,9 @@ internal class NetworkRetryJob : JobService() {
                         AppUpdateManager.check(applicationContext, manual = false)
                     }
                 }.isSuccess,
+                // Connectivity is back: pull what another device pushed, then push any
+                // local change the debounced auto-sync could not send while offline.
+                runCatching { AutoSync.onNetworkRestored(applicationContext) }.isSuccess,
             )
             jobFinished(params, results.any { !it })
         }

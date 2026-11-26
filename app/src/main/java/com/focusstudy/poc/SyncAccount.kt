@@ -17,20 +17,39 @@ internal object SyncAccount {
 
     internal enum class Result { SUCCESS, INVALID_PASSPHRASE, PROFILE_NOT_READY, NETWORK_ERROR, REJECTED }
 
+    /**
+     * HTTP failures are not all network failures: a 401/403 means the passphrase (or the
+     * profile) was rejected — retrying the same secret will never succeed — while a timeout,
+     * a 429 or a 503 is transient and worth retrying. `TeamMessages.request` used to throw a
+     * plain message for every non-2xx, so a wrong passphrase surfaced as "no connection".
+     */
+    internal fun resultFor(error: Exception): Result {
+        val status = (error as? HttpStatusException)?.status
+        return if (status == 400 || status == 401 || status == 403) Result.REJECTED
+        else Result.NETWORK_ERROR
+    }
+
     suspend fun register(context: Context, passphrase: String): Result = withContext(Dispatchers.IO) {
         if (!SyncPassphrase.isValid(passphrase)) return@withContext Result.INVALID_PASSPHRASE
         val profileId = UserIdentity.profileId(context)
         if (profileId.isBlank()) return@withContext Result.PROFILE_NOT_READY
         if (!UserIdentity.isValidProfileId(profileId)) return@withContext Result.PROFILE_NOT_READY
 
+        // Idempotent activation: the server requires `currentPassphrase` whenever the
+        // account already exists, and this client never sends anything else — so a second
+        // device (or a repeated tap) joins with the same secret instead of failing with 401
+        // even when the passphrase is right. Changing the passphrase from Android is not
+        // offered, so nothing is lost: a change still needs a client that sends a different
+        // current value (see the server's register test).
         val payload = JSONObject()
             .put("action", "register")
             .put("profileId", profileId)
             .put("passphrase", passphrase)
+            .put("currentPassphrase", passphrase)
         val response = try {
             TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
         } catch (error: Exception) {
-            return@withContext Result.NETWORK_ERROR
+            return@withContext resultFor(error)
         }
         val ok = runCatching { JSONObject(response).optBoolean("ok") }.getOrDefault(false)
         if (ok) Result.SUCCESS else Result.REJECTED
@@ -71,7 +90,7 @@ internal object SyncAccount {
         val response = try {
             TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
         } catch (error: Exception) {
-            return@withContext Result.NETWORK_ERROR
+            return@withContext resultFor(error)
         }
         // A successful push returns the merged snapshot (with a revision), not an `ok` flag.
         val accepted = runCatching { JSONObject(response).has("revision") }.getOrDefault(false)
@@ -120,7 +139,7 @@ internal object SyncAccount {
         val response = try {
             TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
         } catch (error: Exception) {
-            return@withContext Result.NETWORK_ERROR
+            return@withContext resultFor(error)
         }
         // A successful pull returns the stored snapshot (with a revision), not an `ok` flag.
         val incoming = runCatching {

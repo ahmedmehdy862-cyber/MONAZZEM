@@ -126,6 +126,11 @@ dependencies {
     implementation("com.google.mlkit:face-detection:16.1.7")
     // EXIF orientation for camera photos picked for the avatar (see FaceAnalyzer).
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    // Encrypted on-device storage for the opt-in auto-sync passphrase
+    // (see SyncCredentialStore): AES256-SIV keys + AES256-GCM values, key in the
+    // Android Keystore. Free, no service, no new permission. Only used after the user
+    // explicitly enables «مزامنة تلقائية»; the manual flow still stores nothing.
+    implementation("androidx.security:security-crypto:1.0.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     // Robolectric for the DB migration test (DbMigrationV16ToV17Test): the migration

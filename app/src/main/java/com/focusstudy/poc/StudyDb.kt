@@ -479,6 +479,7 @@ class StudyDb private constructor(context: Context) :
             put("archived", 0)
             put("built_in", 0)
         })
+        noteSyncChange()
         return id
     }
 
@@ -491,6 +492,7 @@ class StudyDb private constructor(context: Context) :
             "id = ?",
             arrayOf(id)
         )
+        noteSyncChange()
     }
 
     fun setTaskTypeArchived(id: String, archived: Boolean) {
@@ -500,6 +502,7 @@ class StudyDb private constructor(context: Context) :
             "id = ?",
             arrayOf(id)
         )
+        noteSyncChange()
     }
 
     /** Swaps the type with its neighbour and renumbers the list so the order stays dense. */
@@ -541,6 +544,7 @@ class StudyDb private constructor(context: Context) :
             db.execSQL("UPDATE tasks SET type_id = NULL WHERE type_id = ?", arrayOf<Any?>(id))
             db.delete("task_types", "id = ?", arrayOf(id))
             db.setTransactionSuccessful()
+            noteSyncChange()
         } finally {
             db.endTransaction()
         }
@@ -1018,7 +1022,9 @@ class StudyDb private constructor(context: Context) :
             put("completed_at", if (status == TaskStatus.DONE) now else null)
             put("sort_order", 0)
         }
-        return writableDatabase.insert("tasks", null, values)
+        val rowId = writableDatabase.insert("tasks", null, values)
+        noteSyncChange()
+        return rowId
     }
 
     fun updateTask(task: StudyTask) {
@@ -1046,6 +1052,7 @@ class StudyDb private constructor(context: Context) :
             if (task.originalDueAt != null) put("original_due_at", task.originalDueAt) else putNull("original_due_at")
         }
         writableDatabase.update("tasks", values, "id = ?", arrayOf(task.id.toString()))
+        noteSyncChange()
     }
 
     fun setTaskStatus(taskId: Long, status: TaskStatus) {
@@ -1063,6 +1070,7 @@ class StudyDb private constructor(context: Context) :
                 awardGoalLinksForTask(taskId)
             }
             db.setTransactionSuccessful()
+            noteSyncChange()
         } finally {
             db.endTransaction()
         }
@@ -1073,6 +1081,7 @@ class StudyDb private constructor(context: Context) :
             "UPDATE tasks SET original_due_at = COALESCE(original_due_at, due_at), due_at = ? WHERE id = ?",
             arrayOf<Any?>(dueAt, taskId)
         )
+        noteSyncChange()
     }
 
     fun updateTaskBlocked(taskId: Long, blockedPackages: Set<String>) {
@@ -1086,6 +1095,7 @@ class StudyDb private constructor(context: Context) :
     fun deleteTask(taskId: Long) {
         writableDatabase.delete("subtasks", "task_id = ?", arrayOf(taskId.toString()))
         writableDatabase.delete("tasks", "id = ?", arrayOf(taskId.toString()))
+        noteSyncChange()
     }
 
     /** Copies a task (and its subtasks) with a clean progress state. */
@@ -1123,6 +1133,7 @@ class StudyDb private constructor(context: Context) :
             }
             writableDatabase.insert("subtasks", null, copy)
         }
+        noteSyncChange()
         return newId
     }
 
@@ -1232,6 +1243,7 @@ class StudyDb private constructor(context: Context) :
                 db.insertOrThrow("exams", null, examValues)
             }
             db.setTransactionSuccessful()
+            noteSyncChange()
             return subjectId
         } finally {
             db.endTransaction()
@@ -1717,12 +1729,15 @@ class StudyDb private constructor(context: Context) :
             put("created_at", System.currentTimeMillis())
             put("archived", 0)
         }
-        return writableDatabase.insert("habits", null, values)
+        val rowId = writableDatabase.insert("habits", null, values)
+        noteSyncChange()
+        return rowId
     }
 
     fun deleteHabit(habitId: Long) {
         writableDatabase.delete("habit_logs", "habit_id = ?", arrayOf(habitId.toString()))
         writableDatabase.delete("habits", "id = ?", arrayOf(habitId.toString()))
+        noteSyncChange()
     }
 
     /** أيام الإنجاز لعادة واحدة منذ يوم معين؛ تُبنى منها شبكة الأيام والسلسلة. */
@@ -1747,6 +1762,7 @@ class StudyDb private constructor(context: Context) :
                 arrayOf(habitId.toString(), day)
             )
         }
+        noteSyncChange()
     }
 
     /** إعدادات الورد؛ الافتراضي صفحتان يوميًا من سورة البقرة بداية من صفحة 2. */
@@ -1792,6 +1808,7 @@ class StudyDb private constructor(context: Context) :
     /** يصفّر عدّاد الورد (حذف سجل الصفحات) لبدء ختمة جديدة؛ الإعدادات نفسها لا تتغير. */
     fun resetWirdLogs() {
         writableDatabase.delete("wird_logs", null, null)
+        noteSyncChange()
     }
 
     /** يسجّل ورد يوم واحد فقط؛ الإرجاع false إن كان اليوم مسجّلًا بالفعل فلا يتضاعف العد. */
@@ -1803,9 +1820,11 @@ class StudyDb private constructor(context: Context) :
             put("surah", surah)
             put("logged_at", System.currentTimeMillis())
         }
-        return writableDatabase.insertWithOnConflict(
+        val inserted = writableDatabase.insertWithOnConflict(
             "wird_logs", null, values, SQLiteDatabase.CONFLICT_IGNORE
         ) != -1L
+        if (inserted) noteSyncChange()
+        return inserted
     }
 
     fun wirdLoggedToday(day: String): Boolean =
@@ -1844,6 +1863,7 @@ class StudyDb private constructor(context: Context) :
         writableDatabase.insertWithOnConflict(
             "health_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE
         )
+        noteSyncChange()
     }
 
     fun addTransaction(kind: MoneyKind, amount: Double, category: String, note: String, day: String): Long {
@@ -1856,11 +1876,14 @@ class StudyDb private constructor(context: Context) :
             put("day", day)
             put("created_at", System.currentTimeMillis())
         }
-        return writableDatabase.insert("transactions", null, values)
+        val rowId = writableDatabase.insert("transactions", null, values)
+        noteSyncChange()
+        return rowId
     }
 
     fun deleteTransaction(transactionId: Long) {
         writableDatabase.delete("transactions", "id = ?", arrayOf(transactionId.toString()))
+        noteSyncChange()
     }
 
     /** معاملات شهر كامل؛ `monthPrefix` بصيغة yyyy-MM فيطابق مفتاح اليوم مباشرة. */
@@ -1896,6 +1919,7 @@ class StudyDb private constructor(context: Context) :
         writableDatabase.insertWithOnConflict(
             "mood_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE
         )
+        noteSyncChange()
     }
 
     fun moodFor(day: String): Int? =
@@ -1983,11 +2007,14 @@ class StudyDb private constructor(context: Context) :
             put("calories", calories)
             put("created_at", System.currentTimeMillis())
         }
-        return writableDatabase.insert("calorie_logs", null, values)
+        val rowId = writableDatabase.insert("calorie_logs", null, values)
+        noteSyncChange()
+        return rowId
     }
 
     fun deleteCalorieEntry(entryId: Long) {
         writableDatabase.delete("calorie_logs", "id = ?", arrayOf(entryId.toString()))
+        noteSyncChange()
     }
 
     /** كل تسجيلات إتمام التمارين منذ يوم معين؛ تُبنى منها علامات الإنجاز. */
@@ -2019,6 +2046,22 @@ class StudyDb private constructor(context: Context) :
     }
 
     // ------------------------------------------------------- sync snapshot (windows-sync)
+
+    /**
+     * Marks a local change to a synced collection so the debounced auto-sync push can pick
+     * it up. Suppressed while [applySyncPlan] runs: a pull applies remote records through
+     * the same writers ([updateTask], [deleteTask], [deleteHabit]), and those writes must
+     * not schedule a push of their own, or every pull would echo back to the server.
+     * Only the whitelisted synced fields matter here — local-only writes (notes, blocked
+     * packages, done minutes, sort order, settings, exercise logs) never call this.
+     * Cheap no-op while auto-sync is off, so writers call it unconditionally.
+     */
+    private val syncApplyActive = ThreadLocal.withInitial { false }
+
+    private fun noteSyncChange() {
+        if (syncApplyActive.get() == true) return
+        runCatching { AutoSync.notifyLocalChange(appContext) }
+    }
 
     /**
      * Full «حياتي» reads for [SyncPayload] / [SyncAccount.push]. No filtering: the sync layer
@@ -2151,6 +2194,7 @@ class StudyDb private constructor(context: Context) :
     // الوحدة)، فـ internal كافية.
     internal fun applySyncPlan(plan: SyncPlan) {
         val db = writableDatabase
+        syncApplyActive.set(true)
         db.beginTransaction()
         try {
             for ((kind, ids) in plan.deletes) {
@@ -2166,6 +2210,7 @@ class StudyDb private constructor(context: Context) :
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
+            syncApplyActive.set(false)
         }
     }
 

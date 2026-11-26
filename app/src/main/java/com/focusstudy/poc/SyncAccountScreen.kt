@@ -20,6 +20,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,9 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-/** Account pairing screen. It shows the server-issued key and never stores the typed secret. */
+/** Account pairing screen. It shows the server-issued key. The typed secret is never stored by the manual flow; only the explicit «مزامنة تلقائية» toggle stores it, encrypted (see SyncCredentialStore). */
 @Composable
 internal fun SyncAccountScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -52,6 +55,88 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
     var pushStatus by remember { mutableStateOf("") }
     var pullBusy by remember { mutableStateOf(false) }
     var pullStatus by remember { mutableStateOf("") }
+    // Auto-sync toggle state, read once from durable prefs; the switch below is the only
+    // writer (see AutoSync.setEnabled).
+    var autoSyncEnabled by remember { mutableStateOf(AutoSync.isEnabled(context)) }
+    var autoSyncSessionOnly by remember { mutableStateOf(AutoSync.isSessionOnly(context)) }
+    var autoSyncBusy by remember { mutableStateOf(false) }
+    var autoSyncStatus by remember { mutableStateOf("") }
+
+    // Maps a manual sync outcome to the line shown under its button. REJECTED means the
+    // server refused the secret (wrong passphrase), not a lost connection — see
+    // SyncAccount.resultFor — so the copy points at the passphrase.
+    fun syncMessage(outcome: SyncAccount.Result, isPush: Boolean): String = when (outcome) {
+        SyncAccount.Result.SUCCESS -> if (isPush) "تم رفع البيانات بنجاح." else "تم سحب البيانات وتطبيقها."
+        SyncAccount.Result.INVALID_PASSPHRASE -> "كلمة المرور لا تحقق الشرط."
+        SyncAccount.Result.PROFILE_NOT_READY -> "معرّف الحساب غير جاهز بعد."
+        SyncAccount.Result.NETWORK_ERROR -> if (isPush) "تعذّر الرفع؛ تحقق من الاتصال وكلمة المرور ثم حاول مرة أخرى."
+            else "تعذّر السحب؛ تحقق من الاتصال وكلمة المرور ثم حاول مرة أخرى."
+        SyncAccount.Result.REJECTED -> if (isPush) "تعذّر رفع البيانات. تأكد من كلمة المرور ثم حاول مرة أخرى."
+            else "تعذّر سحب البيانات. تأكد من كلمة المرور ثم حاول مرة أخرى."
+    }
+
+    // Runs one manual push/pull with an already-valid passphrase, serialized with the
+    // automatic triggers through AutoSync.manualSync (one sync at a time per account).
+    // A typed secret re-arms the in-memory session, so auto-sync keeps working after a
+    // restart in session-only mode (where nothing is stored on disk).
+    fun runManualSync(effective: String, isPush: Boolean) {
+        if (isPush) {
+            pushBusy = true
+            pushStatus = ""
+        } else {
+            pullBusy = true
+            pullStatus = ""
+        }
+        scope.launch {
+            val outcome = AutoSync.manualSync(context, isPush, effective)
+            if (isPush) {
+                pushBusy = false
+                pushStatus = syncMessage(outcome, true)
+            } else {
+                pullBusy = false
+                pullStatus = syncMessage(outcome, false)
+            }
+            if (outcome == SyncAccount.Result.SUCCESS) {
+                if (SyncPassphrase.isValid(pushPassphrase) && autoSyncEnabled) {
+                    SyncSession.set(pushPassphrase)
+                }
+                pushPassphrase = ""
+            }
+        }
+    }
+
+    // Falls back to the stored/session passphrase when the field is blank; null when the
+    // user must type it (auto-sync off, or session-only mode after a restart).
+    fun runManualSyncWithStoredFallback(isPush: Boolean) {
+        if (SyncPassphrase.isValid(pushPassphrase)) {
+            runManualSync(pushPassphrase, isPush)
+            return
+        }
+        if (isPush) {
+            pushBusy = true
+            pushStatus = ""
+        } else {
+            pullBusy = true
+            pullStatus = ""
+        }
+        scope.launch {
+            // Opening encrypted storage touches the Keystore: never on the main thread.
+            val stored = withContext(Dispatchers.IO) { AutoSync.resolvePassphrase(context) }
+            if (stored == null) {
+                if (isPush) {
+                    pushBusy = false
+                    pushStatus = "أدخل كلمة مرور المزامنة."
+                } else {
+                    pullBusy = false
+                    pullStatus = "أدخل كلمة مرور المزامنة."
+                }
+            } else {
+                if (isPush) pushBusy = false else pullBusy = false
+                if (isPush) pushStatus = "" else pullStatus = ""
+                runManualSync(stored, isPush)
+            }
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -131,7 +216,7 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
                                         SyncAccount.Result.INVALID_PASSPHRASE -> "كلمة المرور لا تحقق الشرط."
                                         SyncAccount.Result.PROFILE_NOT_READY -> "معرّف الحساب غير جاهز بعد."
                                         SyncAccount.Result.NETWORK_ERROR -> "تعذّر الاتصال؛ حاول مرة أخرى."
-                                        SyncAccount.Result.REJECTED -> "تعذّر تفعيل الحساب."
+                                        SyncAccount.Result.REJECTED -> "تعذّر تفعيل الحساب. إن كان الحساب مفعّلًا من قبل، أدخل كلمة المرور الحالية نفسها."
                                     }
                                     if (outcome == SyncAccount.Result.SUCCESS) {
                                         passphrase = ""
@@ -148,10 +233,76 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
                     Text(status, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    "لا تُحفظ كلمة المرور على الجهاز، ولا تُزامَن النوتة أو ملاحظات المهام أو معرّفات الجهاز.",
+                    "لا تُحفظ كلمة المرور على الجهاز إلا إذا فعّلت «المزامنة التلقائية» أدناه؛ حينها تُحفظ مشفّرة وتُحذف بإيقاف التبديل. ولا تُزامَن النوتة أو ملاحظات المهام أو معرّفات الجهاز.",
                     color = FocusColors.TextSecondary,
                     style = MaterialTheme.typography.bodySmall
                 )
+            }
+        }
+        Card(
+            colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "مزامنة تلقائية",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = autoSyncEnabled,
+                        enabled = !autoSyncBusy,
+                        onCheckedChange = { enable ->
+                            if (autoSyncBusy) return@Switch
+                            // Enabling needs the secret once: the pairing field above, else the
+                            // push/pull field below, else one already stored or in this session
+                            // (setEnabled reports NEEDS_PASSPHRASE when there is none).
+                            val typed = when {
+                                SyncPassphrase.isValid(passphrase) -> passphrase
+                                SyncPassphrase.isValid(pushPassphrase) -> pushPassphrase
+                                else -> null
+                            }
+                            autoSyncBusy = true
+                            scope.launch {
+                                // Encrypted storage touches the Keystore: never on the main thread.
+                                val outcome = withContext(Dispatchers.IO) {
+                                    AutoSync.setEnabled(context, enable, typed)
+                                }
+                                autoSyncEnabled = outcome != AutoSync.EnableOutcome.NEEDS_PASSPHRASE &&
+                                    outcome != AutoSync.EnableOutcome.DISABLED
+                                autoSyncSessionOnly = outcome == AutoSync.EnableOutcome.ENABLED_SESSION_ONLY
+                                autoSyncStatus = when (outcome) {
+                                    AutoSync.EnableOutcome.ENABLED_ENCRYPTED ->
+                                        "مفعّلة — كلمة المرور محفوظة مشفّرة على هذا الجهاز."
+                                    AutoSync.EnableOutcome.ENABLED_SESSION_ONLY ->
+                                        "مفعّلة لهذه الجلسة فقط — التخزين المشفّر غير متاح على هذا الجهاز؛ أعد إدخال كلمة المرور بعد إعادة فتح التطبيق."
+                                    AutoSync.EnableOutcome.NEEDS_PASSPHRASE ->
+                                        "أدخل كلمة مرور المزامنة أولًا (في حقل التفعيل أو الرفع) ثم فعّل التبديل."
+                                    AutoSync.EnableOutcome.DISABLED ->
+                                        "أُوقفت المزامنة التلقائية وحُذفت كلمة المرور المحفوظة."
+                                }
+                                autoSyncBusy = false
+                            }
+                        }
+                    )
+                }
+                Text(
+                    "عند التفعيل يسحب التطبيق أحدث نسخة عند فتحه وعودته للواجهة وعودة الشبكة، ويرفع تغييراتك بعد هدوء قصير — بلا زر يدوي. كلمة المرور تُحفظ مشفّرة على هذا الجهاز فقط، وتُحذف بإيقاف التبديل.",
+                    color = FocusColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (autoSyncEnabled) {
+                    Text(
+                        if (autoSyncSessionOnly) "الحالة: مفعّلة لهذه الجلسة فقط."
+                        else "الحالة: مفعّلة، وكلمة المرور محفوظة مشفّرة.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (autoSyncStatus.isNotBlank()) {
+                    Text(autoSyncStatus, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         Card(
@@ -174,30 +325,9 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
                     shape = RoundedCornerShape(14.dp)
                 )
                 Button(
-                    onClick = {
-                        when {
-                            !SyncPassphrase.isValid(pushPassphrase) ->
-                                pushStatus = "أدخل كلمة مرور المزامنة."
-                            pushBusy -> Unit
-                            else -> {
-                                pushBusy = true
-                                pushStatus = ""
-                                scope.launch {
-                                    val outcome = SyncAccount.push(context, pushPassphrase)
-                                    pushBusy = false
-                                    pushStatus = when (outcome) {
-                                        SyncAccount.Result.SUCCESS -> "تم رفع البيانات بنجاح."
-                                        SyncAccount.Result.INVALID_PASSPHRASE -> "كلمة المرور لا تحقق الشرط."
-                                        SyncAccount.Result.PROFILE_NOT_READY -> "معرّف الحساب غير جاهز بعد."
-                                        SyncAccount.Result.NETWORK_ERROR ->
-                                            "تعذّر الرفع؛ تحقق من الاتصال وكلمة المرور ثم حاول مرة أخرى."
-                                        SyncAccount.Result.REJECTED -> "تعذّر رفع البيانات."
-                                    }
-                                    if (outcome == SyncAccount.Result.SUCCESS) pushPassphrase = ""
-                                }
-                            }
-                        }
-                    },
+                    // With auto-sync on, the stored/session passphrase is used when the field
+                    // is blank, so the manual buttons stay usable without retyping.
+                    onClick = { if (!pushBusy) runManualSyncWithStoredFallback(isPush = true) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp)
                 ) { Text(if (pushBusy) "جارٍ الرفع…" else "رفع البيانات") }
@@ -205,30 +335,8 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
                     Text(pushStatus, style = MaterialTheme.typography.bodySmall)
                 }
                 Button(
-                    onClick = {
-                        when {
-                            !SyncPassphrase.isValid(pushPassphrase) ->
-                                pullStatus = "أدخل كلمة مرور المزامنة."
-                            pullBusy -> Unit
-                            else -> {
-                                pullBusy = true
-                                pullStatus = ""
-                                scope.launch {
-                                    val outcome = SyncAccount.pull(context, pushPassphrase)
-                                    pullBusy = false
-                                    pullStatus = when (outcome) {
-                                        SyncAccount.Result.SUCCESS -> "تم سحب البيانات وتطبيقها."
-                                        SyncAccount.Result.INVALID_PASSPHRASE -> "كلمة المرور لا تحقق الشرط."
-                                        SyncAccount.Result.PROFILE_NOT_READY -> "معرّف الحساب غير جاهز بعد."
-                                        SyncAccount.Result.NETWORK_ERROR ->
-                                            "تعذّر السحب؛ تحقق من الاتصال وكلمة المرور ثم حاول مرة أخرى."
-                                        SyncAccount.Result.REJECTED -> "تعذّر سحب البيانات."
-                                    }
-                                    if (outcome == SyncAccount.Result.SUCCESS) pushPassphrase = ""
-                                }
-                            }
-                        }
-                    },
+                    // Same stored/session fallback as the push button above.
+                    onClick = { if (!pullBusy) runManualSyncWithStoredFallback(isPush = false) },
                     enabled = !pullBusy,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp)
