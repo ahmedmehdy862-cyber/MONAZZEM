@@ -19,6 +19,10 @@
     <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Adhan loudness: the playback service raises the alarm stream to its maximum
+         for the adhan and restores it when playback ends (never the media volume of
+         a connected headset). Normal, install-time permission. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Prayer alarms are a core function of this app: they must fire at the calculated time. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 

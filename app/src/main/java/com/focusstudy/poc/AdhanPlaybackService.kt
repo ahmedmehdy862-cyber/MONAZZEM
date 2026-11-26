@@ -23,6 +23,14 @@ import androidx.core.app.NotificationCompat
  *
  * The ongoing notification is silent and low priority. Its only purpose is to keep the service
  * alive and to offer an explicit stop button; closing the centred screen never stops the adhan.
+ *
+ * Where the sound goes, and how loud it is, is decided at play time (see [AdhanAudioRouting]):
+ *  - no headset connected: the alarm stream, boosted to its maximum for the duration of the
+ *    adhan and restored afterwards, so the call is loud even when the alarm volume was left low;
+ *  - a wired, USB or Bluetooth-A2DP headset connected: the media stream instead, because the
+ *    system routes alarm audio to the speaker even with a headset on — the media stream is
+ *    what actually reaches the headset. The media volume is the person's own listening
+ *    volume and is never forced up (a forced maximum into earphones would be painful).
  */
 internal class AdhanPlaybackService : Service() {
 
@@ -31,6 +39,8 @@ internal class AdhanPlaybackService : Service() {
     private var focusHeld = false
     /** Both the alarm receiver and the alert screen may ask to play; only one player may start. */
     private var starting = false
+    /** Alarm-stream volume saved before the boost, so it is restored when playback ends. */
+    private var savedAlarmVolume: Int? = null
 
     private val audioManager: AudioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
@@ -65,11 +75,14 @@ internal class AdhanPlaybackService : Service() {
         // Promote to a foreground service before doing anything that could block: Android only
         // allows a few seconds between startForegroundService() and startForeground().
         runCatching { startForeground(NOTIFICATION_ID, ongoingNotification(name, voice)) }
-        requestFocus()
-        val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
+        // The output is chosen now, at play time: a headset connected at this moment gets the
+        // media stream (the only stream the system routes to it); otherwise the alarm stream.
+        val headsetConnected = AdhanAudioRouting.hasConnectedHeadset(audioManager)
+        val attributes = AdhanAudioRouting.attributesFor(headsetConnected)
+        requestFocus(attributes)
+        // Loud on the speaker only: the alarm stream is raised to its maximum for the adhan
+        // and restored when playback ends. A headset keeps the person's own media volume.
+        if (!headsetConnected) boostAlarmVolume()
         player = runCatching {
             MediaPlayer().apply {
                 setAudioAttributes(attributes)
@@ -87,11 +100,7 @@ internal class AdhanPlaybackService : Service() {
         if (player == null) stopSelf()
     }
 
-    private fun requestFocus() {
-        val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
+    private fun requestFocus(attributes: AudioAttributes) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                 .setAudioAttributes(attributes)
@@ -108,6 +117,30 @@ internal class AdhanPlaybackService : Service() {
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
             ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
+    }
+
+    /**
+     * Raises the alarm stream to its maximum for the adhan. The previous level is saved
+     * and restored by [restoreAlarmVolume] when playback ends; if it was already at the
+     * maximum nothing is saved and nothing is changed. Needs MODIFY_AUDIO_SETTINGS
+     * (a normal, install-time permission). Only the speaker path is boosted — never
+     * the media volume of a connected headset.
+     */
+    private fun boostAlarmVolume() {
+        runCatching {
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            val current = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            if (current < max) {
+                savedAlarmVolume = current
+                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, max, 0)
+            }
+        }
+    }
+
+    private fun restoreAlarmVolume() {
+        val saved = savedAlarmVolume ?: return
+        savedAlarmVolume = null
+        runCatching { audioManager.setStreamVolume(AudioManager.STREAM_ALARM, saved, 0) }
     }
 
     private fun ongoingNotification(name: String, voice: PrayerAdhanVoice): Notification {
@@ -150,6 +183,7 @@ internal class AdhanPlaybackService : Service() {
             release()
         }
         player = null
+        restoreAlarmVolume()
         if (focusHeld) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
