@@ -1,6 +1,6 @@
 const { put } = require("@vercel/blob");
 const { isAdmin, originIsSame, parseBody, json } = require("../../lib/admin-auth");
-const { RELEASE_PATH, readLatestRelease, readFallbackRelease } = require("../../lib/release-store");
+const { RELEASE_PATH, readLatestRelease, readFallbackRelease, normalizeWindows } = require("../../lib/release-store");
 const { recordRelease } = require("../../lib/release-history");
 
 module.exports = async function publishRelease(req, res) {
@@ -54,6 +54,10 @@ module.exports = async function publishRelease(req, res) {
 
     const current = await readLatestRelease();
     if (versionCode <= Number(current.versionCode || 0)) return json(res, 409, { error: "version_code_must_increase", currentVersionCode: current.versionCode });
+    // النشر اليدوي من اللوحة يجب ألا يُسقط نسخة ويندوز المرفقة من CI: لا حقل
+    // لها في نموذج النشر، فتُحفَظ القيمة الحالية الصالحة كما هي. النسخة
+    // المعروضة على الأزرار هي نسخة ملف MSI نفسه.
+    const preservedWindows = normalizeWindows(current.windows);
 
     let parsedUrl;
     try { parsedUrl = new URL(storeUrl); } catch { return json(res, 400, { error: "invalid_store_url" }); }
@@ -73,6 +77,7 @@ module.exports = async function publishRelease(req, res) {
       description,
       releasePageUrl: `https://${host}/#download`,
       releaseNotes,
+      ...(preservedWindows ? { windows: preservedWindows } : {}),
       publishedAt: new Date().toISOString()
     };
 

@@ -46,6 +46,10 @@ function errorText(error) {
 async function loadCurrentRelease() {
   const release = await callApi("/api/latest");
   document.getElementById("current-release").textContent = `الإصدار المنشور: ${release.versionName} · رقم ${release.versionCode}`;
+  const attachedWindows = release.windows && release.windows.version
+    ? ` · نسخة ويندوز ${release.windows.version}${release.windows.sizeBytes ? ` (${Math.round(Number(release.windows.sizeBytes) / 1048576)} م.ب)` : ""} مرفقة`
+    : " · بلا نسخة ويندوز مرفقة";
+  document.getElementById("current-release").textContent += attachedWindows;
   document.getElementById("store-url").value = release.storeUrl || "https://qubixstore.vercel.app/focus-study-updates";
   document.getElementById("apk-url").value = release.apkUrl || "";
   document.getElementById("app-description").value = release.description || "نظّم مهامك وموادك وجلسات تركيزك وخطتك الدراسية في مساحة واحدة.";

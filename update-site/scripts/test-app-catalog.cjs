@@ -114,7 +114,7 @@ async function main() {
 
   await test("/api/latest still returns the current release plus the shared app catalog", async () => {
     const handler = loadMocked("api/latest.js", {
-      "../lib/release-store": { readLatestRelease: async () => latestRelease() },
+      "../lib/release-store": { ...require("../lib/release-store"), readLatestRelease: async () => latestRelease() },
       "../lib/release-history": { readHistory: async () => [] },
       "../lib/app-catalog": { readCatalog: async () => catalog.buildAppsFeed({ latest: latestRelease(), history: [], storeApp: await catalog.readStoreAppRelease() }) },
     });
@@ -129,7 +129,7 @@ async function main() {
 
   await test("a catalog failure never hides the current release", async () => {
     const handler = loadMocked("api/latest.js", {
-      "../lib/release-store": { readLatestRelease: async () => latestRelease() },
+      "../lib/release-store": { ...require("../lib/release-store"), readLatestRelease: async () => latestRelease() },
       "../lib/release-history": { readHistory: async () => [] },
       "../lib/app-catalog": { readCatalog: async () => { throw new Error("catalog down"); } },
     });

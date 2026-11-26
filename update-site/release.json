@@ -1,10 +1,15 @@
 {
   "packageName": "com.focusstudy.poc",
-  "versionCode": 37,
-  "versionName": "0.29.0",
+  "versionCode": 43,
+  "versionName": "0.34.0",
   "storeUrl": "https://qubixstore.vercel.app/focus-study-updates",
-  "apkUrl": "https://github.com/ahmedmehdy862-cyber/MONAZZEM/releases/download/focus-v0.29.0/MONAZZEM.apk",
+  "apkUrl": "https://github.com/ahmedmehdy862-cyber/MONAZZEM/releases/download/focus-v0.34.0/MONAZZEM.apk",
   "description": "نظّم مهامك وموادك وجلسات تركيزك وخطتك الدراسية في مساحة واحدة.",
   "releasePageUrl": "https://update-site-sigma.vercel.app/#download",
-  "releaseNotes": "نوتة خاصة للملاحظات محفوظة على جهازك فقط، ووصول موثوق لاسمك إلى لوحة الإدارة حتى مع انقطاع أول اتصال، ورسائل موجّهة لا يقرأها إلا الجهاز المقصود."
+  "releaseNotes": "مُنظِّم وصل إلى ويندوز — هاتفك وحاسوبك معًا أخيرًا.\r\n• تطبيق ويندوز جديد متزامن مع هاتفك: مهامك ووردك وعاداتك وصحتك ومالك ومزاجك في مكان واحد على الحاسوب أيضًا.\r\n• مزامنة في الاتجاهين: ما تكتبه على الهاتف يظهر على ويندوز، وما تكتبه على ويندوز يرجع إلى هاتفك.\r\n• بطاقة «نسخة ويندوز» جديدة داخل التطبيق ترشدك خطوة بخطوة لتنزيل نسخة الحاسوب وربطها بحسابك.\r\n• زر تنزيل ويندوز على صفحة المتجر بجانب زر أندرويد، لتحصل على النسختين من مكان واحد.",
+  "windows": {
+    "downloadUrl": "https://github.com/ahmedmehdy862-cyber/MONAZZEM/releases/download/focus-v0.34.0/MONAZZEM-Setup-0.34.0.msi",
+    "version": "0.34.0",
+    "sizeBytes": 73335363
+  }
 }

@@ -46,6 +46,8 @@
     .card{border:1px solid #ffffff12;border-radius:22px;background:linear-gradient(150deg,#141e32,#101828);padding:21px}
     .card .icon{font-size:25px}.card h3{margin:8px 0 4px;font-size:17px}.card p{margin:0;color:var(--muted);font-size:14px}
     .release{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;padding:26px;border-radius:26px;background:linear-gradient(120deg,#172b49,#211d42);border:1px solid #ffffff15}
+    .release-downloads{display:grid;gap:10px;min-width:230px}
+    .button[hidden]{display:none}
     .release-name{font-size:24px;font-weight:800}.version{display:inline-block;margin-inline-start:9px;padding:3px 10px;border-radius:999px;background:#5FE0CE1a;color:var(--mint);font-size:13px;vertical-align:middle}
     .notes{color:var(--muted);margin:8px 0 0;white-space:pre-line}
     .meta{color:#7E93A8;font-size:12px;margin-top:8px}
@@ -108,10 +110,11 @@
 
       <h2 class="section-title">نسخة الكمبيوتر (Windows)</h2>
       <section class="steps" aria-label="تثبيت على ويندوز">
-        <div class="step">افتح هذه الصفحة في Chrome أو Edge على ويندوز.</div>
-        <div class="step">من أيقونة التثبيت في شريط العنوان اختر «تثبيت» — تُصبح لك نافذة مستقلة تعمل دون متصفح.</div>
-        <div class="step">تطبيق أندرويد الكامل يُثبَّت على الهاتف من الرابط أعلاه؛ نسخة سطح المكتب المستقلة (WinUI) قيد التطوير.</div>
+        <div class="step">اضغط «تنزيل نسخة ويندوز» من قسم «آخر إصدار» أعلاه لتحميل ملف التثبيت (MSI).</div>
+        <div class="step">افتح الملف الذي نزل واتبع خطوات التثبيت؛ ستظهر لك أيقونة مُنظِّم على سطح المكتب.</div>
+        <div class="step">اربط حساب المزامنة من داخل التطبيق لتظهر مهامك ووردك وعاداتك على الحاسوب والهاتف معًا.</div>
       </section>
+      <p class="meta">جلسة التركيز على ويندوز مؤقت وتذكير فقط؛ حجب التطبيقات المشتتة خاص بتطبيق أندرويد. ويمكنك أيضًا استخدام <a href="/app/">تطبيق الويب</a> من المتصفح مباشرة دون تثبيت.</p>
 
       <h2 class="section-title">آخر إصدار</h2>
         <section id="download" class="release" aria-live="polite">
@@ -120,7 +123,10 @@
           <p id="release-notes" class="notes">نتصل بمصدر الإصدارات الآمن لعرض التفاصيل.</p>
           <div id="published" class="meta"></div>
         </div>
-          <a id="store-button" class="button primary" href="#download" aria-disabled="true">رابط المتجر غير مربوط</a>
+          <div class="release-downloads">
+            <a id="store-button" class="button primary" href="#download" aria-disabled="true">رابط المتجر غير مربوط</a>
+            <a id="windows-button" class="button secondary" href="#download" hidden>تنزيل نسخة ويندوز</a>
+          </div>
       </section>
 
       <h2 class="section-title">سجل الإصدارات</h2>
@@ -245,6 +251,22 @@
         button.rel = 'noopener';
       }
     }
+    // نسخة ويندوز اختيارية: تُعرض فقط عندما يرسل الموجز حقل windows كاملًا
+    // وصالحًا (رابط https ينتهي بـ .msi + نسخة x.y.z + حجم موجب)؛ وإلا يبقى
+    // الزر مخفيًا ولا يظهر رابط مكسور أبدًا.
+    function validWindows(raw) {
+      try {
+        if (!raw || typeof raw !== 'object') return null;
+        const version = String(raw.version || '');
+        if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
+        const url = new URL(String(raw.downloadUrl || ''));
+        if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return null;
+        if (!url.pathname.toLowerCase().endsWith('.msi')) return null;
+        const sizeBytes = Number(raw.sizeBytes);
+        if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) return null;
+        return { downloadUrl: url.href, version, sizeBytes };
+      } catch { return null; }
+    }
     fetch('/api/latest', { headers: { Accept: 'application/json' }, cache: 'no-store' })
       .then(response => { if (!response.ok) throw new Error('تعذر قراءة بيانات الإصدار.'); return response.json(); })
       .then(release => {
@@ -263,6 +285,17 @@
           heroStore.textContent = 'المتجر غير مربوط';
           storeButton.textContent = 'المتجر غير مربوط';
           status.textContent = 'سيتم تفعيل التحديث من المتجر بعد إضافة رابطه في لوحة الإدارة.';
+        }
+        const winButton = document.getElementById('windows-button');
+        const windows = validWindows(release.windows);
+        if (winButton && windows) {
+          const size = windows.sizeBytes ? ` · ${Math.round(windows.sizeBytes / 1048576)} م.ب` : '';
+          winButton.href = windows.downloadUrl;
+          winButton.target = '_blank';
+          winButton.rel = 'noopener';
+          winButton.removeAttribute('hidden');
+          winButton.textContent = `تنزيل نسخة ويندوز · ${windows.version}${size} ↓`;
+          status.textContent += ' نسخة ويندوز متاحة للتنزيل من هذه الصفحة.';
         }
         renderHistory(release.history, release.storeUrl);
         renderApps(release.apps);
