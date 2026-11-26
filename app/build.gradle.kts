@@ -53,6 +53,7 @@ android {
         targetSdk = 36
         versionCode = 43
         versionName = "0.34.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "UPDATE_FEED_URL", "\"$escapedUpdateFeedUrl\"")
     }
 
@@ -133,6 +134,13 @@ dependencies {
     implementation("androidx.security:security-crypto:1.0.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // Live sync test (androidTest): real-device round-trip against the live
+    // /api/sync endpoint — no UI, so only runner + junit + rules are needed
+    // (same pinned versions as the emulator-qa screenshot tour).
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.1")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
     // Robolectric for the DB migration test (DbMigrationV16ToV17Test): the migration
     // is pure SQLite, so no device is needed. Pinned to 4.14.1 (supports the SDK 35
     // runtime the test pins itself to with @Config).

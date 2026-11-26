@@ -1,0 +1,281 @@
+# Sync live test — Android emulator <-> Windows, against the LIVE /api/sync endpoint.
+#
+# يعمل يدويًا فقط (workflow_dispatch) على فرع sync-auto — لا يعمل على كل push:
+# ينشئ ملف اختبار معزولًا جديدًا على الخادم الحي في كل تشغيل، ويستهلك
+# نحو 30–40 دقيقة من CI (محاكيان + windows-latest).
+#
+# المهمات (متسلسلة — كل واحدة تعتمد على سابقتها):
+#   1) android-seed: محاكي API 34 — يسجّل ملفًا معزولًا جديدًا، يزرع
+#      المجموعات العشر، يدفع ويسحب، يصدّر بيانات الاعتماد كمصنّف؛ ثم
+#      يقطع الشبكة ويتحقق أن المزامنة تفشل بـ NETWORK_ERROR، ويعيدها.
+#   2) windows-verify: windows-latest — يربط بنفس الملف (اختبار إعادة
+#      المحاولة بـ currentPassphrase عند 401)، يسحب ويطبّق المجموعات
+#      العشر، يعدّل (مهمة ويندوز + إكمال مهمة أندرويد + تومبستون سجل
+#      عادة) ويدفع؛ وقبلها يختبر الانقطاع بحجب java.exe بجدار الحماية.
+#   3) android-verify: محاكي جديد بقاعدة فارغة — يسحب ويثبت وصول
+#      تعديلات ويندوز وسلامة بيانات أندرويد، وأن ملاحظة المعاملة لم تعبر.
+#
+# بيانات الاعتماد: ملف اختبار معزول عشوائي في كل تشغيل (ليس حساب أحمد)؛
+# يُحفظ كمصنّف ليوم واحد فقط. لا توجد نقطة حذف للحسابات على الخادم،
+# فيبقى الملف المعزول ببياناته الاصطناعية فقط (انظر docs/sync-live-test.md).
+name: Sync live test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# لا تُلغِ تشغيلًا حيًا في المنتصف — له حالة على الخادم.
+concurrency:
+  group: sync-live-test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android-seed:
+    name: Android seed + push (API 34 emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Locate Android SDK tools
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name sdkmanager | sort | tail -n 1)"
+          test -n "$SDKMANAGER" || { echo "sdkmanager not found under $SDK_ROOT" >&2; exit 1; }
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/emulator" >> "$GITHUB_PATH"
+
+      - name: Install SDK packages used by the build
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "system-images;android-34;google_apis;x86_64"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || echo "no /dev/kvm device on this runner"
+
+      - name: Run live seed test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          disable-animations: true
+          script: |
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace --tests "com.focusstudy.poc.SyncLiveSeedTest"
+            # سحب بيانات اعتماد ملف الاختبار من filesDir الداخلي (run-as يعمل لأن APK قابل للتنقيح).
+            adb shell run-as com.focusstudy.poc cat /data/data/com.focusstudy.poc/files/sync-live-credentials.json > sync-live-credentials.json
+            test -s sync-live-credentials.json || { echo "credentials file is empty or missing" >&2; exit 1; }
+            # --- قطع الشبكة: واي فاي + بيانات ---
+            adb shell svc wifi disable
+            adb shell svc data disable
+            sleep 5
+            # تحقق مستقل من القطع (إن وُجد curl على المحاكي): وصول ناجح هنا يعني
+            # أن القطع لم يأخذ مفعوله، فيفشل التشغيل بصوت عالٍ بدل ادعاء اختبار انقطاع.
+            if adb shell "command -v curl >/dev/null && curl -m 8 -s -o /dev/null https://update-site-sigma.vercel.app/api/latest"; then
+              echo "ERROR: network still reachable after svc disable — offline step cannot be trusted" >&2
+              exit 1
+            fi
+            echo "network cut verified"
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace --tests "com.focusstudy.poc.SyncLiveOfflineTest"
+            # --- إعادة الشبكة ---
+            adb shell svc wifi enable
+            adb shell svc data enable
+            sleep 5
+            if adb shell "command -v curl >/dev/null && ! curl -m 10 -s -o /dev/null https://update-site-sigma.vercel.app/api/latest"; then
+              echo "ERROR: network did not come back after re-enable" >&2
+              exit 1
+            fi
+            echo "network restored"
+
+      - name: Upload live-test credentials
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-live-credentials
+          path: sync-live-credentials.json
+          retention-days: 1
+          if-no-files-found: error
+
+  windows-verify:
+    name: Windows pull + push (windows-latest)
+    needs: android-seed
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Locate Android SDK tools
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name sdkmanager | sort | tail -n 1)"
+          test -n "$SDKMANAGER" || { echo "sdkmanager not found under $SDK_ROOT" >&2; exit 1; }
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+
+      - name: Install SDK packages used by the build
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download live-test credentials
+        uses: actions/download-artifact@v4
+        with:
+          name: sync-live-credentials
+          path: live-credentials
+
+      - name: Mask test credentials in logs
+        shell: pwsh
+        run: |
+          $creds = Get-Content live-credentials/sync-live-credentials.json -Raw | ConvertFrom-Json
+          Write-Output "::add-mask::$($creds.passphrase)"
+          Write-Output "::add-mask::$($creds.profileId)"
+
+      # تسخين ذاكرة Gradle التخزينية أولًا (بلا بيانات اعتماد — فاختبارات
+      # الحي تُتخطى هنا): حتى يعمل اختبار الانقطاع لاحقًا بلا شبكة
+      # (--offline) دون أن يفشل على تنزيل اعتماديات.
+      - name: Warm Gradle cache (desktop unit tests)
+        run: .\gradlew.bat :desktop:test --no-daemon
+
+      - name: Block java.exe outbound (firewall)
+        shell: pwsh
+        run: |
+          $java = (Get-Command java).Source
+          if (-not $java) { throw "java not found on PATH" }
+          netsh advfirewall firewall add rule name="SyncLiveTest-BlockJava" dir=out program="$java" action=block
+          if ($LASTEXITCODE -ne 0) { throw "failed to add firewall rule" }
+          Write-Output "blocked outbound for $java"
+
+      - name: Run Windows offline test (no network)
+        env:
+          SYNC_LIVE_CREDENTIALS_FILE: ${{ github.workspace }}\live-credentials\sync-live-credentials.json
+        run: .\gradlew.bat :desktop:test --tests "com.focusstudy.poc.desktop.SyncLiveWindowsOfflineTest" --offline --no-daemon
+
+      - name: Remove firewall rule
+        if: always()
+        shell: pwsh
+        run: netsh advfirewall firewall delete rule name="SyncLiveTest-BlockJava"
+
+      - name: Run Windows live test (online)
+        env:
+          SYNC_LIVE_CREDENTIALS_FILE: ${{ github.workspace }}\live-credentials\sync-live-credentials.json
+        run: .\gradlew.bat :desktop:test --tests "com.focusstudy.poc.desktop.SyncLiveWindowsTest" --no-daemon
+
+  android-verify:
+    name: Android verify Windows changes (API 34 emulator)
+    needs: windows-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Locate Android SDK tools
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name sdkmanager | sort | tail -n 1)"
+          test -n "$SDKMANAGER" || { echo "sdkmanager not found under $SDK_ROOT" >&2; exit 1; }
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/emulator" >> "$GITHUB_PATH"
+
+      - name: Install SDK packages used by the build
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "system-images;android-34;google_apis;x86_64"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Download live-test credentials
+        uses: actions/download-artifact@v4
+        with:
+          name: sync-live-credentials
+          path: .
+
+      - name: Mask test credentials in logs
+        run: |
+          python3 -c "import json; d=json.load(open('sync-live-credentials.json')); print(f\"::add-mask::{d['passphrase']}\"); print(f\"::add-mask::{d['profileId']}\")"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || echo "no /dev/kvm device on this runner"
+
+      - name: Run live verify test on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          disable-animations: true
+          script: |
+            ./gradlew installDebug --no-daemon
+            # دفع بيانات الاعتماد إلى filesDir قبل تشغيل الاختبار (عبر stdin؛ لا تظهر في السجل).
+            adb shell run-as com.focusstudy.poc sh -c 'cat > /data/data/com.focusstudy.poc/files/sync-live-credentials.json' < sync-live-credentials.json
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace --tests "com.focusstudy.poc.SyncLiveVerifyTest"
+            adb logcat -d > ./logcat-verify.txt || true
+
+      - name: Upload verify logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-live-verify-logcat
+          path: logcat-verify.txt
+          retention-days: 1
+          if-no-files-found: ignore
