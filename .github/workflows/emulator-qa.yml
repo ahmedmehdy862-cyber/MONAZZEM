@@ -1,6 +1,6 @@
-# Emulator QA — FINAL GATE for 0.35.0 (branch emulator-qa-final, base f330ca7).
+## Emulator QA — FINAL GATE re-run for 0.35.0 (branch crashfix-035-qa: fix fdca19e + gate tests).
 #
-# يعمل يدويًا (workflow_dispatch) وعند أي push على فرع emulator-qa-final.
+# يعمل يدويًا (workflow_dispatch) وعند أي push على فرع crashfix-035-qa.
 # بلا نشر وبلا وسم: مهمته لقطات + تقرير QA فقط. اللقطات تُرفع كـ artifact
 # وتُقرأ يدويًا؛ لا يوجد أي ادعاء آلي بجودة الواجهة. لا نشر قبل PASS.
 #
@@ -30,13 +30,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - emulator-qa-final
+      - crashfix-035-qa
 
 permissions:
   contents: read
 
 concurrency:
-  group: emulator-qa-final-${{ github.ref }}
+  group: crashfix-035-qa-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

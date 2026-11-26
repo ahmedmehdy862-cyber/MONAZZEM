@@ -2,6 +2,7 @@ package com.focusstudy.poc
 
 import android.content.Context
 import android.graphics.Point
+import android.graphics.Rect
 import android.util.Log
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -228,6 +229,23 @@ class EmulatorQaTest {
         }.getOrDefault(false)
     }
 
+    /** تحقق صريح (تذكير أحمد): زر + بعيد عن زر «الأقسام» في الشريط السفلي. */
+    private fun logFabSectionsCheck(tag: String) {
+        val fab = runCatching { device.findObject(By.desc("إضافة سريعة")) }.getOrNull()
+        val sections = runCatching { device.findObject(By.text("الأقسام")) }.getOrNull()
+        if (fab == null || sections == null) {
+            log("FAB_SECTIONS_CHECK [$tag]: fabFound=${fab != null} sectionsFound=${sections != null}")
+            return
+        }
+        val f = fab.visibleBounds
+        val s = sections.visibleBounds
+        val overlap = Rect.intersects(f, s)
+        // الفاصل الرأسي بين أسفل زر + وأعلى زر الأقسام (بالبكسل؛ المحاكي
+        // pixel_6 بكثافة 420dpi فـ 16dp ≈ 42px). يجب أن يكون موجبًا وبلا تداخل.
+        val verticalGapPx = s.top - f.bottom
+        log("FAB_SECTIONS_CHECK [$tag]: fab=$f sections=$s overlap=$overlap verticalGapPx=$verticalGapPx")
+    }
+
     private fun step(label: String, block: () -> Unit) {
         runCatching { block() }.onFailure { log("STEP FAILED [$label]: ${it.message}") }
     }
@@ -265,6 +283,7 @@ class EmulatorQaTest {
     @Test
     fun lightScreenshots() {
         launch("light")
+        step("fab-sections-light") { logFabSectionsCheck("light-home") }
         step("today-top") { shot("01-today-light") }
         step("today-scroll") {
             // بطاقة المساعد ثم الرفيق 3D أسفل الطي في «اليوم».
@@ -332,6 +351,7 @@ class EmulatorQaTest {
     @Test
     fun darkScreenshots() {
         launch("dark")
+        step("fab-sections-dark") { logFabSectionsCheck("dark-home") }
         step("today-dark") { shot("01-today-dark") }
         step("tasks-dark") { clickText("مهامي"); shot("02-tasks-dark") }
         step("quran-dark") { openSection("المصحف"); shot("03-quran-dark"); goBack() }
@@ -432,6 +452,9 @@ class EmulatorQaTest {
             relaunchKeepPrefs()
             log("BOTTOMBAR AFTER RESTART: ${prefs().bottomTabs.joinToString(",")}")
             shot("32-bottombar-after-restart")
+            // تحقق صريح بعد إعادة الترتيب وإعادة التشغيل: زر + ما زال
+            // بعيدًا عن زر «الأقسام» (بلا تعارض وبلا تغطية).
+            logFabSectionsCheck("after-reorder-restart")
         }
         step("bottombar-restore") {
             openSection("الشريط السفلي")
@@ -517,5 +540,40 @@ class EmulatorQaTest {
             goBack()
         }
         log("exercise detail done")
+    }
+
+    /**
+     * شاشة الترحيب (0.35.0): تظهر بعد الإعداد الأولي مباشرة، ثم تنتقل
+     * تلقائيًا أو بالنقر إلى الرئيسية دون إيقاف الدخول. لا يستخدم launch()
+     * هنا عمدًا — فهي تنام 1500ms بعد الإقلاع، والترحيب ينتهي تلقائيًا
+     * بعد 1200ms فيفوتنا؛ ننتظر ظهور نص الترحيب فور الإقلاع مباشرة.
+     */
+    @Test
+    fun welcomeScreen() {
+        device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val ctx = appContext()
+        shotDir = File(ctx.getExternalFilesDir(null), "qa-screenshots").apply { mkdirs() }
+        logFile = File(shotDir, "qa-log.txt")
+        setPrefs("light")
+        seedDataOnce()
+        androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
+        val welcomeVisible = runCatching {
+            device.wait(Until.hasObject(By.text("نرتّب يومك معًا")), 15000)
+        }.getOrDefault(false)
+        log("WELCOME visible=$welcomeVisible")
+        step("welcome-shot") { shot("00-welcome-light") }
+        if (welcomeVisible) {
+            // النقر يتخطى الترحيب فورًا إلى الرئيسية.
+            runCatching { device.click(device.displayWidth / 2, device.displayHeight / 2) }
+            Thread.sleep(800)
+        }
+        val homeVisible = runCatching {
+            device.wait(Until.hasObject(By.text("اليوم")), 10000)
+        }.getOrDefault(false)
+        log("WELCOME skipped, home visible=$homeVisible")
+        composeRule.waitForIdle()
+        Thread.sleep(800)
+        step("welcome-home") { shot("00b-welcome-skipped-home") }
+        log("welcome screen done")
     }
 }
