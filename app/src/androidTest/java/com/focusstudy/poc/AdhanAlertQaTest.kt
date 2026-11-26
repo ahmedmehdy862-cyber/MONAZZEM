@@ -1,10 +1,12 @@
 package com.focusstudy.poc
 
+import android.app.ActivityManager
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.util.Log
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -12,6 +14,7 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import java.io.File
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,26 +22,32 @@ import org.junit.runner.RunWith
 
 /**
  * Adhan alert QA on a real emulator: the full-screen alert shows the big one-tap
- * «إيقاف الأذان» button, and tapping it stops the sound for real (the playback
- * service's ongoing notification disappears and the alert closes).
+ * «إيقاف الأذان» button, the alarm stream is raised to its maximum while the
+ * adhan plays, and tapping the button stops the sound for real (the playback
+ * service stops, its volume is restored, and the alert closes).
  *
  * Runs in light and dark (the alert follows the person's theme choice). The two
  * tests use different prayers so the alert's duplicate-launch guard (same alert
  * within 60s) cannot swallow the second launch.
  *
- * The alert is launched the way production launches it — by sending the alarm's
- * screen PendingIntent (the same path PrayerNotificationScheduler uses) — not by
- * an ActivityScenario launch. That matters on API 34: sending the PendingIntent
- * grants the temporary foreground-service allowance, so the service can promote
- * itself to foreground; starting it from an activity's onCreate before the
- * activity is visible is refused foreground status on API 34, and the service
- * then plays with no ongoing notification (run 45796616349 proved it: the
- * service started, requested alarm focus and decoded the clip, but notification
- * 6301 never appeared).
+ * What this test deliberately does NOT assert: the service's ongoing notification
+ * (6301). On API 34 that notification depends on the foreground-service allowance
+ * of the launch path, and the test's launch paths cannot provide it:
+ *  - ActivityScenario.launch shows the alert fine, but the service started from
+ *    the activity's onCreate is refused foreground status on API 34 (run
+ *    45796616349: the service started, requested alarm focus and decoded the
+ *    clip, yet notification 6301 never appeared);
+ *  - PendingIntent.send() from the background test process never launches the
+ *    activity at all on API 34 (run 45799063258: no lifecycle lines whatsoever),
+ *    because a self-sent PendingIntent from the background is BAL-blocked.
+ * The production flows do not have this problem: the exact alarm grants the
+ * allowance to the receiver that starts the service, and the alarm's screen
+ * PendingIntent is sent by the system. So the test asserts the service itself
+ * (running/stopped) and the alarm volume, which are the user-visible facts.
  *
- * Honest limit of this test: it proves the stop path and the visible button, not
- * audible loudness or routing to a real headset — the emulator runs with -noaudio
- * and has no headset. Those need a real device (see the report).
+ * Honest limit of this test: it proves the stop path, the visible button and the
+ * volume boost, not audible loudness or routing to a real headset — the emulator
+ * runs with -noaudio and has no headset. Those need a real device (see the report).
  */
 @RunWith(AndroidJUnit4::class)
 class AdhanAlertQaTest {
@@ -46,9 +55,12 @@ class AdhanAlertQaTest {
     private lateinit var device: UiDevice
     private lateinit var shotDir: File
     private lateinit var logFile: File
+    private var scenario: ActivityScenario<PrayerAlertActivity>? = null
 
     @After
     fun tearDown() {
+        runCatching { scenario?.close() }
+        scenario = null
         runCatching {
             if (::shotDir.isInitialized) QaExport.exportDir(appContext(), shotDir)
         }
@@ -79,9 +91,19 @@ class AdhanAlertQaTest {
             .putExtra(PrayerAlertActivity.EXTRA_VOICE, PrayerAdhanVoice.DEFAULT.key)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 
+    private fun audioManager(): AudioManager =
+        appContext().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
     private fun serviceNotificationPresent(): Boolean {
         val nm = appContext().getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         return nm.activeNotifications.any { it.id == SERVICE_NOTIFICATION_ID }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun serviceRunning(): Boolean {
+        val am = appContext().getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return am.getRunningServices(Int.MAX_VALUE)
+            .any { it.service.className == AdhanPlaybackService::class.java.name }
     }
 
     private fun waitFor(timeoutMs: Long, check: () -> Boolean): Boolean {
@@ -93,33 +115,35 @@ class AdhanAlertQaTest {
         return runCatching { check() }.getOrDefault(false)
     }
 
-    private fun launchAndStop(
-        theme: String,
-        name: String,
-        key: String,
-        shotPrefix: String,
-        requestCode: Int
-    ) {
+    private fun launchAndStop(theme: String, name: String, key: String, shotPrefix: String) {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         val ctx = appContext()
         shotDir = File(ctx.getExternalFilesDir(null), "qa-screenshots").apply { mkdirs() }
         logFile = File(shotDir, "qa-log.txt")
         setTheme(theme)
+        val am = audioManager()
+        val volumeBefore = am.getStreamVolume(AudioManager.STREAM_ALARM)
+        val volumeMax = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+        log("[$theme] alarm volume before: $volumeBefore / max $volumeMax")
         // The alert plays the adhan on launch (key != null + default rule AT sound = ADHAN).
-        val launch = PendingIntent.getActivity(
-            ctx,
-            requestCode,
-            alertIntent(name, key),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        runCatching { launch.send() }
+        scenario = ActivityScenario.launch<PrayerAlertActivity>(alertIntent(name, key))
         assertTrue(
             "[$theme] stop button not visible",
             device.wait(Until.hasObject(By.text("إيقاف الأذان")), 15000)
         )
-        val playingBefore = waitFor(timeoutMs = 10000) { serviceNotificationPresent() }
-        log("[$theme] service notification present before tap: $playingBefore")
-        assertTrue("[$theme] adhan service did not start", playingBefore)
+        val runningBefore = waitFor(timeoutMs = 10000) { serviceRunning() }
+        log("[$theme] service running before tap: $runningBefore")
+        assertTrue("[$theme] adhan service did not start", runningBefore)
+        // Loud: the alarm stream is raised to its maximum while the adhan plays.
+        val loudBefore = waitFor(timeoutMs = 10000) {
+            am.getStreamVolume(AudioManager.STREAM_ALARM) == volumeMax
+        }
+        log(
+            "[$theme] alarm volume at max before tap: $loudBefore " +
+                "(now ${am.getStreamVolume(AudioManager.STREAM_ALARM)})"
+        )
+        assertTrue("[$theme] alarm volume was not raised to maximum", loudBefore)
+        log("[$theme] service notification present (diagnostic only): ${serviceNotificationPresent()}")
         assertTrue(
             "[$theme] close caption missing",
             device.hasObject(By.text("إغلاق الشاشة لا يوقف الأذان"))
@@ -130,26 +154,39 @@ class AdhanAlertQaTest {
 
         // One tap — no confirmation step any more.
         device.findObject(By.text("إيقاف الأذان")).click()
-        val stopped = waitFor(timeoutMs = 8000) { !serviceNotificationPresent() }
+        val stopped = waitFor(timeoutMs = 8000) { !serviceRunning() }
         val closed = device.wait(Until.gone(By.text("إيقاف الأذان")), 8000)
-        log("[$theme] service notification gone after tap: $stopped")
+        // The volume is restored when playback ends.
+        val restored = waitFor(timeoutMs = 8000) {
+            am.getStreamVolume(AudioManager.STREAM_ALARM) == volumeBefore
+        }
+        log("[$theme] service stopped after tap: $stopped")
         log("[$theme] alert closed after tap: $closed")
+        log(
+            "[$theme] alarm volume restored after tap: $restored " +
+                "(now ${am.getStreamVolume(AudioManager.STREAM_ALARM)}, before $volumeBefore)"
+        )
         assertTrue("[$theme] adhan did not stop after tapping «إيقاف الأذان»", stopped)
         assertTrue("[$theme] alert did not close after tapping «إيقاف الأذان»", closed)
         assertFalse(
             "[$theme] service notification still present after stop",
             serviceNotificationPresent()
         )
+        assertEquals(
+            "[$theme] alarm volume was not restored after stop",
+            volumeBefore,
+            am.getStreamVolume(AudioManager.STREAM_ALARM)
+        )
     }
 
     @Test
     fun stopButtonStopsAdhanLight() {
-        launchAndStop("light", "الفجر", "fajr", "adhan-light", 6311)
+        launchAndStop("light", "الفجر", "fajr", "adhan-light")
     }
 
     @Test
     fun stopButtonStopsAdhanDark() {
-        launchAndStop("dark", "الظهر", "dhuhr", "adhan-dark", 6313)
+        launchAndStop("dark", "الظهر", "dhuhr", "adhan-dark")
     }
 
     private companion object {
