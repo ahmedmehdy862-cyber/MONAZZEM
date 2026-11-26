@@ -104,13 +104,15 @@ class AdhanAlertEmulatorTest {
     /**
      * الرؤية الفعلية على شاشة القفل — نفس منطق CTS Verifier: قيمة القناة إن
      * حدّدت شيئًا، وإلا الإعداد العام للجهاز. التشغيل الأول أثبت أن النظام
-     * يعيد VISIBILITY_NO_OVERRIDE (-1000) لقناة أُنشئت مع PUBLIC على API 30
-     * و34 معًا؛ القيمة -1000 ليست عيبًا بل «لا تجاوز — اتبع الإعداد العام»،
-     * والعام الافتراضي PUBLIC (إشعارات القفل مفعّلة والمحتوى الخاص مسموح).
+     * يعيد -1000 لقناة أُنشئت مع PUBLIC على API 30 و34 معًا؛ القيمة -1000
+     * ليست عيبًا بل «لا تجاوز — اتبع الإعداد العام»، والعام الافتراضي PUBLIC
+     * (إشعارات القفل مفعّلة والمحتوى الخاص مسموح).
+     * ملاحظة: الثابت NotificationManager.VISIBILITY_NO_OVERRIDE مخفي (@hide)
+     * ولا يُترجم من كود التطبيق — لذلك القيمة الحرفية -1000 هنا.
      */
     private fun effectiveVisibility(channel: android.app.NotificationChannel): Int {
         val v = channel.lockscreenVisibility
-        if (v != NotificationManager.VISIBILITY_NO_OVERRIDE) return v
+        if (v != -1000) return v
         val cr = context.contentResolver
         val show = android.provider.Settings.Secure.getInt(cr, "lock_screen_show_notifications", 1) == 1
         val allowPrivate = android.provider.Settings.Secure.getInt(cr, "lock_screen_allow_private_notifications", 1) == 1

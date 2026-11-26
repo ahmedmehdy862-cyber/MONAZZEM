@@ -10,8 +10,10 @@
 # 45765011998 على 0.33.1): التطبيق offline-first وML Kit مضمّن، فصورة
 # google_apis تكفي (بلا Play). API 34 هو الأساس؛ API 30 حد أدنى ثانٍ.
 # اللقطات تُسحب بـ adb pull داخل الـ script لأن المحاكي يُطفأ بعده.
-# إصلاح عن الأصل: TEST_EXIT كان غير معرّف (exit بلا كود يخفي فشل gradle)؛
-# هنا يُلتقط صراحةً بعد set +e.
+# إصلاح عن الأصل: المشغّل ينفّذ كل سطر سكربت في عملية sh مستقلة —
+# المتغيرات لا تبقى بين الأسطر، وأول سطر فاشل يوقف السكربت؛ لذلك فشل
+# الاختبار يُسجَّل في ملف gradle-result.txt وتفشل الوظيفة بخطوة لاحقة
+# (Fail job if tests failed) بدل الاعتماد على كود الخروج.
 name: Adhan Alert Verification
 
 on:
@@ -90,18 +92,17 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            TEST_EXIT=0
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.AdhanAlertEmulatorTest || TEST_EXIT=$?
-            echo "gradle exit: $TEST_EXIT"
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.AdhanAlertEmulatorTest || echo FAILED > ./gradle-result.txt
             # سحب اللقطات من التنزيلات المشتركة: الاختبار يصدّرها إليها عبر
             # MediaStore (انظر QaExport) لأن مجلد التطبيق الخارجي يُحذف
             # عند إلغاء تثبيت التطبيق بعد الاختبارات. سحب عادي بلا run-as.
-            # ملاحظة: نمط set +e وحده لم يمنع توقف السكربت عند فشل gradle
-            # في التشغيل الأول (المشغّل ينهي العملية)؛ نمط || هو الآمن مع -e.
             adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api${{ matrix.api-level }}" || echo "screenshot pull failed (app may have crashed before first shot)"
             ls "./qa-screenshots-api${{ matrix.api-level }}" || true
             adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
-            exit $TEST_EXIT
+
+      - name: Fail job if tests failed
+        if: always()
+        run: test ! -f gradle-result.txt
 
       - name: Upload screenshots and logs
         if: always()
@@ -111,6 +112,7 @@ jobs:
           path: |
             qa-screenshots-api${{ matrix.api-level }}
             logcat-api${{ matrix.api-level }}.txt
+            gradle-result.txt
             app/build/outputs/androidTest-results/connected
             app/build/reports/androidTests/connected
           if-no-files-found: warn
