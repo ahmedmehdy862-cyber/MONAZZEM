@@ -118,6 +118,14 @@ dependencies {
     // text extraction; requires PDFBoxResourceLoader.init(context) before first use
     // (see AssistantPdfImport) and adds roughly 10 MB to the APK.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    // Avatar photo → cartoon likeness (phase 1, bundled ML Kit): on-device face
+    // detection with the model inside the APK — fully offline, no Play Services,
+    // no download. Adds roughly 6.9 MB to the APK (the bundled model). The
+    // detector is used once per photo pick (see FaceAnalyzer); when no face is
+    // found the old colour-seed cartoon is kept, so nothing regresses.
+    implementation("com.google.mlkit:face-detection:16.1.7")
+    // EXIF orientation for camera photos picked for the avatar (see FaceAnalyzer).
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     // Robolectric for the DB migration test (DbMigrationV16ToV17Test): the migration

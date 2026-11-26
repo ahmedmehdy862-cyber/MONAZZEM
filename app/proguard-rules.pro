@@ -18,6 +18,13 @@
 -dontwarn java.awt.**
 -dontwarn javax.**
 
+# --- ML Kit face detection (bundled model, avatar likeness) ---
+# The library ships its own consumer rules; these are explicit insurance for
+# the detector factory and the vision-face internals R8 might otherwise strip.
+-keep class com.google.mlkit.vision.face.** { *; }
+-keep class com.google.mlkit.vision.common.** { *; }
+-dontwarn com.google.mlkit.**
+
 # --- Adhan (prayer-time calculations) ---
 -keep class com.batoulapps.adhan.** { *; }
 -dontwarn com.batoulapps.adhan.**
