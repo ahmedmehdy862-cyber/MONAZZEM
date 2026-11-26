@@ -104,6 +104,9 @@ jobs:
             ./gradlew :app:installDebug :app:installDebugAndroidTest --no-daemon
             adb shell am instrument -w -e class com.focusstudy.poc.SyncLiveSeedTest com.focusstudy.poc.test/androidx.test.runner.AndroidJUnitRunner > instrument-seed.log 2>&1 || true
             grep -q "^OK" instrument-seed.log || { echo "--- seed instrument output ---" >&2; cat instrument-seed.log >&2; exit 1; }
+            # تفريغ logcat الآن والمحاكي حي: خطوة التفريغ اللاحقة (if: always)
+            # قد تجد المحاكي مغلقًا فتخرج بملف فارغ، كما حدث في 45807585928.
+            adb logcat -d > ./logcat-seed.txt || true
             # سحب بيانات اعتماد ملف الاختبار من filesDir الداخلي (run-as يعمل لأن APK قابل للتنقيح).
             adb shell run-as com.focusstudy.poc cat /data/data/com.focusstudy.poc/files/sync-live-credentials.json > sync-live-credentials.json
             test -s sync-live-credentials.json || { echo "credentials file is empty or missing" >&2; exit 1; }
@@ -120,6 +123,7 @@ jobs:
             echo "network cut verified"
             adb shell am instrument -w -e class com.focusstudy.poc.SyncLiveOfflineTest com.focusstudy.poc.test/androidx.test.runner.AndroidJUnitRunner > instrument-offline.log 2>&1 || true
             grep -q "^OK" instrument-offline.log || { echo "--- offline instrument output ---" >&2; cat instrument-offline.log >&2; exit 1; }
+            adb logcat -d > ./logcat-offline.txt || true
             # --- إعادة الشبكة ---
             adb shell svc wifi enable
             adb shell svc data enable
@@ -133,7 +137,7 @@ jobs:
       - name: Dump emulator logcat
         if: always()
         timeout-minutes: 3
-        run: timeout 60 adb logcat -d > ./logcat-seed.txt || true
+        run: test -s ./logcat-seed.txt || timeout 60 adb logcat -d > ./logcat-seed.txt || true
 
       - name: Upload Android test results and logcat
         if: always()
@@ -146,6 +150,7 @@ jobs:
             app/build/outputs/androidTest-results/connected/
             app/build/reports/androidTests/connected/
             logcat-seed.txt
+            logcat-offline.txt
           retention-days: 1
           if-no-files-found: ignore
 

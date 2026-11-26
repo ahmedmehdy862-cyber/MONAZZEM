@@ -32,16 +32,12 @@ class SyncLiveSeedTest {
         val passphrase = SyncLiveTestSupport.randomPassphrase()
 
         // 1) ملف اختبار معزول جديد — لا يمس حساب أحمد إطلاقًا.
-        val profileId = SyncLiveTestSupport.registerTestProfile()
-        UserIdentity.storeProfileId(context, profileId)
-        assertEquals(profileId, UserIdentity.profileId(context))
-
-        SyncLiveTestSupport.runLive {
-            assertEquals(
-                SyncAccount.Result.SUCCESS,
-                SyncLiveTestSupport.retrySyncRegister { SyncAccount.register(context, passphrase) },
-            )
+        // المصافحة كاملة (تسجيل messages + تسجيل مزامنة مع جولات إعادة
+        // تسجيل عند رفض مستمر — انظر SyncLiveTestSupport.handshake).
+        val profileId = SyncLiveTestSupport.runLive(300_000) {
+            SyncLiveTestSupport.handshake(context, passphrase)
         }
+        assertEquals(profileId, UserIdentity.profileId(context))
 
         // 2) زرع المجموعات العشر عبر دوال الكتابة الحقيقية.
         val db = StudyDb.get(context)

@@ -127,6 +127,34 @@ internal object SyncLiveTestSupport {
         return last
     }
 
+    /**
+     * مصافحة كاملة: تسجيل messages ثم تسجيل المزامنة، مع إعادة المحاولة.
+     *
+     * جولة واحدة تكفي عادةً (التشغيل 45805805550: رفض ثم نجاح بعد 10
+     * ثوانٍ). لكن التشغيل 45807585928 رُفض في 6 محاولات متتالية على مدى
+     * 60 ثانية — فإما أن انتشار users blob تجاوز الدقيقة، أو أن صف
+     * المستخدم ضاع أصلًا: `upsertUser` يقرأ ثم يكتب بلا تحكم تزامن،
+     * فتسجيلان متزامنان (مستخدم حقيقي يفتح التطبيق أول مرة في اللحظة
+     * نفسها) قد يكتب أحدهما فوق الآخر بناءً على قراءة قديمة فيفقد صف
+     * الآخر. لذلك تعيد المصافحة التسجيل كاملًا بملف جديد حتى 3 جولات
+     * (نحو 3 دقائق كحد أقصى): الجولة الجديدة تعيد تأكيد الصف في الـ
+     * blob فتشفي الحالتين معًا. كلمة مرور خاطئة تبقى مرفوضة إلى الأبد
+     * في كل جولة، فلا يخفي هذا فشل مصادقة حقيقيًا. يعيد profileId
+     * النهائي الناجح، أو يرمي AssertionError بنتيجة آخر محاولة.
+     */
+    suspend fun handshake(context: Context, passphrase: String): String {
+        var last: SyncAccount.Result = SyncAccount.Result.REJECTED
+        repeat(3) { round ->
+            val profileId = registerTestProfile()
+            UserIdentity.storeProfileId(context, profileId)
+            Log.d("SyncLive", "handshake round ${round + 1}/3 profile=$profileId")
+            last = retrySyncRegister { SyncAccount.register(context, passphrase) }
+            if (last == SyncAccount.Result.SUCCESS) return profileId
+            Log.w("SyncLive", "handshake round ${round + 1}/3 ended $last; fresh re-register")
+        }
+        throw AssertionError("sync register never succeeded after 3 handshake rounds; last=$last")
+    }
+
     /** سحب خام من الخادم (مستقل عن منطق التطبيق) — للتحقق أن البيانات وصلت فعلًا. */
     fun rawPull(profileId: String, passphrase: String): JSONObject {
         val payload = JSONObject()
@@ -157,7 +185,7 @@ internal object SyncLiveTestSupport {
     }
 
     /** شبكة حقيقية + مهلة صريحة: runTest بساعة افتراضية لا يصلح لطلبات HTTP حية. */
-    fun <T> runLive(block: suspend () -> T): T = runBlocking {
-        withTimeout(180_000) { block() }
+    fun <T> runLive(timeoutMs: Long = 180_000, block: suspend () -> T): T = runBlocking {
+        withTimeout(timeoutMs) { block() }
     }
 }
