@@ -63,7 +63,14 @@ jobs:
           # read apkUrl + releaseNotes from it, so the feed payload stays whole.
           env = dict(os.environ)
           out = subprocess.check_output(
-              ["gh", "api", f"repos/{repo}/releases/tags/{tag}"], env=env, text=True
+              ["gh", "api", f"repos/{repo}/releases/tags/{tag}"],
+              env=env,
+              text=True,
+              # إلزامي على windows-latest: الترميز الافتراضي للمحلية cp1252
+              # ولا يفك ترميز نص ملاحظات الإصدار العربي (UTF-8) — كسر
+              # تشغيل ويندوز الأول (run 45749704254) بـ UnicodeDecodeError
+              # على بايت 0x8f. على ubuntu الافتراضي UTF-8 فلم يظهر هناك.
+              encoding="utf-8",
           )
           release = json.loads(out)
           apk_url = next(
