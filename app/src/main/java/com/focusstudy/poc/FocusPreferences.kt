@@ -87,7 +87,9 @@ data class FocusPreferences(
     /** Saved IANA id for all wall-clock work; empty means follow the device. */
     val timezoneId: String = "",
     /** Ids of the sections kept in the bottom bar, in display order. */
-    val bottomTabs: List<String> = BottomTab.DEFAULT
+    val bottomTabs: List<String> = BottomTab.DEFAULT,
+    /** Titles of the side-drawer groups the person collapsed; persisted. */
+    val drawerCollapsedGroups: Set<String> = emptySet()
 ) {
     companion object {
         internal const val FILE = "focus_study_preferences"
@@ -157,7 +159,8 @@ data class FocusPreferences(
                         ?.map { it.trim() }
                         ?.filter { it.isNotEmpty() }
                         ?: BottomTab.DEFAULT
-                )
+                ),
+                drawerCollapsedGroups = prefs.getStringSet("drawer_collapsed_groups", emptySet()).orEmpty().toSet()
             )
         }
 
@@ -199,6 +202,7 @@ data class FocusPreferences(
                 .putString("profile", value.profile.key)
                 .putString(AppTimeZone.PREF_KEY, AppTimeZone.sanitize(value.timezoneId))
                 .putString("bottom_tabs", BottomTab.normalize(value.bottomTabs).joinToString(","))
+                .putStringSet("drawer_collapsed_groups", value.drawerCollapsedGroups.toSet())
                 .apply()
             // The database is the source of truth for the name (user_profile, v17); the
             // preference above stays as a synchronous mirror and a fallback. A failure

@@ -59,8 +59,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.asPaddingValues
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.calculateBottomPadding
 
 import androidx.compose.foundation.layout.Column
 
@@ -864,6 +866,14 @@ private fun AppRoot(
                     avatarSourcePath = preferences.avatarSourcePath,
                     avatarMode = preferences.avatarMode,
                     companionStyle = preferences.companionStyle,
+                    collapsedGroups = preferences.drawerCollapsedGroups,
+                    onToggleDrawerGroup = { title ->
+                        onPreferencesChanged(
+                            preferences.copy(
+                                drawerCollapsedGroups = toggleDrawerGroup(preferences.drawerCollapsedGroups, title)
+                            )
+                        )
+                    },
                     onSelect = { tab ->
                         drawerScope.launch { drawerState.close() }
                         openDrawerDestination(tab)
@@ -1094,10 +1104,20 @@ private fun AppRoot(
         // now the single place to add a task, skill or goal from anywhere.
         if (screen in bottomTabIds) {
             // Floats over the corner the bar leaves empty; the list opens upwards from it.
+            // Anchored to the dock's own coordinates (0.34.0): the dock lives in a
+            // safeDrawing-padded column, so on gesture-navigation phones it sits
+            // higher by the system-bar inset — while this button used to measure
+            // from the physical screen bottom and cover the dock's top edge,
+            // exactly where «الأقسام» sits. Adding the same bottom inset keeps
+            // the 16dp gap on every device and every navigation mode.
             QuickAddFab(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 18.dp, bottom = LayoutSpec.FAB_BOTTOM_DP.dp),
+                    .padding(
+                        end = 18.dp,
+                        bottom = LayoutSpec.FAB_BOTTOM_DP.dp +
+                            WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+                    ),
                 onAddTask = {
                     rootTab = "tasks"
                     quickAddTask++
@@ -1472,6 +1492,8 @@ private fun TasksScreen(
                 doneToday = todayTasksForWelcome.count { it.isDone || it.status == TaskStatus.DONE }
             )
             Spacer(Modifier.height(12.dp))
+            AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant, preferences = preferences)
+            Spacer(Modifier.height(12.dp))
             HeroCard(
                 totalMinutes = totalMinutes,
                 tasks = tasks,
@@ -1500,8 +1522,6 @@ private fun TasksScreen(
                 onAddTask = { showAddDialog = true }
             )
             Spacer(Modifier.height(12.dp))
-            AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant)
-            Spacer(Modifier.height(12.dp))
             // الشخصية (المرحلة 5): أثر عملي في الرئيسية حسب «التخصيص».
             if (preferences.profile == UserProfile.STUDENT) {
                 LectureScheduleCard()
@@ -1516,7 +1536,8 @@ private fun TasksScreen(
             DayExtrasSection(
                 preferences = preferences,
                 tasks = tasks,
-                onOpenPrayerSettings = onOpenPrayerSettings
+                onOpenPrayerSettings = onOpenPrayerSettings,
+                onOpenAssistant = onOpenAssistant
             )
             Spacer(Modifier.height(12.dp))
             Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
@@ -1821,7 +1842,7 @@ private fun MoreSectionsScreen(onOpen: (String) -> Unit) {
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 18.dp, vertical = 20.dp)
+            .padding(start = 18.dp, end = 18.dp, top = 20.dp, bottom = LayoutSpec.CONTENT_BOTTOM_DP.dp)
     ) {
         Text("المزيد", style = MaterialTheme.typography.headlineSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
@@ -2005,7 +2026,8 @@ private fun HeroCard(
 private fun DayExtrasSection(
     preferences: FocusPreferences,
     tasks: List<StudyTask>,
-    onOpenPrayerSettings: () -> Unit
+    onOpenPrayerSettings: () -> Unit,
+    onOpenAssistant: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val today = LocalDate.now()
@@ -2046,7 +2068,7 @@ private fun DayExtrasSection(
                 expanded = expanded == "companion",
                 onToggle = { expanded = if (expanded == "companion") null else "companion" }
             ) {
-                StudyCompanionCard(preferences, tasks)
+                StudyCompanionCard(preferences, tasks, onOpenAssistant = onOpenAssistant)
             }
         }
     }

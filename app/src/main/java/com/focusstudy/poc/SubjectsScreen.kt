@@ -103,7 +103,10 @@ internal fun SubjectsScreen(onBack: () -> Unit) {
                     Button(onClick = { showAddDialog = true }, shape = RoundedCornerShape(14.dp)) { Text("أضف أول مادة") }
                 }
             }
-            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            else -> LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LayoutSpec.CONTENT_BOTTOM_DP.dp)
+            ) {
                 items(state.subjects, key = { it.id }) { subject ->
                     SubjectCard(subject)
                 }

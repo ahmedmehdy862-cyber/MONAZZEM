@@ -327,7 +327,14 @@ internal fun PersonalizationScreen(
                         faceProfile = FaceProfile.fromJson(avatarFaceProfileJson),
                         onFaceProfileChanged = { avatarFaceProfileJson = it?.toJson().orEmpty() },
                         mode = avatarMode,
-                        onModeChanged = { avatarMode = it }
+                        // وضع العرض يُحفظ فور الضغطة (إصلاح 0.34.0): كان
+                        // يتغير محليًا فقط ويضيع إن غادر الشخص الشاشة بزر
+                        // «رجوع» دون الضغط على «حفظ التخصيص»، فيبدو الزر
+                        // كأنه لا يعمل. باقي الحقول تحفظ مع زر الحفظ كما هي.
+                        onModeChanged = {
+                            avatarMode = it
+                            onSave(current.copy(avatarMode = it))
+                        }
                     )
                     Spacer(Modifier.height(10.dp))
                     CompanionStylePicker(companionStyle, onSelect = { companionStyle = it })

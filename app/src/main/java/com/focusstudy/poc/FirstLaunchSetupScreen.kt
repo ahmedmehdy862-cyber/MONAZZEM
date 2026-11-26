@@ -59,6 +59,10 @@ internal fun FirstLaunchSetupScreen(
     var avatarSource by rememberSaveable { mutableStateOf(current.avatarSourcePath) }
     var avatarStyle by rememberSaveable { mutableIntStateOf(current.avatarStyle) }
     var faceProfileJson by rememberSaveable { mutableStateOf(current.avatarFaceProfileJson) }
+    // وضع عرض الصورة (إصلاح 0.34.0): كان الـ AvatarChooser يُستدعى هنا
+    // دون mode/onModeChanged، فبقيت شرائح الوضع على الافتراضي (كرتوني)
+    // وضغطة «صورتي كما هي» بلا أي أثر — لا تحديد ولا معاينة ولا حفظ.
+    var avatarMode by rememberSaveable { mutableStateOf(current.avatarMode) }
     var style by rememberSaveable { mutableStateOf(current.companionStyle) }
     var profile by rememberSaveable { mutableStateOf(current.profile) }
     var timezoneId by rememberSaveable { mutableStateOf(current.timezoneId.ifBlank { AppTimeZone.deviceId() }) }
@@ -123,7 +127,9 @@ internal fun FirstLaunchSetupScreen(
                                     avatarStyle = image.style
                                 },
                                 faceProfile = FaceProfile.fromJson(faceProfileJson),
-                                onFaceProfileChanged = { faceProfileJson = it?.toJson().orEmpty() }
+                                onFaceProfileChanged = { faceProfileJson = it?.toJson().orEmpty() },
+                                mode = avatarMode,
+                                onModeChanged = { avatarMode = it }
                             )
                             Spacer(Modifier.height(10.dp))
                             CompanionStylePicker(style, onSelect = { style = it })
@@ -186,6 +192,7 @@ internal fun FirstLaunchSetupScreen(
                                 avatarSourcePath = avatarSource,
                                 avatarStyle = avatarStyle,
                                 avatarFaceProfileJson = faceProfileJson,
+                                avatarMode = avatarMode,
                                 companionStyle = style,
                                 profile = profile,
                                 timezoneId = AppTimeZone.sanitize(timezoneId),

@@ -1,6 +1,7 @@
 package com.focusstudy.poc
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +55,10 @@ import androidx.compose.ui.unit.dp
 /** One group in the drawer. `ids` are [NavigationCatalog] route ids. */
 internal data class DrawerGroup(val title: String, val ids: List<String>)
 
+/** Pure toggle for one drawer group — kept outside the composable so it is unit-testable. */
+internal fun toggleDrawerGroup(collapsed: Set<String>, title: String): Set<String> =
+    if (title in collapsed) collapsed - title else collapsed + title
+
 /** Curated groups: daily life first, settings and app tools last. */
 internal val AppDrawerGroups: List<DrawerGroup> = listOf(
     DrawerGroup("يومي", listOf("assistant", "today", "tasks", "planner", "calendar")),
@@ -80,6 +87,9 @@ internal fun AppDrawerContent(
     avatarSourcePath: String = "",
     avatarMode: AvatarMode = AvatarMode.CARTOON,
     companionStyle: Int = 0,
+    /** Titles of the groups the person collapsed; persisted in preferences. */
+    collapsedGroups: Set<String> = emptySet(),
+    onToggleDrawerGroup: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(modifier.verticalScroll(rememberScrollState())) {
@@ -137,32 +147,51 @@ internal fun AppDrawerContent(
             )
         }
         AppDrawerGroups.forEach { group ->
-            Text(
-                text = group.title,
-                style = MaterialTheme.typography.labelLarge,
-                color = FocusColors.TextMuted,
-                modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 4.dp)
-            )
-            group.ids.forEach { id ->
-                val entry = NavigationCatalog.entry(id) ?: return@forEach
-                // The assistant row shows the name the person calls it by, not the
-                // generic section title — the name is theirs to change in its screen.
-                val rowTitle = if (id == "assistant" && assistantName.isNotBlank()) assistantName else entry.title
-                NavigationDrawerItem(
-                    label = { Text(rowTitle) },
-                    selected = id == current,
-                    onClick = { onSelect(id) },
-                    icon = { Icon(imageVector = entry.icon, contentDescription = null) },
-                    colors = NavigationDrawerItemDefaults.colors(
-                        selectedContainerColor = FocusColors.SurfaceHigh,
-                        unselectedContainerColor = Color.Transparent,
-                        selectedIconColor = FocusColors.onTint(FocusColors.Blue),
-                        unselectedIconColor = FocusColors.TextSecondary,
-                        selectedTextColor = FocusColors.TextPrimary,
-                        unselectedTextColor = FocusColors.TextPrimary
-                    ),
-                    modifier = Modifier.padding(horizontal = 12.dp)
+            // Collapsible groups (0.34.0): a tap on the header folds the group
+            // away so the drawer stops crowding; the state is persisted, so a
+            // folded group stays folded after a restart.
+            val collapsed = group.title in collapsedGroups
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { onToggleDrawerGroup(group.title) }
+                    .padding(start = 20.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = group.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = FocusColors.TextMuted,
+                    modifier = Modifier.weight(1f)
                 )
+                Icon(
+                    imageVector = if (collapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                    contentDescription = if (collapsed) "فتح قسم ${group.title}" else "طي قسم ${group.title}",
+                    tint = FocusColors.TextMuted,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (!collapsed) {
+                group.ids.forEach { id ->
+                    val entry = NavigationCatalog.entry(id) ?: return@forEach
+                    // The assistant row shows the name the person calls it by, not the
+                    // generic section title — the name is theirs to change in its screen.
+                    val rowTitle = if (id == "assistant" && assistantName.isNotBlank()) assistantName else entry.title
+                    NavigationDrawerItem(
+                        label = { Text(rowTitle) },
+                        selected = id == current,
+                        onClick = { onSelect(id) },
+                        icon = { Icon(imageVector = entry.icon, contentDescription = null) },
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = FocusColors.SurfaceHigh,
+                            unselectedContainerColor = Color.Transparent,
+                            selectedIconColor = FocusColors.onTint(FocusColors.Blue),
+                            unselectedIconColor = FocusColors.TextSecondary,
+                            selectedTextColor = FocusColors.TextPrimary,
+                            unselectedTextColor = FocusColors.TextPrimary
+                        ),
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
             }
         }
         Spacer(Modifier.height(24.dp))

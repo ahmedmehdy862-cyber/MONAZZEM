@@ -15,6 +15,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +42,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AssistChip
@@ -880,28 +880,34 @@ internal object AssistantPdfImport {
     }
 }
 
-/** بطاقة صغيرة في شاشة اليوم تفتح المساعد — إضافة موضعية فقط. */
+/**
+ * بطاقة المساعد في أعلى شاشة اليوم (إصلاح 0.34.0 — كان مخفيًا في ركن
+ * أسفل البطل وخطة اليوم): صورة الرفيق + اسمه + دعوة واضحة لفتح
+ * المحادثة. البطاقة كلها قابلة للضغط، والزر يفتح المحادثة مباشرة.
+ */
 @Composable
-internal fun AssistantHomeCard(assistantName: String, onOpenAssistant: () -> Unit) {
+internal fun AssistantHomeCard(
+    assistantName: String,
+    onOpenAssistant: () -> Unit,
+    preferences: FocusPreferences
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(FocusSpacing.radiusCard)
+        shape = RoundedCornerShape(FocusSpacing.radiusCard),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenAssistant)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                Modifier.size(44.dp).clip(CircleShape).background(FocusColors.SurfaceHigh),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.SmartToy,
-                    contentDescription = null,
-                    tint = FocusColors.onTint(FocusColors.Blue),
-                    modifier = Modifier.size(26.dp)
-                )
-            }
+            AvatarPortrait(
+                avatarPath = preferences.avatarPath,
+                name = preferences.studentName,
+                styleIndex = preferences.companionStyle,
+                size = 52.dp,
+                mode = preferences.avatarMode,
+                sourcePath = preferences.avatarSourcePath
+            )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -918,7 +924,7 @@ internal fun AssistantHomeCard(assistantName: String, onOpenAssistant: () -> Uni
                     color = FocusColors.TextSecondary
                 )
             }
-            TextButton(onClick = onOpenAssistant) { Text("ابدأ المحادثة") }
+            Button(onClick = onOpenAssistant, shape = RoundedCornerShape(16.dp)) { Text("اسألني") }
         }
     }
 }

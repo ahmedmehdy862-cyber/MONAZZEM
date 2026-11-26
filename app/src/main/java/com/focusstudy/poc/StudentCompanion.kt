@@ -536,8 +536,16 @@ internal fun companionMessage(sessionActive: Boolean, completedToday: Int, urgen
     else -> "يوم جديد يعني فرصة جديدة. أضف أول خطوة!"
 }
 
+/**
+ * بطاقة الرفيق في «تفاصيل يومك»: الضغط عليها يفتح المساعد (إصلاح 0.34.0)
+ * — كانت عرضًا صامتًا لا يوصّل للمساعد، فبقي مدخل المحادثة مخفيًا.
+ */
 @Composable
-internal fun StudyCompanionCard(preferences: FocusPreferences, tasks: List<StudyTask>) {
+internal fun StudyCompanionCard(
+    preferences: FocusPreferences,
+    tasks: List<StudyTask>,
+    onOpenAssistant: () -> Unit = {}
+) {
     val session by SessionEngine.active.collectAsState()
     val today = LocalDate.now()
     val todayStart = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -553,7 +561,7 @@ internal fun StudyCompanionCard(preferences: FocusPreferences, tasks: List<Study
         hasPending = pending.isNotEmpty()
     )
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenAssistant),
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
         shape = RoundedCornerShape(22.dp)
     ) {
@@ -564,6 +572,7 @@ internal fun StudyCompanionCard(preferences: FocusPreferences, tasks: List<Study
                 Text("${style.mark} رفيقك ${style.title}", style = MaterialTheme.typography.labelLarge, color = FocusColors.TextPrimary, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(message, style = MaterialTheme.typography.bodySmall, color = FocusColors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(style.motto, style = MaterialTheme.typography.labelSmall, color = FocusColors.onTint(FocusColors.Blue), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("اضغط لفتح المساعد", style = MaterialTheme.typography.labelSmall, color = FocusColors.onTint(FocusColors.Blue), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text("✦", color = FocusColors.Amber, style = MaterialTheme.typography.titleLarge)
         }

@@ -225,7 +225,11 @@ internal fun StudyCalendarScreen(onBack: () -> Unit, onStartTask: (Long) -> Unit
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = LayoutSpec.CONTENT_BOTTOM_DP.dp)
+            ) {
                 if (selectedEvents.isNotEmpty()) item { Text("المواعيد", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = FocusColors.TextPrimary) }
                 items(selectedEvents, key = { "event-${it.id}" }) { event ->
                     Card(colors = CardDefaults.cardColors(containerColor = FocusColors.Surface), shape = RoundedCornerShape(FocusSpacing.radiusCard)) {
