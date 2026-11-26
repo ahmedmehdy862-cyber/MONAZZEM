@@ -1770,16 +1770,13 @@ class StudyDb private constructor(context: Context) :
         require(settings.surah.isNotBlank()) { "اسم السورة مطلوب" }
         require(settings.startPage >= 1) { "صفحة البداية يجب أن تكون 1 أو أكثر" }
         require(settings.pagesPerDay in 1..30) { "عدد صفحات اليوم بين 1 و 30" }
-        // تغيير السورة أو صفحة البداية يعني وردًا جديدًا: العدّاد العام عابر للسور
-        // كان يستمر من إجمالي السورة السابقة، فيبدأ العد من صفحة البداية الجديدة.
-        // تغيير عدد صفحات اليوم وحده لا يصفّر شيئًا — إنه إيقاع فقط، لا بداية جديدة.
+        // تغيير الإعدادات وحده لا يمسح سجل الورد أبدًا (م1): المسح الصامت كان يمحو
+        // كل صفحات المستخدم عند تغيير السورة أو صفحة البداية من شاشة الإعدادات.
+        // بداية ختمة جديدة لها مسار مقصود وصريح: resetWirdLogs() (يُستدعى مع
+        // هذا الحفظ من زر «إعادة البدء» بعد الختم)، فلا حاجة لأي حذف ضمني هنا.
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val old = wirdSettings()
-            if (old.surah != settings.surah.trim() || old.startPage != settings.startPage) {
-                db.delete("wird_logs", null, null)
-            }
             db.execSQL(
                 "INSERT INTO wird_settings(id, surah, start_page, pages_per_day) VALUES(1, ?, ?, ?) " +
                     "ON CONFLICT(id) DO UPDATE SET surah=excluded.surah, start_page=excluded.start_page, " +
