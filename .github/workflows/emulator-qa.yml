@@ -105,7 +105,8 @@ jobs:
             # ملاحظة: الأكشن ينفّذ كل سطر كـ sh -c مستقل، فلا يجوز أي بناء
             # متعدد الأسطر (while/for/if) — لذلك السحب حلقة for في سطر واحد.
             mkdir -p "./qa-screenshots-api${{ matrix.api-level }}"
-            for f in $(adb shell run-as com.focusstudy.poc sh -c 'ls files/qa-screenshots' 2>/dev/null | tr -d '\r'); do adb exec-out run-as com.focusstudy.poc cat "files/qa-screenshots/$f" > "./qa-screenshots-api${{ matrix.api-level }}/$f"; done
+            adb shell run-as com.focusstudy.poc id || echo "run-as check failed"
+            for f in $(adb shell run-as com.focusstudy.poc sh -c 'ls /sdcard/Android/data/com.focusstudy.poc/files/qa-screenshots' 2>/dev/null | tr -d '\r'); do adb exec-out run-as com.focusstudy.poc cat "/sdcard/Android/data/com.focusstudy.poc/files/qa-screenshots/$f" > "./qa-screenshots-api${{ matrix.api-level }}/$f"; done
             ls "./qa-screenshots-api${{ matrix.api-level }}"
             adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
             exit $TEST_EXIT

@@ -182,6 +182,12 @@ class EmulatorQaTest {
     private fun openSection(title: String) {
         clickText("الأقسام")
         clickText(title)
+        // تشخيص فقط (لا يفشل الخطوة): هل عنوان القسم ظاهر بعد النقر؟
+        // بعض الشاشات تعرض عنوانًا مختلفًا (مثلًا المساعد يعرض اسم «منظم»).
+        val found = runCatching {
+            device.wait(Until.hasObject(By.text(title)), 3000)
+        }.getOrDefault(false)
+        log("NAV CHECK [$title]: found=$found")
     }
 
     @Test
@@ -228,7 +234,17 @@ class EmulatorQaTest {
         step("more") { clickText("المزيد"); shot("15-more-light") }
         step("drawer") {
             // آخر خطوة عمدًا: إن أغلق زر الرجوع النشاط بدل الدرج، لا شيء بعدها.
-            composeRule.onNodeWithContentDescription("القايمة").performClick()
+            // النقر عبر UiAutomator (الـ Compose فشل هنا مرة بـ «Failed to
+            // inject touch input»).
+            val opened = runCatching {
+                device.wait(Until.hasObject(By.desc("القايمة")), 5000)
+                device.findObject(By.desc("القايمة"))?.let { it.click(); true } == true
+            }.getOrDefault(false)
+            if (!opened) {
+                runCatching {
+                    composeRule.onNodeWithContentDescription("القايمة").performClick()
+                }
+            }
             composeRule.waitForIdle()
             Thread.sleep(800)
             shot("14-drawer-light")
