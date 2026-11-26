@@ -2,17 +2,15 @@ package com.focusstudy.poc
 
 import android.content.Context
 import android.util.Log
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
-import androidx.test.uiautomator.UiScrollable
-import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import java.io.File
 import java.time.LocalDate
@@ -181,23 +179,25 @@ class QuranZoomScreenshotTest {
         Thread.sleep(700)
     }
 
-    private fun scrollSheetTo(label: String, maxSwipes: Int = 12): Boolean {
-        // المحاولة الأولى: تمرير الإطار نفسه حتى يظهر النص (يتوقف عند نهاية
-        // القائمة بنفسه). التمرير اليدوي وحده أخطأ المصحف مرة (التشغيل
-        // 45806661534: 12 سحبة انتهت أسفل الورقة دون أن يظهر الصف).
-        val viaFramework = runCatching {
-            val scrollable = UiScrollable(UiSelector().scrollable(true)).apply {
-                maxSearchSwipes = 20
-            }
-            scrollable.scrollTextIntoView(label)
-        }.getOrDefault(false)
-        if (viaFramework) return true
+    /**
+     * تمرير يدوي ناعم داخل الورقة حتى يظهر الصف: خطوات 400px فقط حتى لا
+     * يُتخطى أي صف بين توقفين، مع انتظار استقرار الورقة بعد فتحها.
+     * بلا UiScrollable: سحباته تنطلق من حافة الحاوية السفلية ففسّرها
+     * نظام الإيماءات سحبة نظامية وفتح شاشة التطبيقات الأخيرة (التشغيل
+     * 45813074003، الاختبار الداكن). وبلا نقر Compose: performScrollTo
+     * رمى استثناءً في الاختبارين (السبب الدقيق غير مسجّل؛ الورقة نافذة
+     * حوار منفصلة)، بينما نقر UiAutomator على الصف الظاهر أثبت نجاحه
+     * (التشغيل 45806661534).
+     */
+    private fun scrollSheetTo(label: String, maxSwipes: Int = 20): Boolean {
+        Thread.sleep(1000)
+        composeRule.waitForIdle()
         repeat(maxSwipes) {
             val found = runCatching {
                 device.wait(Until.hasObject(By.text(label)), 1500)
             }.getOrDefault(false)
             if (found) return true
-            device.swipe(540, 1500, 540, 800, 20)
+            device.swipe(540, 1400, 540, 1000, 20)
             Thread.sleep(500)
             composeRule.waitForIdle()
         }
@@ -219,27 +219,9 @@ class QuranZoomScreenshotTest {
             dumpHierarchy("nav-debug-home-$currentTheme")
         }
         assertTrue("sections sheet [كل الأقسام] must open after tapping [الأقسام]", sheetOpen)
-        // النقر على الصف عبر Compose: performScrollTo يمرّر الورقة حتى
-        // يظهر الصف ثم ينقره — بلا لوحة مفاتيح وبلا سحب يدوي.
-        // لا بحث نصي: حقل «ابحث عن قسم» فتح Gboard، فطابقت «المصحف»
-        // اقتراح لوحة المفاتيح أيضًا والتقطت النقرةُ عقدة اللوحة
-        // فانتهى الاختبار في شاشة سمات Gboard (التشغيل 45808693502 —
-        // الهرمية بلا أي عقدة من التطبيق، 164 عقدة من
-        // com.google.android.inputmethod.latin).
-        val clicked = runCatching {
-            composeRule.onNodeWithText(title).performScrollTo()
-            composeRule.waitForIdle()
-            Thread.sleep(300)
-            composeRule.onNodeWithText(title).performClick()
-            true
-        }.getOrDefault(false)
-        log("SECTION CLICK [$title] via compose: $clicked")
-        if (!clicked) {
-            // احتياطي: تمرير الإطار ثم نقر UiAutomator.
-            val visible = scrollSheetTo(title)
-            log("SHEET SCROLL [$title]: visible=$visible")
-            clickText(title)
-        }
+        val visible = scrollSheetTo(title)
+        log("SHEET SCROLL [$title]: visible=$visible")
+        clickText(title)
         val arrived = runCatching {
             device.wait(Until.hasObject(By.text("رجوع")), 10000)
         }.getOrDefault(false)
@@ -274,11 +256,28 @@ class QuranZoomScreenshotTest {
         composeRule.waitForIdle()
     }
 
-    private fun assertZoomLabel(percent: String) {
+    /**
+     * تأكيد تسمية الزوم: مطابقة جزئية عبر Compose على نص التسمية كاملًا
+     * + مستوى الزوم المحفوظ كمصدر حقيقة رقمي. لا مطابقة تامة عبر
+     * UiAutomator: فشلت مرة رغم ظهور التسمية في اللقطة نفسها (التشغيل
+     * 45813074003: «حجم الخط 75٪» ظاهرة في quran-p2-zoom-min.png
+     * وBy.text لم يجدها، بينما «100٪» وُجدت بنفس الصيغة — مطابِق
+     * UiAutomator للنص العربي/اللاتيني المختلط غير موثوق).
+     * النسبة نفسها تُتحقق بصريًا من اللقطة.
+     */
+    private fun assertZoomLabel(percent: String, level: Int) {
         val label = "حجم الخط $percent٪"
-        val found = device.wait(Until.hasObject(By.text(label)), 5000)
-        log("ZOOM LABEL [$label]: found=$found")
-        assertTrue("zoom label [$label] must be visible", found)
+        composeRule.onNodeWithText(label, substring = true).assertIsDisplayed()
+        log("ZOOM LABEL [$label]: displayed via compose")
+        val saved = QuranZoom.loadZoomLevel(appContext())
+        assertEquals("saved zoom level must match [$label]", level, saved)
+    }
+
+    /** النقر على تسمية الزوم نفسها (تعيد للافتراضي) عبر Compose. */
+    private fun clickZoomLabel() {
+        composeRule.onNodeWithText("حجم الخط", substring = true).performClick()
+        composeRule.waitForIdle()
+        Thread.sleep(800)
     }
 
     private fun jumpToPage(page: Int) {
@@ -309,23 +308,24 @@ class QuranZoomScreenshotTest {
         // اللقطة الأولى بعد اكتمال التحميل لا قبله، وإلا صوّرنا شاشة التحميل.
         waitForReaderReady()
         shot("${prefix}-default")
-        assertZoomLabel("100")
+        assertZoomLabel("100", QuranZoom.DEFAULT_LEVEL)
         zoomTap("−", 2)
         shot("${prefix}-min")
-        assertZoomLabel("75")
+        assertZoomLabel("75", QuranZoom.MIN_LEVEL)
         zoomTap("+", 4)
         shot("${prefix}-max")
-        assertZoomLabel("130")
+        assertZoomLabel("130", QuranZoom.MAX_LEVEL)
         zoomTap("−", 2)
-        assertZoomLabel("100")
+        assertZoomLabel("100", QuranZoom.DEFAULT_LEVEL)
     }
 
     @Test
     fun quranZoomLight() {
         launch("light")
         openSection("المصحف")
-        // القارئ يفتح على صفحة ورد اليوم (2 افتراضيًا).
-        shootPageZooms(2, "quran-p2-zoom")
+        // القارئ يفتح على صفحة ورد اليوم كما يحسبها التطبيق (4 في هذا
+        // التشغيل المزروع، لا 2 حرفيًا — البادئة «wird» لا «p2»).
+        shootPageZooms(2, "quran-wird-zoom")
         jumpToPage(48)
         shootPageZooms(48, "quran-p48-zoom")
         jumpToPage(597)
@@ -334,21 +334,21 @@ class QuranZoomScreenshotTest {
         // الحفظ: آخر مستوى مضبوط بالأزرار كان الأقصى قبل العودة للافتراضي
         // في shootPageZooms؛ نضبط الأقصى صراحةً ثم نتحقق من التفضيلة.
         zoomTap("+", 2)
-        assertZoomLabel("130")
+        assertZoomLabel("130", QuranZoom.MAX_LEVEL)
         val saved = QuranZoom.loadZoomLevel(appContext())
         log("ZOOM PREF after +2: $saved")
         assertEquals(QuranZoom.MAX_LEVEL, saved)
 
         // البقاء بعد إعادة التشغيل: يُعاد الإقلاع بلا مساس بالتفضيلات،
-        // فيفتح القارئ على الأقصى مباشرة (صفحة الورد 2).
+        // فيفتح القارئ على الأقصى مباشرة (صفحة الورد).
         goBack()
         relaunchKeepPrefs()
         openSection("المصحف")
-        assertZoomLabel("130")
-        shot("quran-p2-zoom-max-relaunch")
+        assertZoomLabel("130", QuranZoom.MAX_LEVEL)
+        shot("quran-wird-zoom-max-relaunch")
         // إعادة للافتراضي عبر الضغط على النسبة نفسها.
-        clickText("حجم الخط 130٪")
-        assertZoomLabel("100")
+        clickZoomLabel()
+        assertZoomLabel("100", QuranZoom.DEFAULT_LEVEL)
         assertEquals(QuranZoom.DEFAULT_LEVEL, QuranZoom.loadZoomLevel(appContext()))
     }
 
@@ -356,14 +356,15 @@ class QuranZoomScreenshotTest {
     fun quranZoomDark() {
         launch("dark")
         openSection("المصحف")
-        shot("quran-p2-zoom-default-dark")
-        assertZoomLabel("100")
+        waitForReaderReady()
+        shot("quran-wird-zoom-default-dark")
+        assertZoomLabel("100", QuranZoom.DEFAULT_LEVEL)
         zoomTap("+", 2)
-        shot("quran-p2-zoom-max-dark")
-        assertZoomLabel("130")
+        shot("quran-wird-zoom-max-dark")
+        assertZoomLabel("130", QuranZoom.MAX_LEVEL)
         zoomTap("−", 2)
         jumpToPage(597)
         shot("quran-p597-zoom-default-dark")
-        assertZoomLabel("100")
+        assertZoomLabel("100", QuranZoom.DEFAULT_LEVEL)
     }
 }
