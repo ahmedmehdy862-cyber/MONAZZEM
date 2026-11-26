@@ -9,6 +9,11 @@
 # - API 34 هو الأساس؛ API 30 حد أدنى ثانٍ (minSdk 26 لكن المحاكي 30 أسرع
 #   وأكثر استقرارًا في CI من 26/27).
 # - اللقطات تُسحب بـ adb pull داخل الـ script لأن المحاكي يُطفأ بعده.
+# - لماذا macOS وليس ubuntu: عدّاءات لينكس المستضافة في GitHub بلا KVM
+#   (التشغيل 45751255406 فشل: «Software CPU emulation (-accel off) is not
+#   supported» لأن المحاكي 37+ يرفض المحاكاة البرمجية)، بينما macOS يعمل
+#   بتسريع HVF الأصلي. الريبو عام فدقائق macOS مجانية. لذلك الصورة arm64-v8a
+#   (عدّاءات macOS على Apple Silicon).
 name: Emulator QA
 
 on:
@@ -27,8 +32,8 @@ concurrency:
 jobs:
   emulator-qa:
     name: Emulator QA (API ${{ matrix.api-level }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: macos-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -70,8 +75,9 @@ jobs:
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
-          arch: x86_64
+          arch: arm64-v8a
           profile: pixel_6
+          emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
