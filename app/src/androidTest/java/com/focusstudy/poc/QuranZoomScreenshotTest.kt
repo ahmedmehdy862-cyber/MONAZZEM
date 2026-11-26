@@ -105,6 +105,31 @@ class QuranZoomScreenshotTest {
         }
     }
 
+    /**
+     * تسخين فهرس المصحف قبل التنقّل: استدعاء loadIndex مباشرة من خيط
+     * خلفي وقياس زمنه. التشغيل 45817320765 أثبت أن القارئ لا يكمل
+     * التحميل في 90 ثانية في الاختبار الأول (البارد) بينما يكتمل في
+     * 7ms في الاختبار الثاني (الدافئ) — فإما أن التحليل البارد بطيء
+     * فعلًا (مشكلة إنتاج حقيقية تستحق التبليغ) أو أن LaunchedEffect
+     * لا يُنفَّذ في التركيبة الباردة الأولى (خلل في الاختبار). هذا
+     * التسخين يفصل بين الاحتمالين بقياس صريح يُسجَّل في qa-log، ويجعل
+     * لقطات الزوم مستقلة عن زمن التحميل البارد (اللقطات هدفها التخطيط
+     * لا قياس التحميل). مهلة 60 ثانية؛ إن تجاوزها أكملنا كما كنا
+     * واعتمدنا على waitForReaderReady.
+     */
+    private fun warmQuranIndex() {
+        val ctx = androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation().targetContext
+        val t0 = System.currentTimeMillis()
+        val holder = java.util.concurrent.atomic.AtomicReference<Any?>()
+        val job = Thread {
+            holder.set(runCatching { QuranData.loadIndex(ctx) }.getOrNull())
+        }.also { it.start() }
+        job.join(60000)
+        val ms = System.currentTimeMillis() - t0
+        log("QURAN WARMUP: loaded=${holder.get() != null} in ${ms}ms alive=${job.isAlive}")
+    }
+
     private fun launch(theme: String, zoomLevel: Int = QuranZoom.DEFAULT_LEVEL) {
         currentTheme = theme
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
@@ -117,6 +142,7 @@ class QuranZoomScreenshotTest {
         composeRule.waitForIdle()
         Thread.sleep(1500)
         log("launched MainActivity theme=$theme zoom=$zoomLevel")
+        warmQuranIndex()
         // لقطة + هرمية للشاشة الرئيسية قبل أي تنقّل: إن فشل فتح «الأقسام»
         // يبيّنان ما الذي كان على الشاشة فعلًا (حوار إذن؟ إعداد أولي؟).
         shot("home-after-launch-$currentTheme")
