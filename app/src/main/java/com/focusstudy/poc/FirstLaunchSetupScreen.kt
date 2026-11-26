@@ -81,7 +81,7 @@ internal fun FirstLaunchSetupScreen(
             when (page) {
                 0 -> {
                     item {
-                        SetupCard("اسمك", "يظهر في الترحيب والرسائل التشجيعية على جهازك فقط.") {
+                        SetupCard("اسمك", "يظهر في الترحيب والرسائل التشجيعية، ويُرسَل إلى خادم التطبيق عند التسجيل حتى يعرفك فريق الدعم عند مراسلتنا.") {
                             OutlinedTextField(
                                 value = name,
                                 onValueChange = { name = it.take(32) },

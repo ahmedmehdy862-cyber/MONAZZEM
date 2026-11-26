@@ -71,11 +71,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-// TODO(دعم واتساب): ضع هنا رقم هاتف الدعم الحقيقي بالصيغة الدولية بدون "+" أو
-// مسافات (مثال: "2010xxxxxxxx") — يصل من أحمد. رابط wa.me لا يقبل اسم مستخدم
-// (مثل "techsup402") فلا يفتح محادثة؛ حتى يُملأ الرقم يبقى زر المراسلة المباشرة
-// معطّلًا وتعمل مشاركة الصور عبر ورقة المشاركة دون رقم.
-private const val SUPPORT_WHATSAPP_NUMBER = ""
+// رقم الدعم على واتساب بالصيغة الدولية بدون "+" أو مسافات — قدّمه أحمد
+// 2026-11-26. رابط wa.me لا يقبل اسم مستخدم (مثل "techsup402") فلا يفتح
+// محادثة؛ إن فُرّغ الرقم يبقى زر المراسلة المباشرة معطّلًا وتعمل مشاركة
+// الصور عبر ورقة المشاركة دون رقم.
+private const val SUPPORT_WHATSAPP_NUMBER = "201110200193"
 
 /** مرجع قصير لرسالة دعم محفوظة، يظهر في سطر ملاحظة الصور وفي نص واتساب لربط الصور بالرسالة. */
 private fun supportReference(localId: Long): String = "دعم-$localId"
@@ -1053,8 +1053,8 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     ) { Text("نسخ رقم الدعم") }
                 } else {
-                    // رقم الدعم لم يصل من أحمد بعد (انظر TODO عند SUPPORT_WHATSAPP_NUMBER):
-                    // لا زر وهمي برابط مكسور، بل تنبيه صريح بأن المراسلة المباشرة غير مفعّلة.
+                    // احتياطي إن فُرّغ الرقم أعلاه: لا زر وهمي برابط مكسور، بل تنبيه صريح
+                    // بأن المراسلة المباشرة غير مفعّلة.
                     Text(
                         "مراسلة واتساب المباشرة غير مفعّلة بعد (لم يُضبط رقم الدعم في التطبيق). يمكنك إرسال رسالتك هنا، ومشاركة صورك عبر زر واتساب أعلاه.",
                         color = FocusColors.TextSecondary,

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Explicit cleartext ban (defense in depth, audit 2026-11-26): the app only
+     talks to https://update-site-sigma.vercel.app. Target SDK 36 already blocks
+     cleartext by default; this makes the policy explicit and keeps it enforced
+     even if a future targetSdk/default changes. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

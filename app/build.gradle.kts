@@ -120,9 +120,11 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     // Avatar photo → cartoon likeness (phase 1, bundled ML Kit): on-device face
     // detection with the model inside the APK — fully offline, no Play Services,
-    // no download. Adds roughly 6.9 MB to the APK (the bundled model). The
-    // detector is used once per photo pick (see FaceAnalyzer); when no face is
-    // found the old colour-seed cartoon is kept, so nothing regresses.
+    // no download. Adds roughly 35 MB to the APK (native libs for 4 ABIs ≈ 33 MB
+    // + bundled models ≈ 4.3 MB — measured from the published 0.33.0 APK; the
+    // earlier 6.9 MB estimate was wrong). The detector is used once per photo
+    // pick (see FaceAnalyzer); when no face is found the old colour-seed cartoon
+    // is kept, so nothing regresses.
     implementation("com.google.mlkit:face-detection:16.1.7")
     // EXIF orientation for camera photos picked for the avatar (see FaceAnalyzer).
     implementation("androidx.exifinterface:exifinterface:1.3.7")
