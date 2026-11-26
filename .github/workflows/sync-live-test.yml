@@ -94,7 +94,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace --tests "com.focusstudy.poc.SyncLiveSeedTest"
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveSeedTest
             # سحب بيانات اعتماد ملف الاختبار من filesDir الداخلي (run-as يعمل لأن APK قابل للتنقيح).
             adb shell run-as com.focusstudy.poc cat /data/data/com.focusstudy.poc/files/sync-live-credentials.json > sync-live-credentials.json
             test -s sync-live-credentials.json || { echo "credentials file is empty or missing" >&2; exit 1; }
@@ -109,7 +109,7 @@ jobs:
               exit 1
             fi
             echo "network cut verified"
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace --tests "com.focusstudy.poc.SyncLiveOfflineTest"
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveOfflineTest
             # --- إعادة الشبكة ---
             adb shell svc wifi enable
             adb shell svc data enable
@@ -274,7 +274,7 @@ jobs:
             ./gradlew installDebug --no-daemon
             # دفع بيانات الاعتماد إلى filesDir قبل تشغيل الاختبار (عبر stdin؛ لا تظهر في السجل).
             adb shell run-as com.focusstudy.poc sh -c 'cat > /data/data/com.focusstudy.poc/files/sync-live-credentials.json' < sync-live-credentials.json
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace --tests "com.focusstudy.poc.SyncLiveVerifyTest"
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveVerifyTest
             adb logcat -d > ./logcat-verify.txt || true
 
       - name: Upload verify logcat
