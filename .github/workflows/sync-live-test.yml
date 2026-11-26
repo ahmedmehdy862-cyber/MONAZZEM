@@ -179,16 +179,18 @@ jobs:
         shell: bash
         run: |
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name sdkmanager | sort | tail -n 1)"
+          # على ويندوز الملف اسمه sdkmanager.bat لا sdkmanager — ابحث عن الاثنين.
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -type f \( -name sdkmanager -o -name "sdkmanager.bat" \) | sort | tail -n 1)"
           test -n "$SDKMANAGER" || { echo "sdkmanager not found under $SDK_ROOT" >&2; exit 1; }
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
       - name: Install SDK packages used by the build
         shell: bash
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -229,7 +231,10 @@ jobs:
       - name: Remove firewall rule
         if: always()
         shell: pwsh
-        run: netsh advfirewall firewall delete rule name="SyncLiveTest-BlockJava"
+        run: |
+          netsh advfirewall firewall delete rule name="SyncLiveTest-BlockJava" | Out-Null
+          # تنظيف بأفضل جهد: غياب القاعدة (لم تُنشأ أصلًا) ليس فشلًا.
+          exit 0
 
       - name: Run Windows live test (online)
         env:
