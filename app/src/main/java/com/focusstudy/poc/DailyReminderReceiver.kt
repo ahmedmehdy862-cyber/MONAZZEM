@@ -94,7 +94,9 @@ internal object StudyNotificationScheduler {
             next.toInstant().toEpochMilli(),
             PrayerWindows.todayPrayerMillis(context.applicationContext)
         )
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntent)
+        // م5: جدولة موحّدة — منبّه دقيق عند السماح، وغير دقيق مع تسجيل تشخيصي
+        // عند الرفض أو الفشل، بدل الاستدعاء المباشر الصامت.
+        NotificationMaintenance.schedule(context, alarmManager, atMillis, pendingIntent, kind = "daily")
     }
 
     /** A deferred retry keeps its own request code so the daily reschedule never cancels it. */
@@ -111,10 +113,11 @@ internal object StudyNotificationScheduler {
 
     private fun schedule(context: Context, action: String, requestCode: Int, atMillis: Long) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.setAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            atMillis,
-            pendingIntent(context, action, requestCode)
+        // م5: نفس الجدولة الموحّدة (انظر scheduleDaily) — kind = "task" للتشخيص.
+        NotificationMaintenance.schedule(
+            context, alarmManager, atMillis,
+            pendingIntent(context, action, requestCode),
+            kind = "task"
         )
     }
 
