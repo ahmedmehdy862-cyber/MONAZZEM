@@ -140,7 +140,7 @@ fun TaskTypesScreen(onBack: () -> Unit) {
             text = { Text("ستبقى كل المهام المرتبطة به، لكنها ستصبح بلا نوع. لا يمكن التراجع عن حذف النوع نفسه.") },
             confirmButton = {
                 TextButton(onClick = { viewModel.delete(target.id); deleteTarget = null }) {
-                    Text("حذف", color = FocusColors.Error)
+                    Text("حذف", color = FocusColors.onTint(FocusColors.Rose))
                 }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("إلغاء") } }

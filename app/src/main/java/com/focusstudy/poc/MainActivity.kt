@@ -149,6 +149,7 @@ import androidx.compose.material3.Text
 
 import androidx.compose.material3.TextButton
 import java.time.LocalDate
+import java.time.ZoneId
 import androidx.compose.material3.ProvideTextStyle
 
 import androidx.compose.runtime.Composable
@@ -1128,6 +1129,79 @@ private fun AppRoot(
     }
 
 }
+/**
+ * تجميع زمني لقائمة «مهامي» بعد الفلترة والترتيب والبحث: الفلاتر والترتيب تعمل
+ * أولًا على القائمة الكاملة، ثم يُجمَّع الناتج المفلتر فقط — فلا تتغير نتيجة
+ * أي فلتر أو ترتيب، ويبقى ترتيب المهام داخل كل مجموعة كما رتّبها المستخدم.
+ * ترتيب المجموعات ثابت: متأخرة، اليوم، غدًا، لاحقًا (يومًا بيوم، تصاعديًا)،
+ * مكتملة، ثم بلا موعد أخيرة.
+ */
+private enum class TaskTimeGroup(val label: String) {
+    OVERDUE("متأخرة"),
+    TODAY("اليوم"),
+    TOMORROW("غدًا"),
+    LATER("لاحقًا"),
+    DONE("مكتملة"),
+    UNDATED("بلا موعد")
+}
+
+private data class TaskTimeSection(val group: TaskTimeGroup, val date: LocalDate?, val tasks: List<StudyTask>)
+
+private fun groupTasksByTime(tasks: List<StudyTask>, today: LocalDate, zone: ZoneId): List<TaskTimeSection> {
+    val buckets = linkedMapOf<TaskTimeGroup, MutableList<StudyTask>>()
+    val laterByDate = linkedMapOf<LocalDate, MutableList<StudyTask>>()
+    for (task in tasks) {
+        // المكتملة مجموعة مستقلة مهما كان موعدها: وضعها مع «متأخرة» حسب تاريخها
+        // القديم كان سيوسمها خطأً بأنها متأخرة. والمؤجلة/الملغاة التي مضى موعدها
+        // تبقى في «متأخرة» لأن موعدها فعلًا مضى، وبطاقتها نفسها توضح حالتها.
+        val bucket = when {
+            TaskState.completed(task) -> TaskTimeGroup.DONE
+            task.dueAt == null -> TaskTimeGroup.UNDATED
+            else -> {
+                val due = TaskState.dueDate(task, zone)
+                when {
+                    due == null -> TaskTimeGroup.UNDATED
+                    due.isBefore(today) -> TaskTimeGroup.OVERDUE
+                    due == today -> TaskTimeGroup.TODAY
+                    due == today.plusDays(1) -> TaskTimeGroup.TOMORROW
+                    else -> null
+                }
+            }
+        }
+        if (bucket != null) {
+            buckets.getOrPut(bucket) { mutableListOf() } += task
+        } else {
+            val due = TaskState.dueDate(task, zone) ?: continue
+            laterByDate.getOrPut(due) { mutableListOf() } += task
+        }
+    }
+    val sections = mutableListOf<TaskTimeSection>()
+    listOf(TaskTimeGroup.OVERDUE, TaskTimeGroup.TODAY, TaskTimeGroup.TOMORROW).forEach { group ->
+        buckets[group]?.takeIf { it.isNotEmpty() }?.let { sections += TaskTimeSection(group, null, it) }
+    }
+    laterByDate.keys.sorted().forEach { date ->
+        sections += TaskTimeSection(TaskTimeGroup.LATER, date, laterByDate.getValue(date))
+    }
+    listOf(TaskTimeGroup.DONE, TaskTimeGroup.UNDATED).forEach { group ->
+        buckets[group]?.takeIf { it.isNotEmpty() }?.let { sections += TaskTimeSection(group, null, it) }
+    }
+    return sections
+}
+
+private fun taskTimeSectionLabel(section: TaskTimeSection): String = when (section.group) {
+    TaskTimeGroup.LATER -> "لاحقًا · " + (section.date?.let { ArabicDate.format(it) }.orEmpty())
+    else -> section.group.label
+}
+
+private fun taskTimeSectionColor(group: TaskTimeGroup): Color = when (group) {
+    TaskTimeGroup.OVERDUE -> FocusColors.onTint(FocusColors.Rose)
+    TaskTimeGroup.TODAY -> FocusColors.onTint(FocusColors.Blue)
+    TaskTimeGroup.TOMORROW -> FocusColors.onTint(FocusColors.Teal)
+    TaskTimeGroup.DONE -> FocusColors.onTint(FocusColors.Green)
+    TaskTimeGroup.LATER -> FocusColors.TextPrimary
+    TaskTimeGroup.UNDATED -> FocusColors.TextMuted
+}
+
 
 @Composable
 
@@ -1247,6 +1321,11 @@ private fun TasksScreen(
             TaskListSort.NEWEST -> matchingTasks.sortedByDescending { it.createdAt }
             TaskListSort.TITLE -> matchingTasks.sortedBy { it.title.lowercase(Locale.getDefault()) }
         }
+    }
+
+    // تجميع زمني للناتج المفلتر والمُرتَّب فقط — انظر groupTasksByTime.
+    val groupedTasks = remember(visibleTasks, today) {
+        groupTasksByTime(visibleTasks, today, AppTimeZone.zone(context))
     }
 
     var accessibilityOn by remember {
@@ -1528,36 +1607,55 @@ private fun TasksScreen(
 
         ) {
 
-            items(visibleTasks, key = { task -> task.id }) { task ->
-
-                UnifiedTaskCard(
-
-                    task = task,
-                    today = today,
-                    density = TaskCardDensity.FULL,
-
-                    typeLabel = task.typeId?.let { typeNames[it] }.orEmpty(),
-
-                    subjectName = task.subjectId?.let { subjectNames[it] },
-
-                    onStart = { onOpenSetup(task.id) },
-
-                    onEditBlocked = { onEditBlocked(task.id) },
-
-                    onDelete = { deleteTarget = task },
-                    onEdit = { editTarget = task; showEditDialog = true },
-                    onDuplicate = { viewModel.duplicate(task.id) },
-                    onReschedule = { target -> viewModel.reschedule(task.id, target) },
-                    onSubtasks = { subtasksTarget = task },
-                    onToggleDone = {
-                        viewModel.setStatus(
-                            task.id,
-                            if (task.isDone) TaskStatus.TODO else TaskStatus.DONE
+            groupedTasks.forEach { section ->
+                item(key = "header-${section.group.name}-${section.date}") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = taskTimeSectionLabel(section),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = taskTimeSectionColor(section.group),
+                            fontWeight = FontWeight.SemiBold
                         )
+                        Spacer(Modifier.weight(1f))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(FocusColors.SurfaceHigh)
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "${section.tasks.size}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FocusColors.TextSecondary
+                            )
+                        }
                     }
-
-                )
-
+                }
+                items(section.tasks, key = { task -> task.id }) { task ->
+                    UnifiedTaskCard(
+                        task = task,
+                        today = today,
+                        density = TaskCardDensity.FULL,
+                        typeLabel = task.typeId?.let { typeNames[it] }.orEmpty(),
+                        subjectName = task.subjectId?.let { subjectNames[it] },
+                        onStart = { onOpenSetup(task.id) },
+                        onEditBlocked = { onEditBlocked(task.id) },
+                        onDelete = { deleteTarget = task },
+                        onEdit = { editTarget = task; showEditDialog = true },
+                        onDuplicate = { viewModel.duplicate(task.id) },
+                        onReschedule = { target -> viewModel.reschedule(task.id, target) },
+                        onSubtasks = { subtasksTarget = task },
+                        onToggleDone = {
+                            viewModel.setStatus(
+                                task.id,
+                                if (task.isDone) TaskStatus.TODO else TaskStatus.DONE
+                            )
+                        }
+                    )
+                }
             }
 
             if (visibleTasks.isEmpty()) {

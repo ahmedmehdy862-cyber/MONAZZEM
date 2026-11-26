@@ -1,6 +1,10 @@
 package com.focusstudy.poc
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,9 +26,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -50,8 +59,23 @@ internal fun StudyPlannerScreen(
     val fresh = remember(plan, today, zone) { plan.filterNot { StudyPlanner.isStale(it, today, zone) } }
     val locale = remember { Locale.forLanguageTag("ar-EG") }
     val formatter = remember { DateTimeFormatter.ofPattern("EEEE d MMMM", locale) }
-    val totalMinutes = fresh.sumOf { it.minutes }
     val openCount = state.tasks.count { TaskState.active(it) }
+    // شريط أيام الأسبوع (السبت–الجمعة): اليوم المختار يصفّي الكتل، وnull تعني كل الأسبوع.
+    // يُحفظ يوم الاختيار كـ epochDay لأن LocalDate ليست Parcelable.
+    var selectedDayEpoch by rememberSaveable { mutableStateOf<Long?>(null) }
+    val selectedDay = selectedDayEpoch?.let { LocalDate.ofEpochDay(it) }
+    // السبت أول أيام الأسبوع في مصر: DayOfWeek السبت = 6، فيكون البعد عنه (value + 1) % 7.
+    val weekStart = remember(today) { today.minusDays(((today.dayOfWeek.value + 1) % 7).toLong()) }
+    val weekDays = remember(weekStart) { (0L..6L).map { weekStart.plusDays(it) } }
+    val shownBlocks = remember(fresh, selectedDay) { if (selectedDay == null) fresh else fresh.filter { it.date == selectedDay } }
+    val shownMinutes = shownBlocks.sumOf { it.minutes }
+    // عدد الأهداف النشطة: متاح من GoalRepository مباشرة (نفس نمط GoalsScreen)؛
+    // النشط هو كل هدف حالته ليست "done". يُعرض فقط بعد تحميله، فلا يظهر رقم مؤقت خاطئ.
+    var activeGoals by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(Unit) {
+        activeGoals = runCatching { GoalRepository.get(context).goals().count { it.status != "done" } }.getOrNull()
+    }
+    val dayShortFormatter = remember { DateTimeFormatter.ofPattern("EEE d", locale) }
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("رجوع") }
@@ -61,7 +85,35 @@ internal fun StudyPlannerScreen(
         Spacer(Modifier.height(8.dp))
         Text("خطة أسبوعك الذكية: كتل زمنية مقترحة من مهامك ومواعيدك الفعلية — رتّب أسبوعك كاملًا، لا يومك فقط. خصصنا حدًا يوميًا قدره $dailyGoal دقيقة، مع تقسيم الجلسات إلى فترات قصيرة." + if (profile == UserProfile.GRADUATE) " كتل يومك بمواعيد فعلية تتابعية تبدأ 09:00 مع استراحة 10 دقائق بين الكتل." else "", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
-        Text("${fresh.size} جلسة مقترحة · $totalMinutes دقيقة هذا الأسبوع · $openCount مهام مفتوحة", color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelMedium)
+        Text(
+            "${shownBlocks.size} جلسة مقترحة · $shownMinutes دقيقة ${if (selectedDay == null) "هذا الأسبوع" else "في هذا اليوم"} · $openCount مهام مفتوحة" +
+                (activeGoals?.let { " · $it أهداف نشطة" } ?: ""),
+            color = FocusColors.onTint(FocusColors.Teal), style = MaterialTheme.typography.labelMedium
+        )
+        Spacer(Modifier.height(10.dp))
+        // شريط أيام الأسبوع (السبت–الجمعة): اختيار يوم يصفّي كتل ذلك اليوم فقط،
+        // و«كل الأسبوع» تعيد العرض الكامل. الخطة نفسها تبدأ من اليوم، فالأيام التي
+        // مضت من هذا الأسبوع بلا كتل مخططة وتظهر باهتة غير قابلة للاختيار؛ وأيام
+        // الأسبوع التالي التي تقع ضمن الخطة (بعد الجمعة) تظهر فقط في «كل الأسبوع».
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
+        ) {
+            PlannerDayChip(
+                label = "كل الأسبوع",
+                selected = selectedDay == null,
+                enabled = true,
+                onClick = { selectedDayEpoch = null }
+            )
+            weekDays.forEach { day ->
+                PlannerDayChip(
+                    label = day.format(dayShortFormatter),
+                    selected = selectedDay == day,
+                    enabled = !day.isBefore(today),
+                    onClick = { selectedDayEpoch = day.toEpochDay() }
+                )
+            }
+        }
         Spacer(Modifier.height(10.dp))
         if (staleBlocks.isNotEmpty()) {
             Card(
@@ -95,8 +147,13 @@ internal fun StudyPlannerScreen(
                 Text("لا توجد مهام مفتوحة للخطة حاليًا.", style = MaterialTheme.typography.titleMedium)
                 Text("أضف مهامًا مع مدة أو موعد استحقاق عشان نرتبها لك.", color = FocusColors.TextSecondary)
             }
+        } else if (shownBlocks.isEmpty()) {
+            Column(Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("لا جلسات مخططة في هذا اليوم.", style = MaterialTheme.typography.titleMedium)
+                Text("جرّب يومًا آخر، أو اعرض كل الأسبوع.", color = FocusColors.TextSecondary)
+            }
         } else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            fresh.groupBy { it.date }.forEach { (date, blocks) ->
+            shownBlocks.groupBy { it.date }.forEach { (date, blocks) ->
                 // الخريج: كل كتلة بوقت بدء/نهاية فعلي (تتابعي من 09:00)، لا تاريخ فقط.
                 val windows = if (profile == UserProfile.GRADUATE) planDayWindows(blocks) else null
                 item(key = "day-$date") {
@@ -120,5 +177,31 @@ internal fun StudyPlannerScreen(
             }
         }
         Button(onClick = onBack, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("رجوع للمهام") }
+    }
+}
+
+/**
+ * زر يوم في شريط أيام الخطة الأسبوعية: نفس لغة TaskCategoryChip (محدد = أزرق
+ * مملوء، غير محدد = SurfaceHigh)، والأيام الماضية باهتة بلا ضغطة لأن الخطة
+ * تبدأ من اليوم فلا كتل لها أصلًا.
+ */
+@Composable
+private fun PlannerDayChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(FocusSpacing.radiusChip))
+            .background(if (selected) FocusColors.Blue else FocusColors.SurfaceHigh)
+            .then(if (enabled) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = when {
+                selected -> FocusColors.onAccentFill(FocusColors.Blue)
+                !enabled -> FocusColors.TextMuted
+                else -> FocusColors.TextSecondary
+            }
+        )
     }
 }
