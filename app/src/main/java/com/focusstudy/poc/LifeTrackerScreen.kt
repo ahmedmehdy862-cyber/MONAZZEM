@@ -115,7 +115,12 @@ private data class LifeUiState(
  * [TaskRepository] ويبدّل حالتها، ولا ينشئ أي نظام مهام موازٍ.
  */
 @Composable
-internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
+internal fun LifeTrackerScreen(
+    onBack: () -> Unit,
+    onOpenTasks: () -> Unit,
+    /** النقر على تمرين في كتلة اللياقة يفتح شاشة شرحه (0.34.0). */
+    onOpenExercise: (Exercise) -> Unit = {}
+) {
     val context = LocalContext.current
     val life = remember { LifeRepository.get(context) }
     val tasksRepo = remember { TaskRepository.get(context) }
@@ -479,7 +484,8 @@ internal fun LifeTrackerScreen(onBack: () -> Unit, onOpenTasks: () -> Unit) {
                             runCatching { life.setExerciseDone(exerciseId, todayKey, done) }
                             refresh()
                         }
-                    }
+                    },
+                    onOpenExercise = onOpenExercise
                 )
             }
             item {
@@ -1057,7 +1063,8 @@ private fun HealthSection(
     onSaveProfile: (FitnessProfile) -> Unit,
     onAddCalorie: (String, Int) -> Unit,
     onDeleteCalorie: (CalorieEntry) -> Unit,
-    onToggleExercise: (String, Boolean) -> Unit
+    onToggleExercise: (String, Boolean) -> Unit,
+    onOpenExercise: (Exercise) -> Unit = {}
 ) {
     val saved = state.healthToday
     var weight by remember(saved) { mutableStateOf(saved?.weight?.toString() ?: "") }
@@ -1137,7 +1144,8 @@ private fun HealthSection(
             onSaveProfile = onSaveProfile,
             onAddCalorie = onAddCalorie,
             onDeleteCalorie = onDeleteCalorie,
-            onToggleExercise = onToggleExercise
+            onToggleExercise = onToggleExercise,
+            onOpenExercise = onOpenExercise
         )
     }
 }
@@ -1417,7 +1425,8 @@ private fun FitnessBlock(
     onSaveProfile: (FitnessProfile) -> Unit,
     onAddCalorie: (String, Int) -> Unit,
     onDeleteCalorie: (CalorieEntry) -> Unit,
-    onToggleExercise: (String, Boolean) -> Unit
+    onToggleExercise: (String, Boolean) -> Unit,
+    onOpenExercise: (Exercise) -> Unit = {}
 ) {
     var showForm by remember(profile) { mutableStateOf(profile == null) }
     var place by rememberSaveable { mutableStateOf(WorkoutPlace.GYM) }
@@ -1556,7 +1565,13 @@ private fun FitnessBlock(
                     onCheckedChange = { onToggleExercise(exercise.id, it) },
                     colors = CheckboxDefaults.colors(checkedColor = FocusColors.Green, checkmarkColor = FocusColors.onAccentFill(FocusColors.Green))
                 )
-                Column(Modifier.weight(1f)) {
+                // النقر على اسم التمرين يفتح شاشة شرحه (0.34.0)؛
+                // مربع التحديد وحده يبدّل الإتمام دون فتح الشاشة.
+                Column(
+                    Modifier.weight(1f)
+                        .clickable { onOpenExercise(exercise) }
+                        .padding(vertical = 4.dp)
+                ) {
                     Text(
                         exercise.name,
                         style = MaterialTheme.typography.bodyMedium,
@@ -1570,6 +1585,7 @@ private fun FitnessBlock(
                         color = FocusColors.TextSecondary
                     )
                 }
+                Text("‹", style = MaterialTheme.typography.titleMedium, color = FocusColors.TextMuted)
             }
         }
         HorizontalDivider(color = FocusColors.Outline.copy(alpha = 0.6f))

@@ -236,3 +236,11 @@ fun workoutPlan(place: WorkoutPlace, gender: FitnessGender): WorkoutPlan =
             FitnessGender.FEMALE -> homeFemalePlan()
         }
     }
+
+/** كل التمارين الـ 72 في الخطط الأربع (جيم/منزل × ذكر/أنثى) — مرجع اختبار التغطية. */
+fun allExercises(): List<Exercise> =
+    WorkoutPlace.entries.flatMap { place ->
+        FitnessGender.entries.flatMap { gender ->
+            workoutPlan(place, gender).days.flatMap { it.exercises }
+        }
+    }

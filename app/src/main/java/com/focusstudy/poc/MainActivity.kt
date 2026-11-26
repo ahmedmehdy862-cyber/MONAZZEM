@@ -772,6 +772,8 @@ private fun AppRoot(
         }
     }
     var sectionsOpen by remember { mutableStateOf(false) }
+    // معرّف التمرين المفتوح في شاشة شرحه (0.34.0)؛ null تعني لا شاشة مفتوحة.
+    var exerciseDetailId by remember { mutableStateOf<String?>(null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val drawerScope = rememberCoroutineScope()
 
@@ -968,7 +970,15 @@ private fun AppRoot(
                     onOpenPersonalization = { openSecondary("settings") }
                 )
                 "goals" -> GoalsScreen(onBack = { returnToPreviousTab() })
-                "life" -> LifeTrackerScreen(onBack = { returnToPreviousTab() }, onOpenTasks = { rootTab = "tasks" })
+                "life" -> LifeTrackerScreen(
+                    onBack = { returnToPreviousTab() },
+                    onOpenTasks = { rootTab = "tasks" },
+                    onOpenExercise = { exerciseDetailId = it.id; openSecondary("exercise_detail") }
+                )
+                "exercise_detail" -> ExerciseDetailRoute(
+                    exerciseId = exerciseDetailId,
+                    onBack = { returnToPreviousTab() }
+                )
                 "assistant" -> AssistantScreen(
                     onBack = { returnToPreviousTab() },
                     userName = preferences.studentName,
