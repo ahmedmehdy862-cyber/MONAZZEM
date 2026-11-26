@@ -125,10 +125,23 @@ class TaskListViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setStatus(taskId: Long, status: TaskStatus) {
+        setStatus(taskId, status) {}
+    }
+
+    /**
+     * يضبط الحالة ويعيد النجاح عبر [onResult] (M5): الاحتفال بإنجاز المهمة
+     * يجب أن يأتي بعد تأكيد نجاح الحفظ لا قبله — المساران السابقان كانا
+     * يحتفلان متفائلًا قبل setStatus، فإن فشل الحفظ احتفل الرفيق بمهمة
+     * لم تُنجَز. عند الفشل لا يُشعَر بتغيّر مهام ولا يُحدَّث العرض.
+     */
+    fun setStatus(taskId: Long, status: TaskStatus, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
-            repository.setStatus(taskId, status)
-            SessionEngine.notifyTasksChanged()
-            refresh()
+            val ok = runCatching { repository.setStatus(taskId, status) }.isSuccess
+            if (ok) {
+                SessionEngine.notifyTasksChanged()
+                refresh()
+            }
+            onResult(ok)
         }
     }
 }

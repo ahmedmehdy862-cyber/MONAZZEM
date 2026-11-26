@@ -1567,8 +1567,11 @@ private fun TasksScreen(
             TodayPlanSection(
                 tasks = tasks,
                 onToggleDone = { task ->
-                    if (!task.isDone && task.status != TaskStatus.DONE) onTaskCompleted()
-                    viewModel.setStatus(task.id, if (task.isDone) TaskStatus.TODO else TaskStatus.DONE)
+                    // الاحتفال بعد تأكيد نجاح الحفظ لا قبله (M5).
+                    val completing = !task.isDone && task.status != TaskStatus.DONE
+                    viewModel.setStatus(task.id, if (task.isDone) TaskStatus.TODO else TaskStatus.DONE) { ok ->
+                        if (ok && completing) onTaskCompleted()
+                    }
                 },
                 onStartTask = { taskId -> onOpenSetup(taskId) },
                 onScheduleToday = { task ->
@@ -1726,11 +1729,14 @@ private fun TasksScreen(
                         onReschedule = { target -> viewModel.reschedule(task.id, target) },
                         onSubtasks = { subtasksTarget = task },
                         onToggleDone = {
-                            if (!task.isDone && task.status != TaskStatus.DONE) onTaskCompleted()
+                            // الاحتفال بعد تأكيد نجاح الحفظ لا قبله (M5).
+                            val completing = !task.isDone && task.status != TaskStatus.DONE
                             viewModel.setStatus(
                                 task.id,
                                 if (task.isDone) TaskStatus.TODO else TaskStatus.DONE
-                            )
+                            ) { ok ->
+                                if (ok && completing) onTaskCompleted()
+                            }
                         }
                     )
                 }
