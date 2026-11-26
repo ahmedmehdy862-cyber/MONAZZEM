@@ -217,26 +217,27 @@ class QuranZoomScreenshotTest {
             dumpHierarchy("nav-debug-home-$currentTheme")
         }
         assertTrue("sections sheet [كل الأقسام] must open after tapping [الأقسام]", sheetOpen)
-        // البحث أولًا: حقل «ابحث عن قسم» يصفّي الصفوف فيظهر الصف المطلوب
-        // بلا تمرير (التمرير اليدوي أخطأه مرة). clickText يأخذ آخر مطابقة
-        // للنص — أي صف القسم لا حقل البحث نفسه.
-        val searched = runCatching {
-            val field = device.wait(
-                Until.findObject(By.clazz("android.widget.EditText")), 5000
-            ) ?: return@runCatching false
-            field.click()
-            Thread.sleep(300)
-            field.text = title
-            Thread.sleep(800)
+        // النقر على الصف عبر Compose: performScrollTo يمرّر الورقة حتى
+        // يظهر الصف ثم ينقره — بلا لوحة مفاتيح وبلا سحب يدوي.
+        // لا بحث نصي: حقل «ابحث عن قسم» فتح Gboard، فطابقت «المصحف»
+        // اقتراح لوحة المفاتيح أيضًا والتقطت النقرةُ عقدة اللوحة
+        // فانتهى الاختبار في شاشة سمات Gboard (التشغيل 45808693502 —
+        // الهرمية بلا أي عقدة من التطبيق، 164 عقدة من
+        // com.google.android.inputmethod.latin).
+        val clicked = runCatching {
+            composeRule.onNodeWithText(title).performScrollTo()
             composeRule.waitForIdle()
-            device.wait(Until.hasObject(By.text(title)), 5000)
+            Thread.sleep(300)
+            composeRule.onNodeWithText(title).performClick()
+            true
         }.getOrDefault(false)
-        log("SHEET SEARCH [$title]: found=$searched")
-        if (!searched) {
+        log("SECTION CLICK [$title] via compose: $clicked")
+        if (!clicked) {
+            // احتياطي: تمرير الإطار ثم نقر UiAutomator.
             val visible = scrollSheetTo(title)
             log("SHEET SCROLL [$title]: visible=$visible")
+            clickText(title)
         }
-        clickText(title)
         val arrived = runCatching {
             device.wait(Until.hasObject(By.text("رجوع")), 10000)
         }.getOrDefault(false)
