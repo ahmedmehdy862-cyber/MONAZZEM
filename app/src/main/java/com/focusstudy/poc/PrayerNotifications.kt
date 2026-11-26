@@ -219,6 +219,8 @@ internal object PrayerNotificationScheduler {
     private const val AT_NOTIFICATION = 6202
     private const val BEFORE_NOTIFICATION = 6204
     private const val TEST_SCREEN_REQUEST = 6311
+    /** Request code for the «إيقاف الأذان» action on the AT notification itself. */
+    private const val STOP_REQUEST = 6312
 
     /** Rebuilds the seven-day window. Safe to call from boot, time change, app update or settings. */
     fun schedule(context: Context) {
@@ -402,7 +404,24 @@ internal object PrayerNotificationScheduler {
             soundRes = if (sound == PrayerAlertSound.ADHAN) PrayerAdhanSounds.resource(voice) else R.raw.notification_chime,
             soundIsAlarm = sound == PrayerAlertSound.ADHAN,
             silent = playInService
-        ).build()
+        ).apply {
+            // One tap in the shade stops the adhan itself, like the big button on the
+            // full-screen alert and the action on the service's ongoing notification:
+            // the person should not have to open the app to silence the call.
+            if (playInService) {
+                addAction(
+                    R.drawable.ic_stat_focus,
+                    "إيقاف الأذان",
+                    PendingIntent.getService(
+                        context,
+                        STOP_REQUEST,
+                        Intent(context, AdhanPlaybackService::class.java)
+                            .setAction(AdhanPlaybackService.ACTION_STOP),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                )
+            }
+        }.build()
         AppNotifications.manager(context).notify(notificationId, notification)
     }
 

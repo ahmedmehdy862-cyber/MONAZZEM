@@ -35,11 +35,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,7 +47,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 
 /**
  * The visible, lock-screen-friendly companion to the adhan notification.
@@ -72,6 +69,11 @@ import kotlinx.coroutines.delay
  * one-minute static guard below only covers the race where two instances are created before
  * either is on top — without `singleTop`, a `CLEAR_TOP` relaunch could destroy the visible
  * screen and then finish its own replacement, leaving no alert at all.
+ *
+ * Stopping is one tap, like adhan apps: the big «إيقاف الأذان» button stops the sound
+ * immediately and closes the screen. (It used to need two taps — the first only armed a
+ * confirmation — which is the opposite of what a person half-asleep at Fajr needs.)
+ * «إغلاق» only closes the screen; the adhan keeps playing, as the caption under it says.
  */
 class PrayerAlertActivity : ComponentActivity() {
 
@@ -237,13 +239,6 @@ private fun PrayerAlertScreen(
     onSettings: () -> Unit
 ) {
     val context = LocalContext.current
-    var confirmStop by remember { mutableStateOf(false) }
-    LaunchedEffect(confirmStop) {
-        if (confirmStop) {
-            delay(2_500)
-            confirmStop = false
-        }
-    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -315,23 +310,31 @@ private fun PrayerAlertScreen(
                         color = FocusColors.TextSecondary
                     )
                     Spacer(Modifier.height(20.dp))
+                    // One tap stops the adhan at once — the big primary action, like adhan apps.
                     Button(
-                        onClick = onDone,
-                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onStopAdhan,
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
                         shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = FocusColors.Blue)
-                    ) { Text("إغلاق") }
+                        colors = ButtonDefaults.buttonColors(containerColor = FocusColors.Error)
+                    ) {
+                        Text(
+                            "إيقاف الأذان",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
-                        onClick = { if (confirmStop) onStopAdhan() else confirmStop = true },
+                        onClick = onDone,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (confirmStop) FocusColors.onTint(FocusColors.Amber) else FocusColors.TextSecondary
-                        )
-                    ) {
-                        Text(if (confirmStop) "اضغط مجددًا لإيقاف الأذان" else "إيقاف الأذان")
-                    }
+                        shape = RoundedCornerShape(18.dp)
+                    ) { Text("إغلاق") }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "إغلاق الشاشة لا يوقف الأذان",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = onSnooze,

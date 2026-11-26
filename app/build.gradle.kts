@@ -51,6 +51,7 @@ android {
         applicationId = "com.focusstudy.poc"
         minSdk = 26
         targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 43
         versionName = "0.34.0"
         buildConfigField("String", "UPDATE_FEED_URL", "\"$escapedUpdateFeedUrl\"")
@@ -132,4 +133,14 @@ dependencies {
     // is pure SQLite, so no device is needed. Pinned to 4.14.1 (supports the SDK 35
     // runtime the test pins itself to with @Config).
     testImplementation("org.robolectric:robolectric:4.14.1")
+    // Emulator verification for the adhan alert (AdhanAlertQaTest): the full-screen
+    // alert with the one-tap stop button, and the sound actually stopping on tap.
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.09.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.1")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }
