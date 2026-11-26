@@ -150,7 +150,13 @@ class EmulatorQaTest {
     private fun clickText(label: String) {
         val clicked = runCatching {
             device.wait(Until.hasObject(By.text(label)), 5000)
-            device.findObjects(By.text(label)).lastOrNull()?.click() == true
+            val target = device.findObjects(By.text(label)).lastOrNull()
+            if (target != null) {
+                target.click() // UiObject2.click() ترجع Unit وتفشل باستثناء
+                true
+            } else {
+                false
+            }
         }.getOrDefault(false)
         if (!clicked) {
             // احتياطي: مسار Compose المباشر بلا تمرير.
