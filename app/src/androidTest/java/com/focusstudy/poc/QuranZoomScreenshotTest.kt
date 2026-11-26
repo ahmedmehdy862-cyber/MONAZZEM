@@ -259,9 +259,11 @@ class QuranZoomScreenshotTest {
     /**
      * ينتظر اكتمال تحميل المصحف قبل أي تأكيد أو لقطة: انتظار واحد طويل
      * (90 ثانية) لظهور صف الزوم — وهو لا يظهر إلا بعد اكتمال التحميل.
-     * تحليل ملف 1.4MB على محاكي بارد يتفاوت بشدة (التشغيل 45815159007،
-     * الداكن: نص التحميل باقٍ بعد 30 ثانية؛ وفي تشغيل سابق اكتمل في
-     * ثوانٍ). انتظار على مرحلتين (30+30) كان يهدر الوقت دون فائدة.
+     * ملاحظة: التحميل البارد نفسه سريع (قياس warmQuranIndex في التشغيل
+     * 45819576948: 148ms)؛ فشل الداكن في 45817320765 كان لأن
+     * LaunchedEffect لم يُنفَّذ في التركيبة الباردة الأولى لا لبطء
+     * التحليل — والتسخين في launch() يتجاوز ذلك. يبقى الانتظار الطويل
+     * شبكة أمان.
      */
     private fun waitForReaderReady() {
         val label = device.wait(Until.hasObject(By.textContains("حجم الخط")), 90000)
@@ -306,12 +308,30 @@ class QuranZoomScreenshotTest {
         Thread.sleep(800)
     }
 
+    /**
+     * إخفاء لوحة المفاتيح دون تنقّل: مفتاح ESCAPE (111) يخفي الـ IME
+     * إن كان مفتوحًا ولا يفعل شيئًا إن لم يكن — بلا خطر زر الرجوع.
+     * ضروري لأن كتابة رقم الصفحة في حقل القفز تفتح Gboard، وإن بقيت
+     * مفتوحة غطّت رابط «اذهب إلى صفحة» أسفل الشاشة فابتلعت النقرة
+     * التالية (التشغيل 45819576948، الفاتح: القفزة الثانية إلى 597
+     * فشلت والحقل لم يظهر رغم نجاح القفزة الأولى إلى 48 بالكود نفسه).
+     */
+    private fun hideKeyboard() {
+        runCatching { device.executeShellCommand("input keyevent 111") }
+        Thread.sleep(500)
+    }
+
     private fun jumpToPage(page: Int) {
+        hideKeyboard()
         clickText("اذهب إلى صفحة")
         val fieldFound = device.wait(
             Until.hasObject(By.clazz("android.widget.EditText")), 5000
         )
         log("JUMP FIELD: found=$fieldFound")
+        if (!fieldFound) {
+            shot("jump-debug-$currentTheme-p$page")
+            dumpHierarchy("jump-debug-$currentTheme-p$page")
+        }
         if (fieldFound) {
             val field = device.findObject(By.clazz("android.widget.EditText"))
             runCatching {
@@ -322,6 +342,7 @@ class QuranZoomScreenshotTest {
             Thread.sleep(500)
         }
         clickText("اذهب")
+        hideKeyboard()
         val arrived = device.wait(
             Until.hasObject(By.textContains("صفحة $page من 604")), 8000
         )
@@ -349,8 +370,9 @@ class QuranZoomScreenshotTest {
     fun quranZoomLight() {
         launch("light")
         openSection("المصحف")
-        // القارئ يفتح على صفحة ورد اليوم كما يحسبها التطبيق (4 في هذا
-        // التشغيل المزروع، لا 2 حرفيًا — البادئة «wird» لا «p2»).
+        // القارئ يفتح على صفحة ورد اليوم كما يحسبها التطبيق (تتفاوت حسب
+        // البذرة: 2 في الفاتح و4 في الداكن في التشغيل 45819576948 —
+        // البادئة «wird» لا «p2»).
         shootPageZooms(2, "quran-wird-zoom")
         jumpToPage(48)
         shootPageZooms(48, "quran-p48-zoom")
