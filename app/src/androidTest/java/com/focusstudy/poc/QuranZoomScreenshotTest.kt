@@ -263,7 +263,12 @@ class QuranZoomScreenshotTest {
      */
     private fun searchSheetRow(title: String): Boolean {
         return runCatching {
-            val field = device.findObject(By.text("ابحث عن قسم")) ?: return false
+            // الحقل هو EditText الوحيد على الشاشة والورقة مفتوحة (مثبت في
+            // 5b3bbc0) — نصه الفارغ «ابحث عن قسم» تلميح (hint) لا نصًا،
+            // فـ By.text لا يجده (درس التشغيل 45823846294: وجد=false).
+            val field = device.wait(
+                Until.findObject(By.clazz("android.widget.EditText")), 5000
+            ) ?: return false
             field.click()
             Thread.sleep(500)
             field.text = title
