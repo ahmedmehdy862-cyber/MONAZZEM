@@ -281,6 +281,8 @@ internal fun PersonalizationScreen(
     var avatarFaceProfileJson by rememberSaveable(current.avatarFaceProfileJson) { mutableStateOf(current.avatarFaceProfileJson) }
     var avatarMode by rememberSaveable(current.avatarMode) { mutableStateOf(current.avatarMode) }
     var companionStyle by rememberSaveable(current.companionStyle) { mutableStateOf(current.companionStyle) }
+    var companion3dEnabled by rememberSaveable(current.companion3dEnabled) { mutableStateOf(current.companion3dEnabled) }
+    var companion3dAnimationsEnabled by rememberSaveable(current.companion3dAnimationsEnabled) { mutableStateOf(current.companion3dAnimationsEnabled) }
     var tone by rememberSaveable(current.tonePreference) { mutableStateOf(current.tonePreference) }
     var reduceMotion by rememberSaveable(current.reduceMotion) { mutableStateOf(current.reduceMotion) }
     var themeMode by rememberSaveable(current.themeMode) { mutableStateOf(current.themeMode) }
@@ -393,6 +395,15 @@ internal fun PersonalizationScreen(
             }
             item {
                 PreferenceCard(
+                    title = "رفيقك منظم (ثلاثي الأبعاد)",
+                    description = "شخصية «منظم» ثلاثية الأبعاد على الرئيسية: ترحب بك وتحتفل بمهامك المنجزة. تعطيله لا يغيّر أي شيء آخر في التطبيق."
+                ) {
+                    PreferenceSwitchRow("إظهار الرفيق", "يظهر في مساحته الخاصة على الرئيسية.", companion3dEnabled) { companion3dEnabled = it }
+                    PreferenceSwitchRow("حركات الرفيق", "إيقافها يعرض صورته الثابتة بدل الحركة.", companion3dAnimationsEnabled) { companion3dAnimationsEnabled = it }
+                }
+            }
+            item {
+                PreferenceCard(
                     title = "ملفك الشخصي",
                     description = "يضيف أقسامًا مناسبة لك (مواد، عمل، صحة…) ويمكنك تعديلها أو حذفها من «أنواع المهام»."
                 ) {
@@ -486,6 +497,8 @@ internal fun PersonalizationScreen(
                     avatarFaceProfileJson = avatarFaceProfileJson,
                     avatarMode = avatarMode,
                     companionStyle = companionStyle,
+                    companion3dEnabled = companion3dEnabled,
+                    companion3dAnimationsEnabled = companion3dAnimationsEnabled,
                     reduceMotion = reduceMotion,
                     tonePreference = tone,
                     themeMode = themeMode,

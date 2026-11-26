@@ -627,6 +627,16 @@ private fun AppRoot(
 ) {
 
     val context = LocalContext.current
+    // الرفيق ثلاثي الأبعاد «منظم» (0.34.0): متحكم واحد مرفوع هنا فيعيش
+    // مع الجذر كله؛ الرئيسية تعرضه، وإكمال مهمة أو فتح تذكير يحرّكه.
+    val companionController = remember { CompanionController() }
+    LaunchedEffect(preferences.companion3dEnabled) {
+        companionController.setEnabled(preferences.companion3dEnabled)
+    }
+    // تحية مرة واحدة عند فتح التطبيق (لا تتكرر مع إعادة التركيب).
+    LaunchedEffect(Unit) {
+        if (preferences.companion3dEnabled) companionController.greet()
+    }
     LaunchedEffect(
         preferences.morningMessageEnabled,
         preferences.eveningMessageEnabled,
@@ -746,7 +756,13 @@ private fun AppRoot(
     // the root the person was on is pushed onto the back stack and back returns to it.
     val tasksRequest = NotificationNavigation.openTasksRequest
     LaunchedEffect(tasksRequest) {
-        if (tasksRequest > 0) openSecondary("tasks")
+        if (tasksRequest > 0) {
+            // فتح تذكير: منظم يشجّع — يظهر متحركًا على الرئيسية عند
+            // الوصول إليها خلال دقيقة (نافذة الـ 60 ثانية في
+            // CompanionController)، وصورة ثابتة في الإشعار نفسه (§13).
+            companionController.encourage()
+            openSecondary("tasks")
+        }
     }
     val updatesRequest = NotificationNavigation.openUpdatesRequest
     LaunchedEffect(updatesRequest) {
@@ -1012,6 +1028,7 @@ private fun AppRoot(
                         runCatching {
                             TaskRepository.get(context).setStatus(taskId, TaskStatus.DONE)
                             SessionEngine.notifyTasksChanged()
+                            companionController.celebrateAchievement()
                             true
                         }.getOrDefault(false)
                     },
@@ -1071,6 +1088,8 @@ private fun AppRoot(
                     assistantName = assistantName,
                     onOpenSkills = { openSecondary("skills") },
                     onOpenGoals = { openSecondary("goals") },
+                    companionController = companionController,
+                    onTaskCompleted = { companionController.celebrateAchievement() },
                     showBack = backStack.isNotEmpty() && current == "tasks",
                     onBack = { returnToPreviousTab() },
                     // زر الثيم يبدّل فاتح ↔ داكن فقط (إصلاح 0.34.0): وضع
@@ -1264,7 +1283,11 @@ private fun TasksScreen(
     // أي مسار دفع الجذر الحالي إلى المكدس): بدونه لا مخرج مرئي من الشاشة، لأنها
     // جذر في الشريط السفلي بلا زر رجوع في ترويستها أصلًا.
     showBack: Boolean = false,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    // الرفيق ثلاثي الأبعاد (0.34.0): null تعني بلا رفيق في هذه الشاشة.
+    companionController: CompanionController? = null,
+    // يُستدعى عند انتقال مهمة إلى «منجزة» فقط، لا عند إلغاء الإنجاز.
+    onTaskCompleted: () -> Unit = {}
 
 ) {
 
@@ -1509,6 +1532,19 @@ private fun TasksScreen(
             Spacer(Modifier.height(12.dp))
             AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant, preferences = preferences)
             Spacer(Modifier.height(12.dp))
+            // الرفيق ثلاثي الأبعاد (0.34.0) في مساحته المخصصة (§11.1):
+            // بطاقة في عمود التمرير نفسه، لا overlay ولا تغطية لأي عنصر.
+            // عند التعطيل لا تُركَّب أصلًا فيستعيد التخطيط مساحتها.
+            if (companionController != null) {
+                CompanionHomeSlot(
+                    controller = companionController,
+                    assistantName = assistantName,
+                    onOpenAssistant = onOpenAssistant,
+                    enabled = preferences.companion3dEnabled,
+                    animationsEnabled = preferences.companion3dAnimationsEnabled && !preferences.reduceMotion
+                )
+                Spacer(Modifier.height(12.dp))
+            }
             HeroCard(
                 totalMinutes = totalMinutes,
                 tasks = tasks,
@@ -1525,6 +1561,7 @@ private fun TasksScreen(
             TodayPlanSection(
                 tasks = tasks,
                 onToggleDone = { task ->
+                    if (!task.isDone && task.status != TaskStatus.DONE) onTaskCompleted()
                     viewModel.setStatus(task.id, if (task.isDone) TaskStatus.TODO else TaskStatus.DONE)
                 },
                 onStartTask = { taskId -> onOpenSetup(taskId) },
@@ -1683,6 +1720,7 @@ private fun TasksScreen(
                         onReschedule = { target -> viewModel.reschedule(task.id, target) },
                         onSubtasks = { subtasksTarget = task },
                         onToggleDone = {
+                            if (!task.isDone && task.status != TaskStatus.DONE) onTaskCompleted()
                             viewModel.setStatus(
                                 task.id,
                                 if (task.isDone) TaskStatus.TODO else TaskStatus.DONE

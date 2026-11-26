@@ -277,7 +277,11 @@ internal object StudyNotificationScheduler {
             title = title,
             message = message,
             contentIntent = openApp,
+            // صورة الرفيق الثابتة (§13) عند غياب صورة المستخدم: إشعار
+            // النظام لا يعرض نموذجًا ثلاثي الأبعاد متحركًا، فالأيقونة الكبيرة
+            // صورة ثابتة — والصورة الشخصية تبقى أولى إن وُجدت.
             largeIcon = NotificationAvatar.decode(avatarPath)
+                ?: CompanionNotificationIcon.decode(context)
         )
         notificationManager(context).notify(notificationId, builder.build())
     }
