@@ -116,8 +116,10 @@ jobs:
             sleep 5
             # تحقق مستقل من القطع (إن وُجد curl على المحاكي): وصول ناجح هنا يعني
             # أن القطع لم يأخذ مفعوله، فيفشل التشغيل بصوت عالٍ بدل ادعاء اختبار انقطاع.
-            # ملاحظة: كل سطر يُنفَّذ وحده عبر sh -c، فلا كتل if متعددة الأسطر هنا.
-            adb shell "command -v curl >/dev/null && curl -m 8 -s -o /dev/null https://update-site-sigma.vercel.app/api/latest" && { echo "ERROR: network still reachable after svc disable — offline step cannot be trusted" >&2; exit 1; }
+            # ملاحظة: كل سطر يُنفَّذ وحده عبر sh -c، فلا كتل if متعددة الأسطر هنا —
+            # لكن if في سطر واحد سليمة. ولا تُكتب بصيغة X && { exit 1; } لأن فشل
+            # X نفسه (لا curl، أو القطع ناجح) يخرج بـ 1 فيُفشل الخطوة خطأً.
+            if adb shell "command -v curl >/dev/null && curl -m 8 -s -o /dev/null https://update-site-sigma.vercel.app/api/latest"; then echo "ERROR: network still reachable after svc disable — offline step cannot be trusted" >&2; exit 1; fi
             echo "network cut verified"
             adb shell am instrument -w -e class com.focusstudy.poc.SyncLiveOfflineTest com.focusstudy.poc.test/androidx.test.runner.AndroidJUnitRunner > instrument-offline.log 2>&1 || true
             grep -q "^OK" instrument-offline.log || { echo "--- offline instrument output ---" >&2; cat instrument-offline.log >&2; exit 1; }
@@ -127,7 +129,7 @@ jobs:
             adb shell svc data enable
             sleep 5
             # ملاحظة: كل سطر يُنفَّذ وحده عبر sh -c، فلا كتل if متعددة الأسطر هنا.
-            adb shell "command -v curl >/dev/null && ! curl -m 10 -s -o /dev/null https://update-site-sigma.vercel.app/api/latest" && { echo "ERROR: network did not come back after re-enable" >&2; exit 1; }
+            if adb shell "command -v curl >/dev/null && ! curl -m 10 -s -o /dev/null https://update-site-sigma.vercel.app/api/latest"; then echo "ERROR: network did not come back after re-enable" >&2; exit 1; fi
             echo "network restored"
 
       - name: Dump emulator logcat
