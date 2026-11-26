@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.net.Uri
+import android.os.SystemClock
 import androidx.exifinterface.media.ExifInterface
 import com.google.mlkit.common.MlKit
 import com.google.mlkit.vision.common.InputImage
@@ -54,6 +55,18 @@ internal object FaceAnalyzer {
     private const val INIT_TIMEOUT_MS = 10_000L
 
     /**
+     * مهلة تذكّر فشل التهيئة (M2): على جهاز تفشل فيه التهيئة دائمًا، انتظار
+     * 10 ثوانٍ كاملة عند كل اختيار صورة عقوبة متكررة بلا معنى. يُخزَّن وقت
+     * آخر فشل، وأي محاولة خلال هذه المهلة ترجع false فورًا دون انتظار؛
+     * بعد انقضائها تُعاد محاولة كاملة واحدة — فالفشل قد يكون عابرًا
+     * (تحديث خدمات مثلًا)، لذا لا يُخزَّن للأبد.
+     */
+    private const val INIT_FAILURE_COOLDOWN_MS = 5 * 60 * 1000L
+
+    @Volatile
+    private var mlKitFailedAtMillis = 0L
+
+    /**
      * تهيئة ML Kit كسولة (hotfix 0.33.1): موفّر التهيئة التلقائي معطَّل في
      * الـ manifest، فالتهيئة تتم هنا فقط عند أول تحليل صورة.
      *
@@ -70,6 +83,10 @@ internal object FaceAnalyzer {
 
     private suspend fun ensureMlKitInitialized(context: Context): Boolean {
         if (mlKitReady) return true
+        // فشل حديث (أقل من 5 دقائق): لا انتظار جديد — ارجع فورًا.
+        if (mlKitFailedAtMillis != 0L &&
+            SystemClock.uptimeMillis() - mlKitFailedAtMillis < INIT_FAILURE_COOLDOWN_MS
+        ) return false
         val initialized = try {
             withTimeoutOrNull(INIT_TIMEOUT_MS) {
                 suspendCancellableCoroutine { cont ->
@@ -83,7 +100,12 @@ internal object FaceAnalyzer {
         } catch (_: Throwable) {
             false
         }
-        if (initialized) mlKitReady = true
+        if (initialized) {
+            mlKitReady = true
+            mlKitFailedAtMillis = 0L
+        } else {
+            mlKitFailedAtMillis = SystemClock.uptimeMillis()
+        }
         return initialized
     }
 
