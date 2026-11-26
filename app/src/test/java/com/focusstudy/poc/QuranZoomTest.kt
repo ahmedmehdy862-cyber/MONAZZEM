@@ -43,7 +43,7 @@ class QuranZoomTest {
     }
 
     @Test
-    fun `zoom level is clamped to 0..4`() {
+    fun `zoom level is clamped to 0-4`() {
         assertEquals(0, QuranZoom.clamp(-1))
         assertEquals(0, QuranZoom.clamp(-100))
         assertEquals(4, QuranZoom.clamp(5))
