@@ -1,11 +1,10 @@
 package com.focusstudy.poc
 
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import androidx.lifecycle.Lifecycle
-import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -27,6 +26,16 @@ import org.junit.runner.RunWith
  * tests use different prayers so the alert's duplicate-launch guard (same alert
  * within 60s) cannot swallow the second launch.
  *
+ * The alert is launched the way production launches it — by sending the alarm's
+ * screen PendingIntent (the same path PrayerNotificationScheduler uses) — not by
+ * an ActivityScenario launch. That matters on API 34: sending the PendingIntent
+ * grants the temporary foreground-service allowance, so the service can promote
+ * itself to foreground; starting it from an activity's onCreate before the
+ * activity is visible is refused foreground status on API 34, and the service
+ * then plays with no ongoing notification (run 45796616349 proved it: the
+ * service started, requested alarm focus and decoded the clip, but notification
+ * 6301 never appeared).
+ *
  * Honest limit of this test: it proves the stop path and the visible button, not
  * audible loudness or routing to a real headset — the emulator runs with -noaudio
  * and has no headset. Those need a real device (see the report).
@@ -37,12 +46,9 @@ class AdhanAlertQaTest {
     private lateinit var device: UiDevice
     private lateinit var shotDir: File
     private lateinit var logFile: File
-    private var scenario: ActivityScenario<PrayerAlertActivity>? = null
 
     @After
     fun tearDown() {
-        runCatching { scenario?.close() }
-        scenario = null
         runCatching {
             if (::shotDir.isInitialized) QaExport.exportDir(appContext(), shotDir)
         }
@@ -78,23 +84,42 @@ class AdhanAlertQaTest {
         return nm.activeNotifications.any { it.id == SERVICE_NOTIFICATION_ID }
     }
 
-    private fun launchAndStop(theme: String, name: String, key: String, shotPrefix: String) {
+    private fun waitFor(timeoutMs: Long, check: () -> Boolean): Boolean {
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            if (runCatching { check() }.getOrDefault(false)) return true
+            Thread.sleep(250)
+        }
+        return runCatching { check() }.getOrDefault(false)
+    }
+
+    private fun launchAndStop(
+        theme: String,
+        name: String,
+        key: String,
+        shotPrefix: String,
+        requestCode: Int
+    ) {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         val ctx = appContext()
         shotDir = File(ctx.getExternalFilesDir(null), "qa-screenshots").apply { mkdirs() }
         logFile = File(shotDir, "qa-log.txt")
         setTheme(theme)
         // The alert plays the adhan on launch (key != null + default rule AT sound = ADHAN).
-        scenario = ActivityScenario.launch<PrayerAlertActivity>(alertIntent(name, key))
-        Thread.sleep(3000)
-        val playingBefore = serviceNotificationPresent()
-        log("[$theme] service notification present before tap: $playingBefore")
-        assertTrue("[$theme] adhan service did not start", playingBefore)
-
+        val launch = PendingIntent.getActivity(
+            ctx,
+            requestCode,
+            alertIntent(name, key),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        runCatching { launch.send() }
         assertTrue(
             "[$theme] stop button not visible",
-            device.wait(Until.hasObject(By.text("إيقاف الأذان")), 10000)
+            device.wait(Until.hasObject(By.text("إيقاف الأذان")), 15000)
         )
+        val playingBefore = waitFor(timeoutMs = 10000) { serviceNotificationPresent() }
+        log("[$theme] service notification present before tap: $playingBefore")
+        assertTrue("[$theme] adhan service did not start", playingBefore)
         assertTrue(
             "[$theme] close caption missing",
             device.hasObject(By.text("إغلاق الشاشة لا يوقف الأذان"))
@@ -106,36 +131,25 @@ class AdhanAlertQaTest {
         // One tap — no confirmation step any more.
         device.findObject(By.text("إيقاف الأذان")).click()
         val stopped = waitFor(timeoutMs = 8000) { !serviceNotificationPresent() }
-        val destroyed = waitFor(timeoutMs = 8000) {
-            runCatching { scenario?.state == Lifecycle.State.DESTROYED }.getOrDefault(false)
-        }
+        val closed = device.wait(Until.gone(By.text("إيقاف الأذان")), 8000)
         log("[$theme] service notification gone after tap: $stopped")
-        log("[$theme] alert activity destroyed after tap: $destroyed")
+        log("[$theme] alert closed after tap: $closed")
         assertTrue("[$theme] adhan did not stop after tapping «إيقاف الأذان»", stopped)
-        assertTrue("[$theme] alert did not close after tapping «إيقاف الأذان»", destroyed)
+        assertTrue("[$theme] alert did not close after tapping «إيقاف الأذان»", closed)
         assertFalse(
             "[$theme] service notification still present after stop",
             serviceNotificationPresent()
         )
     }
 
-    private fun waitFor(timeoutMs: Long, check: () -> Boolean): Boolean {
-        val end = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < end) {
-            if (runCatching { check() }.getOrDefault(false)) return true
-            Thread.sleep(250)
-        }
-        return runCatching { check() }.getOrDefault(false)
-    }
-
     @Test
     fun stopButtonStopsAdhanLight() {
-        launchAndStop("light", "الفجر", "fajr", "adhan-light")
+        launchAndStop("light", "الفجر", "fajr", "adhan-light", 6311)
     }
 
     @Test
     fun stopButtonStopsAdhanDark() {
-        launchAndStop("dark", "الظهر", "dhuhr", "adhan-dark")
+        launchAndStop("dark", "الظهر", "dhuhr", "adhan-dark", 6313)
     }
 
     private companion object {

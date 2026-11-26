@@ -12,6 +12,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 /**
@@ -74,7 +75,12 @@ internal class AdhanPlaybackService : Service() {
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { "الصلاة" }
         // Promote to a foreground service before doing anything that could block: Android only
         // allows a few seconds between startForegroundService() and startForeground().
+        // A failed promotion is logged, never swallowed silently: on API 34 a service
+        // started before its activity is visible can be refused foreground status, and
+        // without the log the missing notification would be undebuggable. Playback still
+        // continues — the original intent was never to block the adhan on promotion.
         runCatching { startForeground(NOTIFICATION_ID, ongoingNotification(name, voice)) }
+            .onFailure { Log.w(TAG, "could not promote adhan service to foreground", it) }
         // The output is chosen now, at play time: a headset connected at this moment gets the
         // media stream (the only stream the system routes to it); otherwise the alarm stream.
         val headsetConnected = AdhanAudioRouting.hasConnectedHeadset(audioManager)
@@ -201,6 +207,7 @@ internal class AdhanPlaybackService : Service() {
     }
 
     companion object {
+        private const val TAG = "AdhanPlayback"
         const val ACTION_PLAY = "com.focusstudy.poc.ADHAN_PLAY"
         const val ACTION_STOP = "com.focusstudy.poc.ADHAN_STOP"
         const val EXTRA_VOICE = "adhan_voice"
