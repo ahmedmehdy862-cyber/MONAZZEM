@@ -45,6 +45,27 @@ class SyncApplyDbTest {
             db = StudyDb.get(context)
             check(hasTable("habit_logs")) { "fresh test database is missing habit_logs" }
         }
+        // The singleton helper can also keep the previous method's database
+        // alive past deleteDatabase (CI run 45759926524: leftover habit_logs
+        // rows made habitTombstoneDeletesHabitAndItsLogs fail), so empty every
+        // table: on a fresh database this is a no-op, on a stale one it gives
+        // the clean slate the test assumes.
+        clearAllTables()
+    }
+
+    private fun clearAllTables() {
+        val writable = db.writableDatabase
+        val tables = writable.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            null
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        writable.beginTransaction()
+        try {
+            for (table in tables) writable.execSQL("DELETE FROM \"$table\"")
+            writable.setTransactionSuccessful()
+        } finally {
+            writable.endTransaction()
+        }
     }
 
     private fun hasTable(name: String): Boolean =
