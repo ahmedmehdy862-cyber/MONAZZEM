@@ -91,7 +91,7 @@ async function main() {
 
   await test("the public feed carries history without changing the latest release", async () => {
     const handler = loadMocked("api/latest.js", {
-      "../lib/release-store": { readLatestRelease: async () => release(37, "0.29.0", "الأخيرة") },
+      "../lib/release-store": { ...require("../lib/release-store"), readLatestRelease: async () => release(37, "0.29.0", "الأخيرة") },
       "../lib/release-history": { readHistory: async () => [release(37, "0.29.0", "الأخيرة", "2026-11-19T11:23:12+02:00")] },
       "../lib/app-catalog": { readCatalog: async () => [] },
     });
@@ -106,7 +106,7 @@ async function main() {
 
   await test("a history read failure never hides the current release", async () => {
     const handler = loadMocked("api/latest.js", {
-      "../lib/release-store": { readLatestRelease: async () => release(37, "0.29.0", "الأخيرة") },
+      "../lib/release-store": { ...require("../lib/release-store"), readLatestRelease: async () => release(37, "0.29.0", "الأخيرة") },
       "../lib/release-history": { readHistory: async () => { throw new Error("blob down"); } },
       "../lib/app-catalog": { readCatalog: async () => [] },
     });
