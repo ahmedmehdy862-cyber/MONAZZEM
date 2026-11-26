@@ -637,6 +637,11 @@ private fun AppRoot(
     LaunchedEffect(Unit) {
         if (preferences.companion3dEnabled) companionController.greet()
     }
+    // إصدار المتحكم عند تدمير الجذر (M3): كانت release() ميتة بلا أي متصل.
+    // المتحكم يُنشأ من جديد مع كل تركيب جذري جديد، فلا خطر من تعطيله هنا.
+    DisposableEffect(companionController) {
+        onDispose { companionController.release() }
+    }
     LaunchedEffect(
         preferences.morningMessageEnabled,
         preferences.eveningMessageEnabled,
@@ -1033,7 +1038,8 @@ private fun AppRoot(
                         }.getOrDefault(false)
                     },
                     onAssistantOpenQuran = { openSecondary("quran") },
-                    onAssistantOpenToday = { openRoot("today") }
+                    onAssistantOpenToday = { openRoot("today") },
+                    companionController = companionController
                 )
                 "quran" -> QuranRouteScreen(onBack = { returnToPreviousTab() })
                 "adhkar" -> AdhkarRouteScreen(onBack = { returnToPreviousTab() })

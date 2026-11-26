@@ -119,7 +119,9 @@ internal fun AssistantScreen(
     /** تنفّذها MainActivity: انتقال إلى مسار المصحف المباشر. */
     onAssistantOpenQuran: () -> Unit = {},
     /** تنفّذها MainActivity: انتقال إلى خطة اليوم. */
-    onAssistantOpenToday: () -> Unit = {}
+    onAssistantOpenToday: () -> Unit = {},
+    /** متحكم الرفيق ثلاثي الأبعاد (0.34.0، M3): THINKING أثناء توليد الرد، ثم IDLE بعده. */
+    companionController: CompanionController? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -199,6 +201,8 @@ internal fun AssistantScreen(
         voiceNote = null
         avatarState = AssistantAvatarState.TALKING
         addMessage("user", clean)
+        // الرفيق يفكر أثناء توليد الرد (M3 — كانت حالة THINKING بلا متصل).
+        companionController?.think()
         scope.launch {
             val fresh = AssistantKnowledge.load(context, userName)
             snapshot = fresh
@@ -214,6 +218,7 @@ internal fun AssistantScreen(
             if (settings.speakReplies) voice.speak(finalText)
             delay(finalText.length.coerceIn(30, 130) * 45L)
             avatarState = AssistantAvatarState.IDLE
+            companionController?.playIdle()
         }
     }
 
