@@ -54,6 +54,9 @@ android {
         versionCode = 43
         versionName = "0.34.0"
         buildConfigField("String", "UPDATE_FEED_URL", "\"$escapedUpdateFeedUrl\"")
+        // Adhan verification (androidTest): live emulator check of the new-design
+        // adhan alerts on the published 0.33.1 code. Test-only, no production change.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -132,4 +135,10 @@ dependencies {
     // is pure SQLite, so no device is needed. Pinned to 4.14.1 (supports the SDK 35
     // runtime the test pins itself to with @Config).
     testImplementation("org.robolectric:robolectric:4.14.1")
+    // Adhan verification: live emulator check (androidTest only, no production code).
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.1")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }
