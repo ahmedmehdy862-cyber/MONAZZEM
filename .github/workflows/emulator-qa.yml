@@ -102,21 +102,23 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            TEST_EXIT=0
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || TEST_EXIT=$?
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace; echo $? > ./test-exit-code.txt
             # سحب اللقطات من التنزيلات المشتركة: الاختبار يصدّرها إليها عبر
             # MediaStore (انظر QaExport) لأن مجلد التطبيق الخارجي يُحذف
             # عند إلغاء تثبيت التطبيق بعد الاختبارات. سحب عادي بلا run-as.
-            # مرونة سير العمل (التشغيل الثالث): كود خروج gradle يُلتقط ثم
-            # تُسحب الأدلة دائمًا — فشل gradle كان يوقف السكربت (set -e)
-            # قبل السحب فينتج التشغيل الفاشل صفر لقطات (حدث في التشغيلين).
+            # مرونة سير العمل (التشغيل الثالث): المشغّل ينفّذ كل سطر
+            # سكربت في عملية sh مستقلة (مثبَت من سجلات التشغيل الثاني:
+            # `[command]/usr/bin/sh -c <سطر>`) فالمتغيرات لا تنتقل بين
+            # الأسطر — نمط `TEST_EXIT=... || ... exit $TEST_EXIT` ميت:
+            # يتحول إلى `exit` عارٍ = نجاح كاذب. لذلك كود الخروج يُحفظ
+            # في ملف ويُعاد في النهاية. فشل gradle لا يوقف السحب: السطر
+            # الأول ينتهي بكود 0 دائمًا (echo)، فتُسحب الأدلة ثم يُعاد
+            # كود gradle الحقيقي.
             adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api${{ matrix.api-level }}" || echo "screenshot pull failed (app may have crashed before first shot)"
             ls "./qa-screenshots-api${{ matrix.api-level }}" || true
             adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
-            SHOT_COUNT=$(find "./qa-screenshots-api${{ matrix.api-level }}" -name "*.png" 2>/dev/null | wc -l)
-            echo "screenshots pulled: $SHOT_COUNT"
-            if [ "$SHOT_COUNT" -eq 0 ]; then echo "WARNING: zero screenshots pulled (empty evidence)"; TEST_EXIT=1; fi
-            exit $TEST_EXIT
+            SHOT_COUNT=$(find "./qa-screenshots-api${{ matrix.api-level }}" -name "*.png" 2>/dev/null | wc -l | tr -d ' '); echo "screenshots pulled: $SHOT_COUNT"; if [ "$SHOT_COUNT" -eq 0 ]; then echo "WARNING: zero screenshots pulled (empty evidence)"; echo 1 > ./test-exit-code.txt; fi
+            exit $(cat ./test-exit-code.txt 2>/dev/null || echo 1)
 
       - name: Upload screenshots and logs
         if: always()
