@@ -214,7 +214,8 @@ internal val ZianHeading = FontFamily(Font(R.font.zian_black))
  * face. Static weights downloaded from Google Fonts (fonts.gstatic.com, served from the
  * google/fonts repository, ofl/cairo/OFL.txt): Regular 400, Medium 500, SemiBold 600 and
  * Bold 700, in app/src/main/res/font/cairo_*.ttf. Arabic + Latin coverage was verified
- * (all common Arabic letters and presentation forms present).
+ * (all common Arabic letters and presentation forms present). A copy of the license is
+ * bundled in the app at app/src/main/assets/OFL.txt.
  *
  * Zian stays only for the two largest display styles ([Typography.headlineSmall] and
  * [Typography.titleLarge]): its heavy black cut suits a brand heading but is too blunt for
