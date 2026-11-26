@@ -22,6 +22,12 @@ name: Sync live test
 
 on:
   workflow_dispatch:
+  # مؤقت: GitHub لا يسمح بـ workflow_dispatch إلا لملف موجود على الفرع
+  # الافتراضي (main) — والملف هنا على sync-auto فقط — فيُشغَّل الاختبار
+  # الحي بالدفع على sync-auto. يُزال هذا المشغّل بعد أول تشغيل ناجح،
+  # فيبقى workflow_dispatch وحده.
+  push:
+    branches: [sync-auto]
 
 permissions:
   contents: read
