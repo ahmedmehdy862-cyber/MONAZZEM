@@ -27,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,13 +43,15 @@ import androidx.compose.ui.unit.dp
 import io.github.sceneview.SceneView
 import io.github.sceneview.SurfaceType
 import io.github.sceneview.math.Position
+import io.github.sceneview.model.ModelInstance
 import io.github.sceneview.rememberEngine
-import io.github.sceneview.rememberModelInstance
 import io.github.sceneview.rememberModelLoader
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 
 /**
  * الرفيق ثلاثي الأبعاد «منظم» (النسخة النهائية 0.34.0، المواصفة §10–§13 و§17).
@@ -236,13 +237,21 @@ private fun CompanionFallbackImage(modifier: Modifier = Modifier) {
  * - عند التعطيل لا يُركَّب شيء أصلًا؛ وعند إيقاف الحركات تُعرض الصورة
  *   الثابتة بدل العارض (احترامًا لتقليل الحركة ولإعداد الحركات).
  *
- * تحميل النموذج (H1 — مثبَت من مصادر 4.18.0 نفسها على Maven Central، لا
- * من توثيق 4.73): `rememberModelLoadState`/`ModelLoadState` غير موجودين
- * في 4.18.0 أصلًا، والنمط الموثق هو `rememberModelInstance` الذي يرجع
- * null أثناء التحميل وعند الفشل معًا؛ فالفشل يُستدل عليه بمهلة
- * ([MODEL_LOAD_TIMEOUT_MS]) لا بحالة، وزر «إعادة المحاولة» يعيد التحميل
- * بمفتاح `retry` جديد (توثيق SceneView نفسه: تغيير المفتاح يبدأ تحميلًا
- * جديدًا، وإعادة التركيب وحدها لا تعيد المحاولة).
+ * تحميل النموذج (إصلاح تعطل الإقلاع 0.35.0 — مثبَت من مصادر 4.18.0
+ * نفسها ومن الـ tombstone الخام للتشغيل 45769975636): `rememberModelInstance`
+ * كان يعتمد على سياق produceState، فيعود استئنافه في بيئة اختبار Compose
+ * على عامل Default غير متبنَّى من Filament، فيستدعي computeTangents على
+ * ذلك الخيط فيرمي PreconditionPanic ويموت التطبيق بـ SIGABRT بعد ~ثانيتين
+ * من الإقلاع. البديل هو واجهة SceneView الـ suspend (`loadModelInstance`)
+ * التي تثبّت استدعاءات Filament على الخيط الرئيسي (createAsset +
+ * asyncBeginLoad)، والتغليف بـ withContext(Main) هنا يضمن ذلك حتى
+ * releaseSourceData. المحرك نفسه يُنشأ على الخيط الرئيسي أثناء التركيب
+ * (FEngine created على الخيط الرئيسي في السجل)، فهو الخيط المتبنَّى.
+ * `rememberModelLoadState`/`ModelLoadState` غير موجودين في 4.18.0 أصلًا؛
+ * فالفشل (null أو استثناء) يُظهر البديل الثابت فورًا، والمهلة
+ * ([MODEL_LOAD_TIMEOUT_MS]) تبقى حارسًا للتحميل المعلّق فقط. زر «إعادة
+ * المحاولة» يعيد التحميل بمفتاح `retry` جديد، وإعادة التركيب وحدها لا
+ * تعيد المحاولة.
  *
  * قيد موثّق: تأطير الكاميرا الآلي (`autoFitContent`) والخلفية الشفافة
  * يحتاجان أول فحص بصري على محاكي/جهاز للتأكيد النهائي.
@@ -277,23 +286,36 @@ internal fun MONAZZEMCompanionView(
     }
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
-    // تحميل النموذج عبر `rememberModelInstance` (النمط الموثق في 4.18.0):
-    // يرجع null أثناء التحميل وعند الفشل معًا، فالفشل يُستدل عليه بمهلة.
-    // مفتاح `loadRetry` (M1) يعيد التحميل من جديد عند الضغط على زر إعادة
-    // المحاولة — إعادة التركيب وحدها لا تعيد المحاولة.
+    // تحميل النموذج على الخيط الرئيسي صراحةً (إصلاح تعطل الإقلاع 0.35.0 —
+    // انظر توثيق العارض أعلاه): كل استدعاءات Filament داخل
+    // withContext(Dispatchers.Main)، فلا يصل computeTangents أبدًا إلى خيط
+    // غير متبنَّى. مفتاح `loadRetry` يعيد التحميل من جديد عند الضغط على زر
+    // إعادة المحاولة — إعادة التركيب وحدها لا تعيد المحاولة.
     var loadRetry by remember { mutableIntStateOf(0) }
     var loadFailed by remember { mutableStateOf(false) }
-    val modelInstance = key(loadRetry) {
-        rememberModelInstance(modelLoader, CompanionAssets.MODEL_PATH)
-    }
-    LaunchedEffect(modelInstance, loadRetry) {
-        if (modelInstance != null) {
-            loadFailed = false
-            return@LaunchedEffect
-        }
+    var modelInstance by remember { mutableStateOf<ModelInstance?>(null) }
+    LaunchedEffect(loadRetry) {
+        modelInstance = null
         loadFailed = false
+        val loaded = runCatching {
+            withContext(Dispatchers.Main) {
+                modelLoader.loadModelInstance(CompanionAssets.MODEL_PATH)
+            }
+        }.getOrNull()
+        if (loaded != null) {
+            modelInstance = loaded
+            loadFailed = false
+        } else {
+            // فشل التحميل (ملف تالف/ناقص): البديل الثابت فورًا، بلا انتظار المهلة.
+            loadFailed = true
+        }
+    }
+    // حارس المهلة للتحميل المعلّق فقط: إن بقي النموذج null بعد المهلة
+    // (ولم يُسجَّل فشل صريح)، يُعرض البديل الثابت.
+    LaunchedEffect(modelInstance, loadRetry) {
+        if (modelInstance != null || loadFailed) return@LaunchedEffect
         delay(MODEL_LOAD_TIMEOUT_MS)
-        loadFailed = true
+        if (modelInstance == null) loadFailed = true
     }
     LaunchedEffect(loadFailed) {
         if (loadFailed) {

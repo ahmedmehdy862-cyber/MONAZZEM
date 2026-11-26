@@ -866,6 +866,19 @@ private fun AppRoot(
         }
     }
 
+    // شاشة ترحيبية بسيطة (0.35.0): ترحيب قصير قبل الدخول يخفف حدة الإقلاع،
+    // ينتقل تلقائيًا بعد ~1.2 ثانية أو بالنقر، ولا يوقف الدخول أبدًا.
+    // تُعرض بعد الإعداد الأولي فقط، ولا تُعرض أثناء جلسة تركيز جارية.
+    // rememberSaveable حتى لا تعود مع تدوير الشاشة.
+    var showWelcome by rememberSaveable { mutableStateOf(true) }
+    if (showWelcome && preferences.onboardingCompleted && session == null) {
+        WelcomeScreen(
+            userName = preferences.studentName,
+            onDone = { showWelcome = false }
+        )
+        return
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         // Edge swipe opens the drawer only on main screens, never over a session
