@@ -291,7 +291,7 @@ internal fun TeamMessagesScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Text(item.title, style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold)
+                        Text(item.title, style = MaterialTheme.typography.titleSmall, color = FocusColors.TextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.height(4.dp))
                         Text(item.body, style = MaterialTheme.typography.bodyMedium, color = FocusColors.TextSecondary)
                         Spacer(Modifier.height(6.dp))

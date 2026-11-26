@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
@@ -409,7 +410,9 @@ private fun GoalCard(
                         goal.title,
                         style = MaterialTheme.typography.titleSmall,
                         color = FocusColors.TextPrimary,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         listOfNotNull(

@@ -219,8 +219,8 @@ internal val ZianHeading = FontFamily(Font(R.font.zian_black))
  * bundled in the app at app/src/main/assets/OFL.txt.
  *
  * قاعدة الخطوط (قرار 2026-11-26): زين بلاك لكل أنماط العناوين
- * ([Typography.headlineMedium] و[Typography.headlineSmall] و[Typography.titleLarge]
- * و[Typography.titleMedium] و[Typography.titleSmall])، وCairo للنصوص والتسميات
+ * ([Typography.headlineLarge] و[Typography.headlineMedium] و[Typography.headlineSmall]
+ * و[Typography.titleLarge] و[Typography.titleMedium] و[Typography.titleSmall])، وCairo للنصوص والتسميات
  * (body/label) — فالعناوين كلها بهوية واحدة، والنصوص تبقى مقروءة بخط Cairo.
  */
 internal val Cairo = FontFamily(
@@ -231,7 +231,8 @@ internal val Cairo = FontFamily(
 )
 
 private val FocusTypography = Typography(
-    headlineMedium = TextStyle(fontFamily = ZianHeading, fontSize = 28.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp),
+    headlineLarge = TextStyle(fontFamily = ZianHeading, fontSize = 32.sp, fontWeight = FontWeight.Bold, lineHeight = 40.sp),
+    headlineMedium = TextStyle(fontFamily = ZianHeading, fontSize = 30.sp, fontWeight = FontWeight.Bold, lineHeight = 38.sp),
     headlineSmall = TextStyle(fontFamily = ZianHeading, fontSize = 27.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp),
     titleLarge = TextStyle(fontFamily = ZianHeading, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp),
     titleMedium = TextStyle(fontFamily = ZianHeading, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, lineHeight = 28.sp),
