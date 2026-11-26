@@ -4,7 +4,9 @@ import android.content.Context
 import android.graphics.Point
 import android.graphics.Rect
 import android.util.Log
+import androidx.compose.ui.test.fetchSemanticsNodes
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -135,7 +137,60 @@ class EmulatorQaTest {
         androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
         composeRule.waitForIdle()
         Thread.sleep(1500)
+        dismissSystemAnr()
+        waitForHome()
         log("launched MainActivity theme=$theme")
+    }
+
+    /**
+     * يغلق حوار «التطبيق لا يستجيب» (ANR) للنظام إن ظهر — في التشغيل
+     * الثاني حجب هذا الحوار كل اللقطات الـ 40 على API 34 ومنع UiAutomator
+     * من رؤية التطبيق أصلًا. أزرار الحوار إنجليزية («Wait» / «Close app»).
+     */
+    private fun dismissSystemAnr() {
+        runCatching {
+            val anr = device.findObject(By.textContains("isn't responding"))
+                ?: device.findObject(By.textContains("لا يستجيب"))
+            if (anr != null) {
+                val waitBtn = device.findObject(By.text("Wait"))
+                    ?: device.findObject(By.text("انتظار"))
+                if (waitBtn != null) {
+                    waitBtn.click()
+                    Thread.sleep(1000)
+                    log("ANR dialog dismissed via Wait")
+                } else {
+                    log("ANR dialog present but no Wait button found")
+                }
+            }
+        }
+    }
+
+    /**
+     * ينتظر ظهور الرئيسية («اليوم») بعد الإقلاع، مع إغلاق أي حوار ANR
+     * وتخطّي الترحيب إن ما زال معروضًا. يفشل بصوت عالٍ إن لم تظهر —
+     * فبدون الرئيسية لا يمكن اختبار أي شيء، والنجاح الصامت هنا أدلة فارغة.
+     */
+    private fun waitForHome(timeoutMs: Long = 30000) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var home = false
+        while (System.currentTimeMillis() < deadline) {
+            dismissSystemAnr()
+            home = runCatching {
+                device.wait(Until.hasObject(By.text("اليوم")), 2000)
+            }.getOrDefault(false)
+            if (home) break
+            val welcome = runCatching {
+                device.findObject(By.text("نرتّب يومك معًا"))
+            }.getOrNull()
+            if (welcome != null) {
+                runCatching { device.click(device.displayWidth / 2, device.displayHeight / 2) }
+                Thread.sleep(800)
+            } else {
+                Thread.sleep(1000)
+            }
+        }
+        log("HOME reached=$home")
+        check(home) { "home screen did not appear within ${timeoutMs}ms" }
     }
 
     /** إعادة إقلاع بلا مساس بالتفضيلات (للتحقق من استمرار الترتيب بعد إعادة التشغيل). */
@@ -145,12 +200,15 @@ class EmulatorQaTest {
         androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
         composeRule.waitForIdle()
         Thread.sleep(1500)
+        dismissSystemAnr()
+        waitForHome()
         log("relaunched without touching prefs")
     }
 
     private var lastShotSize = -1L
 
     private fun shot(name: String) {
+        dismissSystemAnr()
         val file = File(shotDir, "$name.png")
         val ok = runCatching { device.takeScreenshot(file) }.getOrDefault(false)
         val size = if (file.exists()) file.length() else -1
@@ -159,6 +217,7 @@ class EmulatorQaTest {
     }
 
     private fun clickText(label: String) {
+        dismissSystemAnr()
         val clicked = runCatching {
             device.wait(Until.hasObject(By.text(label)), 10000)
             val target = device.findObjects(By.text(label)).lastOrNull()
@@ -179,6 +238,7 @@ class EmulatorQaTest {
     }
 
     private fun clickDesc(desc: String): Boolean {
+        dismissSystemAnr()
         val opened = runCatching {
             device.wait(Until.hasObject(By.desc(desc)), 5000)
             device.findObject(By.desc(desc))?.let { it.click(); true } == true
@@ -233,17 +293,36 @@ class EmulatorQaTest {
     private fun logFabSectionsCheck(tag: String) {
         val fab = runCatching { device.findObject(By.desc("إضافة سريعة")) }.getOrNull()
         val sections = runCatching { device.findObject(By.text("الأقسام")) }.getOrNull()
-        if (fab == null || sections == null) {
-            log("FAB_SECTIONS_CHECK [$tag]: fabFound=${fab != null} sectionsFound=${sections != null}")
+        if (fab != null && sections != null) {
+            val f = fab.visibleBounds
+            val s = sections.visibleBounds
+            val overlap = Rect.intersects(f, s)
+            // الفاصل الرأسي بين أسفل زر + وأعلى زر الأقسام (بالبكسل؛ المحاكي
+            // pixel_6 بكثافة 420dpi فـ 16dp ≈ 42px). يجب أن يكون موجبًا وبلا تداخل.
+            val verticalGapPx = s.top - f.bottom
+            log("FAB_SECTIONS_CHECK [$tag] via=uiautomator: fab=$f sections=$s overlap=$overlap verticalGapPx=$verticalGapPx")
             return
         }
-        val f = fab.visibleBounds
-        val s = sections.visibleBounds
-        val overlap = Rect.intersects(f, s)
-        // الفاصل الرأسي بين أسفل زر + وأعلى زر الأقسام (بالبكسل؛ المحاكي
-        // pixel_6 بكثافة 420dpi فـ 16dp ≈ 42px). يجب أن يكون موجبًا وبلا تداخل.
-        val verticalGapPx = s.top - f.bottom
-        log("FAB_SECTIONS_CHECK [$tag]: fab=$f sections=$s overlap=$overlap verticalGapPx=$verticalGapPx")
+        // بديل Compose عند فشل UiAutomator (كما في التشغيل الثاني حين حجبه
+        // حوار ANR فعاد fabFound=false رغم وجود الزرين). الحدود هنا بوحدات
+        // بكسل الجذر نفسه؛ نأخذ عقدة «الأقسام» الأدنى (تبويب الشريط السفلي).
+        runCatching {
+            val fabNode = composeRule.onAllNodesWithContentDescription("إضافة سريعة")
+                .fetchSemanticsNodes().firstOrNull()
+            val sectionsNode = composeRule.onAllNodesWithText("الأقسام")
+                .fetchSemanticsNodes().maxByOrNull { it.boundsInRoot.top }
+            if (fabNode != null && sectionsNode != null) {
+                val f = fabNode.boundsInRoot
+                val s = sectionsNode.boundsInRoot
+                val overlap = f.overlaps(s)
+                val verticalGapPx = (s.top - f.bottom).toInt()
+                log("FAB_SECTIONS_CHECK [$tag] via=compose: fab=$f sections=$s overlap=$overlap verticalGapPx=$verticalGapPx")
+            } else {
+                log("FAB_SECTIONS_CHECK [$tag]: compose fallback incomplete fabFound=${fabNode != null} sectionsFound=${sectionsNode != null}")
+            }
+        }.onFailure {
+            log("FAB_SECTIONS_CHECK [$tag]: uiautomator fabFound=${fab != null} sectionsFound=${sections != null} composeFallbackFailed=${it.message}")
+        }
     }
 
     private fun step(label: String, block: () -> Unit) {
@@ -266,6 +345,7 @@ class EmulatorQaTest {
 
     /** يفتح ورقة «كل الأقسام» من الشريط السفلي ثم يختار قسمًا بعنوانه (مع التمرير). */
     private fun openSection(title: String) {
+        dismissSystemAnr()
         clickText("الأقسام")
         val sheetOpen = runCatching {
             device.wait(Until.hasObject(By.text("كل الأقسام")), 10000)
@@ -546,7 +626,10 @@ class EmulatorQaTest {
      * شاشة الترحيب (0.35.0): تظهر بعد الإعداد الأولي مباشرة، ثم تنتقل
      * تلقائيًا أو بالنقر إلى الرئيسية دون إيقاف الدخول. لا يستخدم launch()
      * هنا عمدًا — فهي تنام 1500ms بعد الإقلاع، والترحيب ينتهي تلقائيًا
-     * بعد 1200ms فيفوتنا؛ ننتظر ظهور نص الترحيب فور الإقلاع مباشرة.
+     * بعد 1200ms فيفوتنا؛ نلتقطه فور الإقلاع مباشرة (ضمن نافذة 1.2s)،
+     * ثم نتحقق من تقدمه التلقائي بلا نقر، ثم نعيد الإقلاع لاختبار التخطي
+     * بالنقر. إغلاق حوار ANR أولًا (التشغيل الثاني: الحوار حجب الترحيب
+     * فظهر `WELCOME visible=false` رغم وجوده).
      */
     @Test
     fun welcomeScreen() {
@@ -557,23 +640,39 @@ class EmulatorQaTest {
         setPrefs("light")
         seedDataOnce()
         androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
+        dismissSystemAnr()
         val welcomeVisible = runCatching {
-            device.wait(Until.hasObject(By.text("نرتّب يومك معًا")), 15000)
+            device.wait(Until.hasObject(By.text("نرتّب يومك معًا")), 8000)
         }.getOrDefault(false)
         log("WELCOME visible=$welcomeVisible")
         step("welcome-shot") { shot("00-welcome-light") }
-        if (welcomeVisible) {
-            // النقر يتخطى الترحيب فورًا إلى الرئيسية.
+        // 1) التقدم التلقائي بلا أي نقر: الترحيب ينتهي وحده بعد 1,200ms.
+        val autoHome = runCatching {
+            device.wait(Until.hasObject(By.text("اليوم")), 10000)
+        }.getOrDefault(false)
+        log("WELCOME auto-advanced to home=$autoHome")
+        step("welcome-auto-home") { shot("00b-welcome-auto-home") }
+        // 2) التخطي بالنقر: إعادة إقلاع جديدة (الترحيب يظهر مجددًا في
+        // نسخة نشاط جديدة) ثم نقر في المنتصف.
+        runCatching { scenario?.close() }
+        scenario = null
+        androidx.test.core.app.ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
+        dismissSystemAnr()
+        val welcomeAgain = runCatching {
+            device.wait(Until.hasObject(By.text("نرتّب يومك معًا")), 8000)
+        }.getOrDefault(false)
+        log("WELCOME visible on relaunch=$welcomeAgain")
+        if (welcomeAgain) {
             runCatching { device.click(device.displayWidth / 2, device.displayHeight / 2) }
             Thread.sleep(800)
         }
         val homeVisible = runCatching {
             device.wait(Until.hasObject(By.text("اليوم")), 10000)
         }.getOrDefault(false)
-        log("WELCOME skipped, home visible=$homeVisible")
+        log("WELCOME skipped by tap, home visible=$homeVisible")
         composeRule.waitForIdle()
         Thread.sleep(800)
-        step("welcome-home") { shot("00b-welcome-skipped-home") }
+        step("welcome-skipped-home") { shot("00c-welcome-skipped-home") }
         log("welcome screen done")
     }
 }

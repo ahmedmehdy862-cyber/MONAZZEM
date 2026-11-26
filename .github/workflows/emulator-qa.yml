@@ -102,13 +102,20 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace
+            TEST_EXIT=0
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace || TEST_EXIT=$?
             # سحب اللقطات من التنزيلات المشتركة: الاختبار يصدّرها إليها عبر
             # MediaStore (انظر QaExport) لأن مجلد التطبيق الخارجي يُحذف
             # عند إلغاء تثبيت التطبيق بعد الاختبارات. سحب عادي بلا run-as.
+            # مرونة سير العمل (التشغيل الثالث): كود خروج gradle يُلتقط ثم
+            # تُسحب الأدلة دائمًا — فشل gradle كان يوقف السكربت (set -e)
+            # قبل السحب فينتج التشغيل الفاشل صفر لقطات (حدث في التشغيلين).
             adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api${{ matrix.api-level }}" || echo "screenshot pull failed (app may have crashed before first shot)"
-            ls "./qa-screenshots-api${{ matrix.api-level }}"
+            ls "./qa-screenshots-api${{ matrix.api-level }}" || true
             adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
+            SHOT_COUNT=$(find "./qa-screenshots-api${{ matrix.api-level }}" -name "*.png" 2>/dev/null | wc -l)
+            echo "screenshots pulled: $SHOT_COUNT"
+            if [ "$SHOT_COUNT" -eq 0 ]; then echo "WARNING: zero screenshots pulled (empty evidence)"; TEST_EXIT=1; fi
             exit $TEST_EXIT
 
       - name: Upload screenshots and logs
