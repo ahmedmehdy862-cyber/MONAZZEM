@@ -89,10 +89,6 @@ data class FocusPreferences(
     /** Ids of the sections kept in the bottom bar, in display order. */
     val bottomTabs: List<String> = BottomTab.DEFAULT
 ) {
-    /** Parsed face profile, or null when no face was detected yet. */
-    val avatarFaceProfile: FaceProfile?
-        get() = FaceProfile.fromJson(avatarFaceProfileJson)
-
     companion object {
         internal const val FILE = "focus_study_preferences"
 

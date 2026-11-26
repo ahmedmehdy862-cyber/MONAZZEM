@@ -59,7 +59,7 @@ class Part5AvatarTest {
         assertTrue(prefs.avatarSourcePath.isEmpty())
         assertEquals(0, prefs.avatarStyle)
         assertTrue(prefs.avatarFaceProfileJson.isEmpty())
-        assertNull(prefs.avatarFaceProfile)
+        assertNull(FaceProfile.fromJson(prefs.avatarFaceProfileJson))
     }
 
     // --- ML Kit face profile (bundled model): pure mapping + JSON + sampler ---
