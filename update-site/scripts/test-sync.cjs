@@ -181,6 +181,32 @@ async function main() {
     assert.equal(clean.calorieLogs[0].calories, undefined);
   });
 
+  await test("bare tombstones survive for day-keyed collections", async () => {
+    const clean = real.normalizeSyncPayload({
+      habitLogs: [{ id: "3:2026-11-26", deleted: true, updatedAt: 100 }],
+      wirdLogs: [{ id: "2026-11-26", deleted: true, updatedAt: 100 }],
+      healthLogs: [{ id: "2026-11-26", deleted: true, updatedAt: 100 }],
+      transactions: [{ id: "8", deleted: true, updatedAt: 100 }],
+      moodLogs: [{ id: "2026-11-26", deleted: true, updatedAt: 100 }],
+      calorieLogs: [{ id: "5", deleted: true, updatedAt: 100 }],
+      tasks: [{ id: "1", deleted: true, updatedAt: 100 }],
+    });
+    assert.equal(clean.habitLogs.length, 1);
+    assert.equal(clean.habitLogs[0].deleted, true);
+    assert.equal(clean.habitLogs[0].habitId, "3");
+    assert.equal(clean.habitLogs[0].day, "2026-11-26");
+    for (const kind of ["wirdLogs", "healthLogs", "moodLogs", "calorieLogs", "transactions", "tasks"]) {
+      assert.equal(clean[kind].length, 1, kind);
+      assert.equal(clean[kind][0].deleted, true, kind);
+    }
+    // malformed habit-log id yields no habitId/day, so the tombstone drops.
+    const bad = real.normalizeSyncPayload({
+      habitLogs: [{ id: "no-day-here", deleted: true, updatedAt: 100 }],
+    });
+    assert.equal(bad.habitLogs.length, 0);
+  });
+
+
   await test("merge keeps life collections per-record last-write-wins", async () => {
     const existing = { revision: 1, updatedAt: 10, data: {
       wirdLogs: [{ id: "2026-11-25", day: "2026-11-25", pages: 2, surah: "البقرة", updatedAt: 100 }],

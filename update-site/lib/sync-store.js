@@ -50,6 +50,23 @@ function cleanRecord(item, kind) {
   }
   if (!id) return null;
   const record = { id, updatedAt: cleanTime(item.updatedAt) };
+  // شاهد حذف: يكفي المعرّف + deleted — لا تشترط حقول السجل الحي (اليوم
+  // وغيره) وإلا سقطت شواهد حذف السجلات اليومية (wird/health/mood/المعاملات/
+  // السعرات/سجلات العادات) فلا ينتشر الحذف أبدًا بين الأجهزة. لسجل عادة
+  // اشتق habitId واليوم من المعرّف المركب «habitId:day» لأن المستهلكين
+  // يقرؤونهما من السجل.
+  if (item.deleted === true) {
+    record.deleted = true;
+    if (kind === "habitLogs") {
+      const sep = id.indexOf(":");
+      const habitId = sep === -1 ? "" : id.slice(0, sep);
+      const day = sep === -1 ? "" : id.slice(sep + 1);
+      if (!habitId || !DAY_PATTERN.test(day)) return null;
+      record.habitId = habitId;
+      record.day = day;
+    }
+    return record;
+  }
   // Stored subjects/types use `name` after their first normalization; accept both so re-reading
   // and merging an existing snapshot cannot silently drop the label. Only the three original
   // collections carry a title/name; the «حياتي» kinds name their label field explicitly below.
