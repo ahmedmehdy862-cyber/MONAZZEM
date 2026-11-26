@@ -102,6 +102,31 @@ internal object SyncLiveTestSupport {
         return last
     }
 
+    /**
+     * يعيد محاولة تسجيل المزامنة عند الرفض أيضًا — لسبب واحد محدد وموثّق:
+     * مسجل المزامنة على الخادم (`api/sync.js register`) يتحقق من وجود
+     * profileId في users blob الذي كتبه للتو تسجيل messages؛ وقراءة Blob
+     * قد تعيد نسخة قديمة للحظات، فيرفض بـ 403 profile_unknown ثم يقبل
+     * بعد ثوانٍ. هذا سباق انتشار خادم، لا خطأ مصادقة: كلمة مرور خاطئة
+     * تبقى مرفوضة إلى الأبد، فإعادة المحاولة لا تخفي فشلًا حقيقيًا —
+     * بل تمنح الانتشار حتى 60 ثانية ثم تفشل بصوت عالٍ. لا تُستخدم
+     * لدفع/سحب (مصادقتهما على مخزن المزامنة نفسه، لا على users blob).
+     */
+    suspend fun retrySyncRegister(
+        attempts: Int = 6,
+        block: suspend () -> SyncAccount.Result,
+    ): SyncAccount.Result {
+        var last: SyncAccount.Result = SyncAccount.Result.REJECTED
+        repeat(attempts) { attempt ->
+            Log.d("SyncLive", "sync-register attempt ${attempt + 1}/$attempts")
+            last = block()
+            if (last == SyncAccount.Result.SUCCESS) return last
+            Log.w("SyncLive", "sync-register attempt ${attempt + 1} -> $last")
+            if (attempt + 1 < attempts) delay(10_000)
+        }
+        return last
+    }
+
     /** سحب خام من الخادم (مستقل عن منطق التطبيق) — للتحقق أن البيانات وصلت فعلًا. */
     fun rawPull(profileId: String, passphrase: String): JSONObject {
         val payload = JSONObject()

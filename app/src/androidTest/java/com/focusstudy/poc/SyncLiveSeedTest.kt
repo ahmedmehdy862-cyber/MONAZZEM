@@ -39,7 +39,7 @@ class SyncLiveSeedTest {
         SyncLiveTestSupport.runLive {
             assertEquals(
                 SyncAccount.Result.SUCCESS,
-                SyncLiveTestSupport.retrySync("sync-register") { SyncAccount.register(context, passphrase) },
+                SyncLiveTestSupport.retrySyncRegister { SyncAccount.register(context, passphrase) },
             )
         }
 

@@ -122,7 +122,8 @@ jobs:
 
       - name: Dump emulator logcat
         if: always()
-        run: adb logcat -d > ./logcat-seed.txt || true
+        timeout-minutes: 3
+        run: timeout 60 adb logcat -d > ./logcat-seed.txt || true
 
       - name: Upload Android test results and logcat
         if: always()
@@ -291,7 +292,7 @@ jobs:
             # دفع بيانات الاعتماد إلى filesDir قبل تشغيل الاختبار (عبر stdin؛ لا تظهر في السجل).
             adb shell run-as com.focusstudy.poc sh -c 'cat > /data/data/com.focusstudy.poc/files/sync-live-credentials.json' < sync-live-credentials.json
             ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveVerifyTest
-            adb logcat -d > ./logcat-verify.txt || true
+            timeout 60 adb logcat -d > ./logcat-verify.txt || true
 
       - name: Upload verify logcat and test results
         if: always()
