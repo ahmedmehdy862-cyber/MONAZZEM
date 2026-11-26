@@ -9,11 +9,17 @@
 # - API 34 هو الأساس؛ API 30 حد أدنى ثانٍ (minSdk 26 لكن المحاكي 30 أسرع
 #   وأكثر استقرارًا في CI من 26/27).
 # - اللقطات تُسحب بـ adb pull داخل الـ script لأن المحاكي يُطفأ بعده.
-# - لماذا macOS وليس ubuntu: عدّاءات لينكس المستضافة في GitHub بلا KVM
-#   (التشغيل 45751255406 فشل: «Software CPU emulation (-accel off) is not
-#   supported» لأن المحاكي 37+ يرفض المحاكاة البرمجية)، بينما macOS يعمل
-#   بتسريع HVF الأصلي. الريبو عام فدقائق macOS مجانية. لذلك الصورة arm64-v8a
-#   (عدّاءات macOS على Apple Silicon).
+# - سجل محاولات التشغيل (موثق كاملًا في تقرير QA):
+#   1) ubuntu-latest بلا خطوة KVM (45751255406): الأكشن رأى /dev/kvm غير
+#      متاح فأوقف التسريع، والمحاكي 37+ يرفض -accel off («Software CPU
+#      emulation is not supported»).
+#   2) macos-latest + arm64-v8a (45752742594): عدّاءات macOS المستضافة
+#      آلات افتراضية بلا nested virtualization، ففشل HVF («HVF error:
+#      HV_UNSUPPORTED») — وهذا قيد عام موثق، لا خاص بنا.
+#   3) ubuntu-latest + خطوة Enable KVM من README الأكشن نفسه (النمط
+#      الموثق): ubuntu هو المسار الموصى به. وكشبكة أمان،
+#      ANDROID_I_WANT_MY_TCG=yes يسمح بالمحاكاة البرمجية TCG إن غاب KVM
+#      فعلًا بدل الفشل الفوري (أبطأ بكثير، لكنه يعمل).
 name: Emulator QA
 
 on:
@@ -32,8 +38,8 @@ concurrency:
 jobs:
   emulator-qa:
     name: Emulator QA (API ${{ matrix.api-level }})
-    runs-on: macos-latest
-    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -70,12 +76,23 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || echo "no /dev/kvm device on this runner"
+
       - name: Run emulator tests
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          # شبكة أمان فقط: إن غاب KVM فعلًا يسمح بالمحاكاة البرمجية TCG
+          # بدل رفض -accel off الفوري. مع KVM يعمل التسريع العادي.
+          ANDROID_I_WANT_MY_TCG: "yes"
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
-          arch: arm64-v8a
+          arch: x86_64
           profile: pixel_6
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
