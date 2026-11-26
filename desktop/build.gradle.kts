@@ -47,6 +47,15 @@ val desktopVersionCode = appVersion(
     "41"
 )
 
+// تشخيص مؤقت: اطبع القيم المحسوبة وقت التهيئة في سجل CI — يُزال بعد
+// معرفة سبب رفض MSI للإصدار '0' في run 45750739160 رغم -PdesktopVersion=0.34.0.
+println(
+    "MONAZZEM-DIAG desktopVersionName=[$desktopVersionName] " +
+        "desktopVersionCode=[$desktopVersionCode] projectVersion=[$version] " +
+        "gradlePropPresent=${providers.gradleProperty("desktopVersion").isPresent} " +
+        "gradlePropValue=${providers.gradleProperty("desktopVersion").orNull}"
+)
+
 group = "com.focusstudy.poc"
 version = desktopVersionName
 
