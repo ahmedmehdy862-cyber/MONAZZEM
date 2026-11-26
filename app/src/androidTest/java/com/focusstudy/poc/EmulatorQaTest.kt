@@ -9,12 +9,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeDown
-import androidx.compose.ui.test.swipeUp
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
-import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
@@ -160,7 +156,7 @@ class EmulatorQaTest {
      */
     private fun clickText(label: String) {
         val clicked = runCatching {
-            device.wait(Until.hasObject(By.text(label)), 5000)
+            device.wait(Until.hasObject(By.text(label)), 10000)
             val target = device.findObjects(By.text(label)).lastOrNull()
             if (target != null) {
                 target.click() // UiObject2.click() ترجع Unit وتفشل باستثناء
@@ -183,8 +179,17 @@ class EmulatorQaTest {
         runCatching { block() }.onFailure { log("STEP FAILED [$label]: ${it.message}") }
     }
 
-    private fun back() {
-        runCatching { Espresso.pressBack() }
+    /**
+     * عودة آمنة من شاشة ثانوية: زر «رجوع» داخل التطبيق فقط. لا نضغط زر رجوع
+     * النظام أبدًا من تبويب جذري — ففي التشغيل 45762930514 ضغطة رجوع واحدة
+     * بعد تنقل فاشل أخرجت التطبيق كله إلى شاشة اللانشر، فسقطت بقية الجولة.
+     * إن لم يوجد زر «رجوع» فنحن غالبًا على تبويب جذري أصلًا فلا نفعل شيئًا.
+     */
+    private fun goBack() {
+        val hasBack = runCatching {
+            device.wait(Until.hasObject(By.text("رجوع")), 3000)
+        }.getOrDefault(false)
+        if (hasBack) clickText("رجوع") else log("goBack: no in-app back button; staying")
         composeRule.waitForIdle()
         Thread.sleep(700)
     }
@@ -192,18 +197,18 @@ class EmulatorQaTest {
     /** يفتح ورقة «كل الأقسام» من الشريط السفلي ثم يختار قسمًا بعنوانه. */
     private fun openSection(title: String) {
         clickText("الأقسام")
-        // تشخيص: هل انفتحت الورقة فعلًا؟ (ظهور أي عنوان قسم فيها)
+        // تشخيص: هل انفتحت الورقة فعلًا؟ عنوانها «كل الأقسام» ثابت دائمًا.
         val sheetOpen = runCatching {
-            device.wait(Until.hasObject(By.text("الخطة")), 3000)
+            device.wait(Until.hasObject(By.text("كل الأقسام")), 10000)
         }.getOrDefault(false)
         log("SHEET CHECK after [الأقسام]: open=$sheetOpen")
         clickText(title)
-        // تشخيص فقط (لا يفشل الخطوة): هل عنوان القسم ظاهر بعد النقر؟
-        // بعض الشاشات تعرض عنوانًا مختلفًا (مثلًا المساعد يعرض اسم «منظم»).
-        val found = runCatching {
-            device.wait(Until.hasObject(By.text(title)), 3000)
+        // تشخيص: هل وصلنا إلى شاشة ثانوية؟ كلها تعرض زر «رجوع» في الأعلى
+        // (عنوان الوجهة نفسه قد يختلف عن عنوان القسم، مثل «الخطة الأسبوعية»).
+        val arrived = runCatching {
+            device.wait(Until.hasObject(By.text("رجوع")), 10000)
         }.getOrDefault(false)
-        log("NAV CHECK [$title]: found=$found")
+        log("NAV CHECK [$title]: arrived=$arrived")
     }
 
     @Test
@@ -211,25 +216,28 @@ class EmulatorQaTest {
         launch("light")
         step("today-top") { shot("01-today-light") }
         step("today-scroll") {
+            // التمرير عبر UiDevice بإحداثيات صريحة: swipeUp من Compose على
+            // الجذر لم يحرّك شاشة اليوم إطلاقًا في التشغيل 45762930514
+            // (02 مطابقة 01 بايتًا بايتًا) — وبهذا نرى بطاقة المساعد أسفل الطي.
             repeat(3) {
-                composeRule.onRoot().performTouchInput { swipeUp() }
-                Thread.sleep(400)
+                device.swipe(540, 1800, 540, 700, 20)
+                Thread.sleep(500)
             }
             composeRule.waitForIdle()
             shot("02-today-scrolled-light")
             repeat(3) {
-                composeRule.onRoot().performTouchInput { swipeDown() }
-                Thread.sleep(400)
+                device.swipe(540, 700, 540, 1800, 20)
+                Thread.sleep(500)
             }
             composeRule.waitForIdle()
         }
         step("tasks") { clickText("مهامي"); shot("03-tasks-light") }
-        step("planner") { openSection("الخطة"); shot("04-planner-light"); back() }
-        step("quran") { openSection("المصحف"); shot("05-quran-light"); back() }
-        step("adhkar") { openSection("الأذكار"); shot("06-adhkar-light"); back() }
-        step("life") { openSection("حياتي"); shot("07-life-light"); back() }
-        step("assistant") { openSection("مساعدي"); shot("08-assistant-light"); back() }
-        step("notifications") { openSection("الإشعارات"); shot("09-notifications-light"); back() }
+        step("planner") { openSection("الخطة"); shot("04-planner-light"); goBack() }
+        step("quran") { openSection("المصحف"); shot("05-quran-light"); goBack() }
+        step("adhkar") { openSection("الأذكار"); shot("06-adhkar-light"); goBack() }
+        step("life") { openSection("حياتي"); shot("07-life-light"); goBack() }
+        step("assistant") { openSection("مساعدي"); shot("08-assistant-light"); goBack() }
+        step("notifications") { openSection("الإشعارات"); shot("09-notifications-light"); goBack() }
         step("settings") {
             openSection("التخصيص")
             shot("10-settings-light")
@@ -242,11 +250,11 @@ class EmulatorQaTest {
             openSection("التخصيص")
             // الخروج بـ «رجوع» بلا حفظ يفترض أن يلغي تغيير الوضع.
             shot("10c-settings-mode-after-back")
-            back()
+            goBack()
         }
-        step("support") { openSection("الدعم"); shot("11-support-light"); back() }
-        step("goals") { openSection("أهدافي"); shot("12-goals-light"); back() }
-        step("prayer") { openSection("الصلاة"); shot("13-prayer-light"); back() }
+        step("support") { openSection("الدعم"); shot("11-support-light"); goBack() }
+        step("goals") { openSection("أهدافي"); shot("12-goals-light"); goBack() }
+        step("prayer") { openSection("الصلاة"); shot("13-prayer-light"); goBack() }
         step("more") { clickText("المزيد"); shot("15-more-light") }
         step("drawer") {
             // آخر خطوة عمدًا: إن أغلق زر الرجوع النشاط بدل الدرج، لا شيء بعدها.
@@ -264,7 +272,7 @@ class EmulatorQaTest {
             composeRule.waitForIdle()
             Thread.sleep(800)
             shot("14-drawer-light")
-            back()
+            goBack()
         }
         log("light tour done")
     }
@@ -274,8 +282,8 @@ class EmulatorQaTest {
         launch("dark")
         step("today-dark") { shot("01-today-dark") }
         step("tasks-dark") { clickText("مهامي"); shot("02-tasks-dark") }
-        step("quran-dark") { openSection("المصحف"); shot("03-quran-dark"); back() }
-        step("life-dark") { openSection("حياتي"); shot("04-life-dark"); back() }
+        step("quran-dark") { openSection("المصحف"); shot("03-quran-dark"); goBack() }
+        step("life-dark") { openSection("حياتي"); shot("04-life-dark"); goBack() }
         step("settings-dark") { openSection("التخصيص"); shot("05-settings-dark") }
         log("dark tour done")
     }
