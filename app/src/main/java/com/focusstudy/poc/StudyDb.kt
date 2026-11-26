@@ -2817,5 +2817,19 @@ class StudyDb private constructor(context: Context) :
             instance ?: synchronized(this) {
                 instance ?: StudyDb(context).also { instance = it }
             }
+
+        /**
+         * Test-only: drop the cached helper so the next [get] binds to the
+         * caller's context. Without it, Robolectric migration tests share
+         * one process-wide helper bound to the first test's sandbox database
+         * file, so a seeded file in a later test's sandbox is never opened
+         * (the helper recreates the deleted first file empty instead).
+         */
+        fun resetForTest() {
+            synchronized(this) {
+                runCatching { instance?.close() }
+                instance = null
+            }
+        }
     }
 }

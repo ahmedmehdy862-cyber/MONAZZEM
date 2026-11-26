@@ -68,6 +68,10 @@ class DbMigrationV16ToV17Test {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
+        // أعد ضبط الـ singleton أولًا: بدونه يبقى StudyDb.get مربوطًا بملف
+        // قاعدة بيانات sandbox اختبار سابق، فلا يُفتح ملف البذرة أبدًا
+        // (يُعاد إنشاء الملف الأول المحذوف فارغًا) — فشل CI run 45774875788.
+        StudyDb.resetForTest()
         context.deleteDatabase(DB_FILE)
     }
 
@@ -80,6 +84,7 @@ class DbMigrationV16ToV17Test {
         // the v15 life tables (CI run 45756885728: "no such table: habit_logs"
         // in SyncApplyDbTest).
         runCatching { StudyDb.get(context).close() }
+        StudyDb.resetForTest()
         runCatching { context.deleteDatabase(DB_FILE) }
     }
 

@@ -83,13 +83,17 @@ class DbMigrationV17ToV18Test {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
-        runCatching { StudyDb.get(context).close() }
+        // أعد ضبط الـ singleton أولًا: بدونه يبقى StudyDb.get مربوطًا بملف
+        // قاعدة بيانات sandbox اختبار سابق، فلا يُفتح ملف البذرة أبدًا
+        // (يُعاد إنشاء الملف الأول المحذوف فارغًا) — فشل CI run 45774875788.
+        StudyDb.resetForTest()
         context.deleteDatabase(DB_FILE)
     }
 
     @After
     fun tearDown() {
         runCatching { StudyDb.get(context).close() }
+        StudyDb.resetForTest()
         runCatching { context.deleteDatabase(DB_FILE) }
     }
 
