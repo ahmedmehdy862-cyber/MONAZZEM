@@ -127,10 +127,15 @@ class AdhanAlertQaTest {
         log("[$theme] alarm volume before: $volumeBefore / max $volumeMax")
         // The alert plays the adhan on launch (key != null + default rule AT sound = ADHAN).
         scenario = ActivityScenario.launch<PrayerAlertActivity>(alertIntent(name, key))
-        assertTrue(
-            "[$theme] stop button not visible",
-            device.wait(Until.hasObject(By.text("إيقاف الأذان")), 15000)
-        )
+        val buttonFound = device.wait(Until.hasObject(By.text("إيقاف الأذان")), 15000)
+        if (!buttonFound) {
+            // Diagnostic evidence for the next failure instead of a bare timeout:
+            // what the screen actually shows, and the full accessibility hierarchy.
+            log("[$theme] stop button NOT found after 15s — dumping hierarchy + screenshot")
+            runCatching { device.dumpWindowHierarchy(File(shotDir, "$shotPrefix-hierarchy.xml")) }
+            runCatching { device.takeScreenshot(File(shotDir, "$shotPrefix-nobutton.png")) }
+        }
+        assertTrue("[$theme] stop button not visible", buttonFound)
         val runningBefore = waitFor(timeoutMs = 10000) { serviceRunning() }
         log("[$theme] service running before tap: $runningBefore")
         assertTrue("[$theme] adhan service did not start", runningBefore)

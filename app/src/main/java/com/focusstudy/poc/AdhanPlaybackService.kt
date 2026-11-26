@@ -89,21 +89,36 @@ internal class AdhanPlaybackService : Service() {
         // Loud on the speaker only: the alarm stream is raised to its maximum for the adhan
         // and restored when playback ends. A headset keeps the person's own media volume.
         if (!headsetConnected) boostAlarmVolume()
-        player = runCatching {
+        // Preparation is asynchronous on purpose: a synchronous prepare() runs on the
+        // main thread and freezes the alert screen until the clip is ready — on a slow
+        // device (and on the API 34 emulator, where prepare() took ~16s) the big stop
+        // button cannot even be drawn, let alone tapped. With prepareAsync() the screen
+        // appears at once and the stop button works even while the clip is still
+        // preparing; stopping during preparation releases the player and the pending
+        // onPrepared is ignored (see stopPlayback).
+        val created = runCatching {
             MediaPlayer().apply {
                 setAudioAttributes(attributes)
                 setDataSource(
                     applicationContext,
                     Uri.parse("android.resource://${packageName}/${PrayerAdhanSounds.resource(voice)}")
                 )
+                setOnPreparedListener { prepared ->
+                    starting = false
+                    if (player === prepared) {
+                        runCatching { prepared.start() }.onFailure { stopPlayback(); stopSelf() }
+                    }
+                }
                 setOnCompletionListener { stopPlayback(); stopSelf() }
                 setOnErrorListener { _, _, _ -> stopPlayback(); stopSelf(); true }
-                prepare()
-                start()
+                prepareAsync()
             }
-        }.onFailure { stopPlayback() }.getOrNull()
-        starting = false
-        if (player == null) stopSelf()
+        }.onFailure { stopPlayback(); stopSelf() }.getOrNull()
+        if (created == null) {
+            starting = false
+            return
+        }
+        player = created
     }
 
     private fun requestFocus(attributes: AudioAttributes) {
@@ -182,13 +197,20 @@ internal class AdhanPlaybackService : Service() {
     }
 
     private fun stopPlayback() {
-        player?.runCatching {
-            setOnCompletionListener(null)
-            setOnErrorListener(null)
-            stop()
-            release()
-        }
+        // Safe at any point, including while the clip is still preparing: stop() is
+        // not valid in the Preparing state and would throw, so each step is guarded
+        // separately and release() always runs — otherwise a stop during preparation
+        // would leak the player and the adhan could start playing after «إيقاف».
+        val current = player
         player = null
+        starting = false
+        current?.let { mp ->
+            runCatching { mp.setOnPreparedListener(null) }
+            runCatching { mp.setOnCompletionListener(null) }
+            runCatching { mp.setOnErrorListener(null) }
+            runCatching { mp.stop() }
+            runCatching { mp.release() }
+        }
         restoreAlarmVolume()
         if (focusHeld) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
