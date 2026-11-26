@@ -68,11 +68,12 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     // SQLDelight على JVM: يضم Xerial sqlite-jdbc؛ لا اعتماديات تشغيل أخرى.
     implementation("app.cash.sqldelight:sqlite-driver:2.2.1")
-    // JNA: Windows Credential Manager (CredWrite/CredRead/CredDelete) لحفظ
-    // كلمة مرور المزامنة في خزنة النظام — بلا خدمات مدفوعة، ومكتبة مجانية.
-    // على Linux لا يُلمس JNA أبدًا (انظر WindowsCredentialStoreFactory).
+    // JNA: Windows Credential Manager لحفظ كلمة مرور المزامنة في خزنة
+    // النظام — بلا خدمات مدفوعة، ومكتبة مجانية. JNA لا يوفّر ربطًا جاهزًا
+    // لـ wincred.h، فالكود يعرّف الربط بنفسه (Advapi32Cred/CredentialW)
+    // ولا يحتاج إلا jna الأساسي. على Linux لا يُلمس JNA أبدًا
+    // (انظر WindowsCredentialStoreFactory).
     implementation("net.java.dev.jna:jna:5.14.0")
-    implementation("net.java.dev.jna:jna-platform:5.14.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("junit:junit:4.13.2")
 }

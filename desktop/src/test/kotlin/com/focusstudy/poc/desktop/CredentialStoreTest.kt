@@ -1,5 +1,6 @@
 package com.focusstudy.poc.desktop
 
+import com.sun.jna.Native
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -85,6 +86,16 @@ class CredentialStoreTest {
         val store = WindowsCredentialStore(api)
         assertFalse(store.save(profileId, CharArray(0)))
         assertEquals(0, api.writes)
+    }
+
+    @Test
+    fun credentialStructureLayoutMatchesWincred() {
+        // CREDENTIALW على 64-بت = 80 بايتًا (مؤشرات 8 + FILETIME 8 +
+        // حشو المحاذاة)؛ أي تبديل في ترتيب الحقول أو نوعها يغيّر الحجم
+        // ويفشل هذا الاختبار على Linux قبل أن يكسر ويندوز بصمت.
+        if (Native.POINTER_SIZE == 8) {
+            assertEquals(80, CredentialW.ByReference().size())
+        }
     }
 
     @Test

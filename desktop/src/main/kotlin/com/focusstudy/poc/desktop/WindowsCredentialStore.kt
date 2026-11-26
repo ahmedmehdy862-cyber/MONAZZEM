@@ -1,14 +1,21 @@
 package com.focusstudy.poc.desktop
 
+import com.sun.jna.Library
 import com.sun.jna.Memory
+import com.sun.jna.Native
 import com.sun.jna.Pointer
+import com.sun.jna.Structure
+import com.sun.jna.WString
 import com.sun.jna.ptr.PointerByReference
-import com.sun.jna.platform.win32.Advapi32
-import com.sun.jna.platform.win32.WinCred
 
 /**
  * مخزن كلمة مرور المزامنة في Windows Credential Manager (خزنة بيانات
- * اعتماد نظام التشغيل) عبر JNA — CredWrite/CredRead/CredDelete.
+ * اعتماد نظام التشغيل) عبر JNA.
+ *
+ * تنبيه: JNA لا يوفّر ربطًا جاهزًا لـ wincred.h — لا صنف `WinCred` ولا
+ * دوال `Cred*` في jna-platform — لذلك يعرّف هذا الملف الربط بنفسه
+ * ([Advapi32Cred] + [CredentialW] أدناه، حسب `CREDENTIALW` في wincred.h)،
+ * ولا يحتاج إلا jna الأساسي (بلا jna-platform).
  *
  * الهدف: `MONAZZEM/sync/<profileId>` (بيانات اعتماد عامة Generic)،
  * والثبات `CRED_PERSIST_LOCAL_MACHINE`، والسرّ نفسه بايتات UTF-16LE.
@@ -87,47 +94,106 @@ class WindowsCredentialStore(
     }
 }
 
+/** ربط JNA الأدنى لـ wincred.h — يُبنى على ويندوز فقط، ولا يُلمس خارجه. */
+internal interface Advapi32Cred : Library {
+    fun CredWriteW(credential: CredentialW.ByReference, flags: Int): Boolean
+    fun CredReadW(targetName: WString, type: Int, flags: Int, credential: PointerByReference): Boolean
+    fun CredDeleteW(targetName: WString, type: Int, flags: Int): Boolean
+    fun CredFree(credential: Pointer)
+}
+
+/** FILETIME من wincred.h: قيمتان 32-بت (لا نحتاجهما إلا لملء البنية). */
+internal class FileTime : Structure() {
+    @JvmField var dwLowDateTime: Int = 0
+    @JvmField var dwHighDateTime: Int = 0
+    override fun getFieldOrder(): List<String> = listOf("dwLowDateTime", "dwHighDateTime")
+}
+
+/**
+ * بنية CREDENTIALW كما في wincred.h — الترتيب هنا هو الترتيب الثنائي
+ * نفسه؛ أي تبديل يكسر القراءة/الكتابة بصمت. الحقول النصية WString
+ * (UTF-16) لأن الدوال المستخدمة هي نسخ W. الحقول @JvmField إلزامية:
+ * JNA يقرأ حقول البنية بالانعكاس ولا يرى خاصيات كوتلن بلا ظهر حقيقي.
+ */
+internal open class CredentialW : Structure {
+    @JvmField var Flags: Int = 0
+    @JvmField var Type: Int = 0
+    @JvmField var TargetName: WString? = null
+    @JvmField var Comment: WString? = null
+    @JvmField var LastWritten: FileTime = FileTime()
+    @JvmField var CredentialBlobSize: Int = 0
+    @JvmField var CredentialBlob: Pointer? = null
+    @JvmField var Persist: Int = 0
+    @JvmField var AttributeCount: Int = 0
+    @JvmField var Attributes: Pointer? = null
+    @JvmField var TargetAlias: WString? = null
+    @JvmField var UserName: WString? = null
+
+    constructor() : super()
+    constructor(pointer: Pointer) : super(pointer) {
+        read()
+    }
+
+    override fun getFieldOrder(): List<String> = listOf(
+        "Flags", "Type", "TargetName", "Comment", "LastWritten",
+        "CredentialBlobSize", "CredentialBlob", "Persist", "AttributeCount",
+        "Attributes", "TargetAlias", "UserName",
+    )
+
+    class ByReference : CredentialW(), Structure.ByReference
+
+    companion object {
+        const val CRED_TYPE_GENERIC = 1
+        const val CRED_PERSIST_LOCAL_MACHINE = 2
+    }
+}
+
 /** [CredApi] حقيقي فوق JNA — يُبنى على ويندوز فقط، ولا يُلمس خارجه. */
 internal class JnaCredApi : CredApi {
+    // يُحمَّل Advapi32.dll عند أول استخدام فقط؛ إنشاء JnaCredApi نفسه
+    // لا يحدث إلا عبر WindowsCredentialStoreFactory على ويندوز.
+    private val lib: Advapi32Cred by lazy {
+        Native.load("Advapi32", Advapi32Cred::class.java)
+    }
+
     override fun write(target: String, blob: ByteArray): Boolean {
         if (blob.isEmpty()) return false
         val memory = Memory(blob.size.toLong())
         memory.write(0, blob, 0, blob.size)
-        val credential = WinCred.CREDENTIAL()
+        val credential = CredentialW.ByReference()
         credential.Flags = 0
-        credential.Type = WinCred.CRED_TYPE_GENERIC
-        credential.TargetName = target
-        credential.Comment = "Monazzem sync passphrase"
+        credential.Type = CredentialW.CRED_TYPE_GENERIC
+        credential.TargetName = WString(target)
+        credential.Comment = WString("Monazzem sync passphrase")
         credential.CredentialBlobSize = blob.size
         credential.CredentialBlob = memory
-        credential.Persist = WinCred.CRED_PERSIST_LOCAL_MACHINE
-        credential.UserName = target
+        credential.Persist = CredentialW.CRED_PERSIST_LOCAL_MACHINE
+        credential.UserName = WString(target)
         credential.write()
-        return runCatching { Advapi32.INSTANCE.CredWrite(credential, 0) }.getOrDefault(false)
+        return runCatching { lib.CredWriteW(credential, 0) }.getOrDefault(false)
     }
 
     override fun read(target: String): ByteArray? {
         val ref = PointerByReference()
         val ok = runCatching {
-            Advapi32.INSTANCE.CredRead(target, WinCred.CRED_TYPE_GENERIC, 0, ref)
+            lib.CredReadW(WString(target), CredentialW.CRED_TYPE_GENERIC, 0, ref)
         }.getOrDefault(false)
         if (!ok) return null
         val pointer: Pointer = ref.value ?: return null
         return try {
-            val credential = WinCred.CREDENTIAL(pointer)
-            credential.read()
+            val credential = CredentialW(pointer)
             val size = credential.CredentialBlobSize
             val blob = credential.CredentialBlob ?: return null
             if (size <= 0) null else blob.getByteArray(0, size)
         } catch (_: Exception) {
             null
         } finally {
-            runCatching { Advapi32.INSTANCE.CredFree(pointer) }
+            runCatching { lib.CredFree(pointer) }
         }
     }
 
     override fun delete(target: String): Boolean =
-        runCatching { Advapi32.INSTANCE.CredDelete(target, WinCred.CRED_TYPE_GENERIC, 0) }
+        runCatching { lib.CredDeleteW(WString(target), CredentialW.CRED_TYPE_GENERIC, 0) }
             .getOrDefault(false)
 }
 
