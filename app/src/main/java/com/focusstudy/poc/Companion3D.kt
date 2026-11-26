@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,31 +22,30 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.sceneview.ModelLoadState
 import io.github.sceneview.SceneView
+import io.github.sceneview.SurfaceType
 import io.github.sceneview.math.Position
 import io.github.sceneview.rememberEngine
-import io.github.sceneview.rememberModelLoadState
+import io.github.sceneview.rememberModelInstance
 import io.github.sceneview.rememberModelLoader
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -72,6 +72,9 @@ internal object CompanionAssets {
     const val FALLBACK_IMAGE_PATH = "companion/fallback/companion_static.png"
     const val TAG = "Companion3D"
 }
+
+/** مهلة اعتبار تحميل نموذج الرفيق فاشلًا (الملف محلي 1.4MB فيُحمَّل عادةً في أقل من ثانية). */
+private const val MODEL_LOAD_TIMEOUT_MS = 8_000L
 
 /**
  * حالات الرفيق (المواصفة §17). كل حالة تحمل اسم حركتها في الـ GLB كما هو
@@ -217,21 +220,32 @@ private fun CompanionFallbackImage(modifier: Modifier = Modifier) {
 /**
  * العارض القابل لإعادة الاستخدام (المواصفة §10).
  *
- * - خلفية شفافة (`isOpaque = false`) فيندمج مع بطاقة التطبيق فاتحًا وداكنًا
- *   دون لون خلفية hard-coded.
+ * - خلفية شفافة: `surfaceType = TextureSurface` مع `isOpaque = false`
+ *   (الصيغة المصححة في دليل ترحيل SceneView §6 — `isOpaque` وحده لا يكفي
+ *   مع `Surface` الافتراضي، فقد تظهر خلفية سوداء معتمة).
+ * - تأطير الكاميرا: `autoFitContent = true` (واجهة 4.18.0 الموثقة) يحرّك
+ *   الكاميرا حتى تملأ الشخصية مساحة العرض؛ الإثبات البصري النهائي يبقى
+ *   على فحص المحاكي/الجهاز.
  * - الحجم والموضع من الـ [modifier] الذي يمرره المتصل؛ الحركة والتأطير
  *   محصورتان داخل حدوده، والبطاقة الحاوية تقصّ أي تجاوز.
  * - لا إيماءات مدار/تقريب (`cameraManipulator = null`) حتى لا يسرق العارض
  *   التمرير من العمود الذي يعيش فيه.
  * - إدارة دورة حياة: SceneView يوقف الرندر مع دورة حياة الشاشة تلقائيًا،
- *   ويدمر المحرك والنموذج عند مغادرة التركيب؛ وفوق ذلك يُوقف الرندر
- *   (`isRendering`) عندما تخرج المساحة من الشاشة المرئية أثناء التمرير.
+ *   ويدمر المحرك والنموذج عند مغادرة التركيب. لا معامل `isRendering` في
+ *   4.18.0 (مثبَت من مصادر الإصدار نفسه) فلا إيقاف يدوي عند التمرير.
  * - عند التعطيل لا يُركَّب شيء أصلًا؛ وعند إيقاف الحركات تُعرض الصورة
  *   الثابتة بدل العارض (احترامًا لتقليل الحركة ولإعداد الحركات).
  *
- * قيد موثّق: تأطير الكاميرا الافتراضي لم يُضبط يدويًا؛ أول فحص بصري على
- * محاكي/جهاز هو الذي يؤكد أن الشخصية كاملة داخل المساحة، فإن احتاجت
- * إزاحة تُضبط `cameraNode` هنا فقط (انظر دليل التكامل).
+ * تحميل النموذج (H1 — مثبَت من مصادر 4.18.0 نفسها على Maven Central، لا
+ * من توثيق 4.73): `rememberModelLoadState`/`ModelLoadState` غير موجودين
+ * في 4.18.0 أصلًا، والنمط الموثق هو `rememberModelInstance` الذي يرجع
+ * null أثناء التحميل وعند الفشل معًا؛ فالفشل يُستدل عليه بمهلة
+ * ([MODEL_LOAD_TIMEOUT_MS]) لا بحالة، وزر «إعادة المحاولة» يعيد التحميل
+ * بمفتاح `retry` جديد (توثيق SceneView نفسه: تغيير المفتاح يبدأ تحميلًا
+ * جديدًا، وإعادة التركيب وحدها لا تعيد المحاولة).
+ *
+ * قيد موثّق: تأطير الكاميرا الآلي (`autoFitContent`) والخلفية الشفافة
+ * يحتاجان أول فحص بصري على محاكي/جهاز للتأكيد النهائي.
  */
 @Composable
 internal fun MONAZZEMCompanionView(
@@ -263,78 +277,95 @@ internal fun MONAZZEMCompanionView(
     }
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
-    val loadState = rememberModelLoadState(modelLoader, CompanionAssets.MODEL_PATH)
-
-    // إيقاف الرندر عند عدم الظهور: المساحة خارج الشاشة المرئية أثناء التمرير
-    // لا تستحق أي إطار. يُعاد حسابه عند كل تمرير/تغيير حجم.
-    val screenHeightPx = with(LocalDensity.current) {
-        LocalConfiguration.current.screenHeightDp.dp.toPx()
+    // تحميل النموذج عبر `rememberModelInstance` (النمط الموثق في 4.18.0):
+    // يرجع null أثناء التحميل وعند الفشل معًا، فالفشل يُستدل عليه بمهلة.
+    // مفتاح `loadRetry` (M1) يعيد التحميل من جديد عند الضغط على زر إعادة
+    // المحاولة — إعادة التركيب وحدها لا تعيد المحاولة.
+    var loadRetry by remember { mutableIntStateOf(0) }
+    var loadFailed by remember { mutableStateOf(false) }
+    val modelInstance = key(loadRetry) {
+        rememberModelInstance(modelLoader, CompanionAssets.MODEL_PATH)
     }
-    var isOnScreen by remember { mutableStateOf(true) }
-    val visibilityModifier = Modifier.onGloballyPositioned { coordinates ->
-        val bounds = coordinates.boundsInWindow()
-        isOnScreen = bounds.top < screenHeightPx && bounds.bottom > 0f
+    LaunchedEffect(modelInstance, loadRetry) {
+        if (modelInstance != null) {
+            loadFailed = false
+            return@LaunchedEffect
+        }
+        loadFailed = false
+        delay(MODEL_LOAD_TIMEOUT_MS)
+        loadFailed = true
+    }
+    LaunchedEffect(loadFailed) {
+        if (loadFailed) {
+            Log.w(CompanionAssets.TAG, "تعذر تحميل نموذج الرفيق خلال المهلة، يُعرض البديل الثابت")
+            onLoadFailed?.invoke()
+        }
     }
 
     Box(
         modifier = modifier
-            .then(visibilityModifier)
             .semantics(mergeDescendants = true) { contentDescription = "منظم — رفيقك ثلاثي الأبعاد" }
     ) {
-        when (val loaded = loadState) {
-            is ModelLoadState.Loading -> CompanionFallbackImage(Modifier.matchParentSize())
-            is ModelLoadState.Failed -> {
-                LaunchedEffect(loaded.error) {
-                    Log.w(CompanionAssets.TAG, "تعذر تحميل نموذج الرفيق، يُعرض البديل الثابت", loaded.error)
-                    onLoadFailed?.invoke()
-                }
-                CompanionFallbackImage(Modifier.matchParentSize())
+        val instance = modelInstance
+        if (instance != null) {
+            // تشغيل الحركات تصريحيًا (SceneScope.ModelNode في 4.18.0، مثبَت
+            // من مصادر الإصدار): animationName تفاعلية — تغييرها يوقف
+            // السابقة ويبدأ الجديدة، وanimationLoop=false لذات المرة
+            // الواحدة. لا نمسك عقدة ModelNode ولا نستدعي playAnimation
+            // يدويًا، فلا كتابة حالة أثناء التركيب ولا استدعاءات أمرية
+            // خارج دورة Compose.
+            SceneView(
+                modifier = Modifier.matchParentSize(),
+                engine = engine,
+                modelLoader = modelLoader,
+                surfaceType = SurfaceType.TextureSurface,
+                isOpaque = false,
+                autoFitContent = true,
+                cameraManipulator = null
+            ) {
+                ModelNode(
+                    modelInstance = instance,
+                    // الشخصية 1.76م؛ تُقاس لتملأ مكعب 1م داخل المساحة،
+                    // وقاعدتها (القدمان) على أصل العقدة.
+                    scaleToUnits = 1f,
+                    centerOrigin = Position(y = -1f),
+                    autoAnimate = false,
+                    animationName = displayState.gltfName,
+                    animationLoop = displayState.loop
+                )
             }
-            is ModelLoadState.Ready -> {
-                // تشغيل الحركات تصريحيًا (واجهة SceneView 4.x الموثقة):
-                // animationName تفاعلية — تغييرها يوقف السابقة ويبدأ الجديدة،
-                // وanimationLoop=false لذات المرة الواحدة. لا نمسك عقدة
-                // ModelNode ولا نستدعي playAnimation يدويًا، فلا كتابة حالة
-                // أثناء التركيب ولا استدعاءات أمرية خارج دورة Compose.
-                SceneView(
-                    modifier = Modifier.matchParentSize(),
-                    engine = engine,
-                    modelLoader = modelLoader,
-                    isOpaque = false,
-                    isRendering = isOnScreen,
-                    cameraManipulator = null
-                ) {
-                    ModelNode(
-                        modelInstance = loaded.instance,
-                        // الشخصية 1.76م؛ تُقاس لتملأ مكعب 1م داخل المساحة،
-                        // وقاعدتها (القدمان) على أصل العقدة.
-                        scaleToUnits = 1f,
-                        centerOrigin = Position(y = -1f),
-                        autoAnimate = false,
-                        animationName = displayState.gltfName,
-                        animationLoop = displayState.loop
-                    )
-                }
-                // ذات المرة الواحدة تعود إلى IDLE بعد مدتها؛ والـ loop تستمر
-                // حتى طلب آخر. العودة مشروطة بأن الحالة ما زالت هي نفسها،
-                // فلا تُلغى حركة أحدث بعودة متأخرة. وحركة معلّقة أُسقطت
-                // لقدمها تُمسح من المتحكم هنا أيضًا.
-                LaunchedEffect(displayState) {
-                    if (displayState == CompanionState.IDLE && state != CompanionState.IDLE) {
-                        controller.returnToIdle(state)
-                    } else if (!displayState.loop && displayState.gltfName != null) {
-                        delay(displayState.durationMillis)
-                        controller.returnToIdle(displayState)
-                    }
+            // ذات المرة الواحدة تعود إلى IDLE بعد مدتها؛ والـ loop تستمر
+            // حتى طلب آخر. العودة مشروطة بأن الحالة ما زالت هي نفسها،
+            // فلا تُلغى حركة أحدث بعودة متأخرة. وحركة معلّقة أُسقطت
+            // لقدمها تُمسح من المتحكم هنا أيضًا.
+            LaunchedEffect(displayState) {
+                if (displayState == CompanionState.IDLE && state != CompanionState.IDLE) {
+                    controller.returnToIdle(state)
+                } else if (!displayState.loop && displayState.gltfName != null) {
+                    delay(displayState.durationMillis)
+                    controller.returnToIdle(displayState)
                 }
             }
+        } else if (loadFailed) {
+            Column(
+                modifier = Modifier.matchParentSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                CompanionFallbackImage(Modifier.weight(1f))
+                TextButton(onClick = { loadRetry++ }) {
+                    Text("إعادة المحاولة")
+                }
+            }
+        } else {
+            CompanionFallbackImage(Modifier.matchParentSize())
         }
     }
 }
 
 /**
  * مساحة الرئيسية المخصصة للرفيق (§11.1 و§12): بطاقة في عمود التمرير نفسه،
- * بارتفاع ثابت، يشارك فيها التخطيط كأي بطاقة أخرى — لا overlay ولا تغطية.
+ * بارتفاع أدنى 168dp (L4: يكبر مع تكبير الخط بدل قصّ النص)، يشارك فيها
+ * التخطيط كأي بطاقة أخرى — لا overlay ولا تغطية.
  * يمينها/يسارها النموذج، وبجانبه نص قصير وزر يفتح المحادثة؛ البطاقة كلها
  * قابلة للضغط. عند تعطيل الرفيق لا تُركَّب البطاقة أصلًا فيستعيد التخطيط
  * مساحتها دون أن يتغير أي عنصر آخر.
@@ -354,7 +385,7 @@ internal fun CompanionHomeSlot(
         shape = RoundedCornerShape(FocusSpacing.radiusCard),
         modifier = modifier
             .fillMaxWidth()
-            .height(168.dp)
+            .heightIn(min = 168.dp)
             .clickable(onClick = onOpenAssistant)
     ) {
         Row(
@@ -380,7 +411,9 @@ internal fun CompanionHomeSlot(
                 Text(
                     text = "رفيقك ثلاثي الأبعاد — يرحب بك، ويحتفل معك بكل مهمة تُنجزها.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = FocusColors.TextSecondary
+                    color = FocusColors.TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = onOpenAssistant, shape = RoundedCornerShape(16.dp)) {
