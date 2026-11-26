@@ -90,15 +90,16 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            set +e
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.AdhanAlertEmulatorTest
-            TEST_EXIT=$?
+            TEST_EXIT=0
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.AdhanAlertEmulatorTest || TEST_EXIT=$?
             echo "gradle exit: $TEST_EXIT"
             # سحب اللقطات من التنزيلات المشتركة: الاختبار يصدّرها إليها عبر
             # MediaStore (انظر QaExport) لأن مجلد التطبيق الخارجي يُحذف
             # عند إلغاء تثبيت التطبيق بعد الاختبارات. سحب عادي بلا run-as.
+            # ملاحظة: نمط set +e وحده لم يمنع توقف السكربت عند فشل gradle
+            # في التشغيل الأول (المشغّل ينهي العملية)؛ نمط || هو الآمن مع -e.
             adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api${{ matrix.api-level }}" || echo "screenshot pull failed (app may have crashed before first shot)"
-            ls "./qa-screenshots-api${{ matrix.api-level }}"
+            ls "./qa-screenshots-api${{ matrix.api-level }}" || true
             adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
             exit $TEST_EXIT
 

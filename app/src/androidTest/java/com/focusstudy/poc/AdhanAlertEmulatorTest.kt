@@ -67,9 +67,8 @@ class AdhanAlertEmulatorTest {
         logFile = File(shotDir, "qa-log.txt")
         log("canScheduleExact=${NotificationMaintenance.canScheduleExact(context)}")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            runCatching {
-                log("canUseFullScreenIntent=${context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager}.canUseFullScreenIntent()")
-            }
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            log("canUseFullScreenIntent=${nm.canUseFullScreenIntent()}")
         }
     }
 
@@ -102,6 +101,26 @@ class AdhanAlertEmulatorTest {
         }
     }
 
+    /**
+     * الرؤية الفعلية على شاشة القفل — نفس منطق CTS Verifier: قيمة القناة إن
+     * حدّدت شيئًا، وإلا الإعداد العام للجهاز. التشغيل الأول أثبت أن النظام
+     * يعيد VISIBILITY_NO_OVERRIDE (-1000) لقناة أُنشئت مع PUBLIC على API 30
+     * و34 معًا؛ القيمة -1000 ليست عيبًا بل «لا تجاوز — اتبع الإعداد العام»،
+     * والعام الافتراضي PUBLIC (إشعارات القفل مفعّلة والمحتوى الخاص مسموح).
+     */
+    private fun effectiveVisibility(channel: android.app.NotificationChannel): Int {
+        val v = channel.lockscreenVisibility
+        if (v != NotificationManager.VISIBILITY_NO_OVERRIDE) return v
+        val cr = context.contentResolver
+        val show = android.provider.Settings.Secure.getInt(cr, "lock_screen_show_notifications", 1) == 1
+        val allowPrivate = android.provider.Settings.Secure.getInt(cr, "lock_screen_allow_private_notifications", 1) == 1
+        return when {
+            !show -> android.app.Notification.VISIBILITY_SECRET
+            !allowPrivate -> android.app.Notification.VISIBILITY_PRIVATE
+            else -> android.app.Notification.VISIBILITY_PUBLIC
+        }
+    }
+
     @Test
     fun test01_channelsAndRollingSchedule() {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -113,19 +132,21 @@ class AdhanAlertEmulatorTest {
             "PRAYER_AT must be HIGH (heads-up + full-screen)",
             NotificationManager.IMPORTANCE_HIGH, at!!.importance
         )
+        log("PRAYER_AT raw lockscreenVisibility=${at.lockscreenVisibility} (1=PUBLIC, -1000=NO_OVERRIDE)")
         assertEquals(
-            "PRAYER_AT must show fully on the lock screen",
-            android.app.Notification.VISIBILITY_PUBLIC, at.lockscreenVisibility
+            "PRAYER_AT must show fully on the lock screen (effective visibility)",
+            android.app.Notification.VISIBILITY_PUBLIC, effectiveVisibility(at)
         )
         assertEquals(
             "PRAYER_BEFORE must be HIGH",
             NotificationManager.IMPORTANCE_HIGH, before!!.importance
         )
+        log("PRAYER_BEFORE raw lockscreenVisibility=${before.lockscreenVisibility}")
         assertEquals(
-            "PRAYER_BEFORE must show fully on the lock screen",
-            android.app.Notification.VISIBILITY_PUBLIC, before.lockscreenVisibility
+            "PRAYER_BEFORE must show fully on the lock screen (effective visibility)",
+            android.app.Notification.VISIBILITY_PUBLIC, effectiveVisibility(before)
         )
-        log("channels OK: prayer_at_v4 HIGH/PUBLIC, prayer_before_v4 HIGH/PUBLIC")
+        log("channels OK: prayer_at_v4 HIGH/effective-PUBLIC, prayer_before_v4 HIGH/effective-PUBLIC")
 
         // الجدولة الحقيقية لنافذة الأيام السبعة، ثم إثبات وجود المنبهات في النظام.
         PrayerReminderScheduler.schedule(context)
@@ -206,13 +227,35 @@ class AdhanAlertEmulatorTest {
         // قفل الجهاز كما يكون وقت الفجر عادةً، ثم انتظار التنبيه.
         device.sleep()
         Thread.sleep(1000)
-        val shown = device.wait(Until.hasObject(By.text("حان وقت الأذان")), 90_000)
-        log("screenOn=${device.isScreenOn} alertShown=$shown")
+        val textFound = device.wait(Until.hasObject(By.text("حان وقت الأذان")), 90_000)
+        log("screenOn=${device.isScreenOn} textFound=$textFound")
         shot("01_adhan_fullscreen_lock.png")
-        assertTrue("Full-screen adhan alert never appeared on the locked device", shown)
+        // دليل مستقل عن UiAutomator: التشغيل الأول أثبت أن النشاط يُعرض
+        // فوق القفل على API 34 (Displayed + setOccluded(true)) بينما لا يرى
+        // UiAutomator نصوص نافذة showWhenLocked والقفل نشط — فالحكم هنا على
+        // حالة النشاط الفعلية من النظام، والنص مجرد ملاحظة مسجلة.
+        val activities = shellOutput("dumpsys activity activities")
+        val actLines = activities.lines()
+        val idx = actLines.indexOfFirst { it.contains("PrayerAlertActivity") }
+        val window = if (idx >= 0) actLines.subList(idx, minOf(idx + 40, actLines.size)) else emptyList()
+        window.take(8).forEach { log("  ACT: $it") }
+        val resumed = window.any {
+            it.contains("RESUMED", ignoreCase = true) || it.contains("mResumed=true")
+        }
+        val windows = shellOutput("dumpsys window windows")
+        val focus = windows.lineSequence()
+            .filter { it.contains("mCurrentFocus") || it.contains("mFocusedApp") }.take(4).toList()
+        focus.forEach { log("  WIN: $it") }
+        val alertFocused = focus.any { it.contains("PrayerAlertActivity") }
+        val foregroundPackage = device.currentPackageName
+        log("foregroundPackage=$foregroundPackage textFound=$textFound resumed=$resumed alertFocused=$alertFocused")
+        assertTrue(
+            "PrayerAlertActivity is not resumed/focused on the locked device",
+            idx >= 0 && (resumed || alertFocused)
+        )
         assertEquals(
             "Alert activity is not the foreground package",
-            context.packageName, device.currentPackageName
+            context.packageName, foregroundPackage
         )
 
         // الإشعار نفسه منشور على قناة الأذان؟
