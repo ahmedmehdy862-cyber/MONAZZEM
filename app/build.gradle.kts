@@ -111,4 +111,8 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // Robolectric for the DB migration test (DbMigrationV16ToV17Test): the migration
+    // is pure SQLite, so no device is needed. Pinned to 4.14.1 (supports the SDK 35
+    // runtime the test pins itself to with @Config).
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

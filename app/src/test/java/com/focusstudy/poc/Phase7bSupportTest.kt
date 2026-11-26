@@ -5,8 +5,8 @@ import org.junit.Test
 
 /**
  * Phase 7b: pure-logic checks for the local support-message model. The database
- * itself (migration v16 → v17, round-trips) needs a device or Robolectric and is
- * covered by the manual verification notes in the phase report, not here.
+ * itself (migration v16 → v17, round-trips) is covered by the Robolectric test
+ * [DbMigrationV16ToV17Test], not here.
  */
 class Phase7bSupportTest {
 
