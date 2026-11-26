@@ -1,9 +1,11 @@
 package com.focusstudy.poc
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -31,6 +35,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -114,8 +122,25 @@ internal fun QuranReaderScreen(
                     )
                 }
                 val display = if (rest.isBlank()) ayah.text else rest
+                // علامة نهاية الآية مرسومة لا نصية (انظر [AyahEndMarker]): حرف «۝»
+                // النصي زخرفة صغيرة لا تتسع لرقم داخلها، فكان الرقم يظهر خارج الدائرة.
+                val markerId = "ayahEnd"
+                val annotated = buildAnnotatedString {
+                    append(display)
+                    append(" ")
+                    appendInlineContent(markerId, "[" + QuranData.arabicDigits(ayah.ayah) + "]")
+                }
                 Text(
-                    display + "  ۝" + QuranData.arabicDigits(ayah.ayah),
+                    text = annotated,
+                    inlineContent = mapOf(
+                        markerId to InlineTextContent(
+                            Placeholder(
+                                width = 30.sp,
+                                height = 30.sp,
+                                placeholderVerticalAlign = PlaceholderVerticalAlign.Center
+                            )
+                        ) { AyahEndMarker(number = ayah.ayah) }
+                    ),
                     fontSize = 21.sp,
                     lineHeight = 40.sp,
                     color = FocusColors.TextPrimary
@@ -275,5 +300,48 @@ internal fun QuranReaderScreen(
                 textAlign = TextAlign.Center
             )
         }
+    }
+}
+
+/**
+ * علامة نهاية الآية: رقم الآية داخل دائرة مرسومة.
+ *
+ * كان الرقم يُعرض كنص بعد حرف «۝» (U+06DD) — وحرف ۝ في الخطوط المتاحة زخرفة
+ * صغيرة لا تتسع لرقم داخلها، فكان الرقم يظهر خارج الدائرة أو بجانبها. هنا
+ * تُرسم الدائرة بـ Canvas ويُركَّز الرقم داخلها، فيبقى داخلها تمامًا في كل
+ * الأحجام والخطوط والوضعين الفاتح والداكن (نفس لون النص في الحالتين).
+ *
+ * الحجم مضبوط بوحدة sp عبر الـ Placeholder في موضع الاستخدام، فيكبر مع تكبير
+ * خط المستخدم؛ والرقم يصغر كلما زادت خاناته حتى يتسع داخل الدائرة (أكبر رقم
+ * آية في المصحف 286 — ثلاث خانات).
+ */
+@Composable
+private fun AyahEndMarker(number: Int) {
+    val digits = QuranData.arabicDigits(number)
+    val numberSize = when (digits.length) {
+        1 -> 14.sp
+        2 -> 13.sp
+        else -> 11.sp
+    }
+    Box(
+        Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = 1.5.dp.toPx()
+            drawCircle(
+                color = FocusColors.TextPrimary,
+                radius = (size.minDimension - stroke) / 2f,
+                style = Stroke(width = stroke)
+            )
+        }
+        Text(
+            digits,
+            fontSize = numberSize,
+            lineHeight = numberSize,
+            color = FocusColors.TextPrimary,
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
     }
 }
