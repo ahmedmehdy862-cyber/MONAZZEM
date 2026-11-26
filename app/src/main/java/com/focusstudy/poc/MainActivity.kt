@@ -715,6 +715,30 @@ private fun AppRoot(
     // The assistant's display name, renameable from its own screen; the drawer row
     // and the conversation title read this state, not a hard-coded «منظم».
     var assistantName by remember { mutableStateOf(AssistantStore.loadSettings(context).name) }
+    // Real back history (phase 2): the old single `previousRootTab` slot kept only the
+    // last root, so back from a chain like «المزيد ← التخصيص ← التطبيقات الدائمة»
+    // jumped straight to the start. The stack below is capped so it cannot grow
+    // without bound, and it is cleared on every root jump (bottom bar / drawer).
+    // بدء بارد من إشعار: «اليوم» قاعدة في المكدس، فيعود زر الرجوع إلى الرئيسية
+    // بدل الخروج من التطبيق. البدء البارد من المصحف/المهارات يأتي عبر عدّاد
+    // الإشعار، فيدفع openSecondary «اليوم» إلى المكدس عند استقباله.
+    var backStack by rememberSaveable { mutableStateOf(if (initialRoot == "today") emptyList() else listOf("today")) }
+    fun openSecondary(tab: String) {
+        if (tab == rootTab) return
+        backStack = (backStack + rootTab).takeLast(MAX_BACK_STACK_ENTRIES)
+        rootTab = tab
+    }
+    /** A root jump (bottom bar / drawer): the old chain no longer applies. */
+    fun openRoot(tab: String) {
+        backStack = emptyList()
+        rootTab = tab
+    }
+    fun returnToPreviousTab() {
+        val previous = backStack.lastOrNull()
+        backStack = backStack.dropLast(1)
+        rootTab = previous ?: "today"
+    }
+
     // A reminder tapped while the app is already running: onNewIntent bumps this counter.
     // Every destination below goes through openSecondary, not a bare assignment, so
     // the root the person was on is pushed onto the back stack and back returns to it.
@@ -748,29 +772,6 @@ private fun AppRoot(
     var sectionsOpen by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val drawerScope = rememberCoroutineScope()
-    // Real back history (phase 2): the old single `previousRootTab` slot kept only the
-    // last root, so back from a chain like «المزيد ← التخصيص ← التطبيقات الدائمة»
-    // jumped straight to the start. The stack below is capped so it cannot grow
-    // without bound, and it is cleared on every root jump (bottom bar / drawer).
-    // بدء بارد من إشعار: «اليوم» قاعدة في المكدس، فيعود زر الرجوع إلى الرئيسية
-    // بدل الخروج من التطبيق. البدء البارد من المصحف/المهارات يأتي عبر عدّاد
-    // الإشعار، فيدفع openSecondary «اليوم» إلى المكدس عند استقباله.
-    var backStack by rememberSaveable { mutableStateOf(if (initialRoot == "today") emptyList() else listOf("today")) }
-    fun openSecondary(tab: String) {
-        if (tab == rootTab) return
-        backStack = (backStack + rootTab).takeLast(MAX_BACK_STACK_ENTRIES)
-        rootTab = tab
-    }
-    /** A root jump (bottom bar / drawer): the old chain no longer applies. */
-    fun openRoot(tab: String) {
-        backStack = emptyList()
-        rootTab = tab
-    }
-    fun returnToPreviousTab() {
-        val previous = backStack.lastOrNull()
-        backStack = backStack.dropLast(1)
-        rootTab = previous ?: "today"
-    }
 
     /**
      * ينفّذ طلب المساعد ببدء جلسة تركيز عبر مسار بدء الجلسة القائم

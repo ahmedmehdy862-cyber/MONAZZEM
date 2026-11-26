@@ -943,7 +943,7 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         sendLabel = "إرسال إلى فريق مُنظِّم",
                         result = complaintResult,
                         onSend = {
-                            submit(false, complaintBody, complaintImages, onCopied = { copied -> complaintCopiedPaths = copied }) { ok, copyFailures, reference, serverId ->
+                            submit(false, complaintBody, complaintImages, onResult = { ok, copyFailures, reference, serverId ->
                                 complaintSentReference = reference
                                 complaintServerId = serverId
                                 complaintResult = if (ok) {
@@ -954,7 +954,9 @@ internal fun SupportScreen(onBack: () -> Unit) {
                                 // ح1(ج): يُمسح النص فورًا فقط حين لا توجد صور تنتظر المشاركة؛
                                 // مع وجود صور يبقى النص حتى تُشارك الصور بالزر أدناه.
                                 if (ok && complaintImages.isEmpty()) complaintBody = ""
-                            }
+                            },
+                                onCopied = { copied -> complaintCopiedPaths = copied }
+                            )
                         },
                         onShareImages = {
                             val shared = shareSupportImages(
@@ -987,7 +989,7 @@ internal fun SupportScreen(onBack: () -> Unit) {
                         sendLabel = "إرسال الاقتراح",
                         result = suggestionResult,
                         onSend = {
-                            submit(true, suggestionBody, suggestionImages, onCopied = { copied -> suggestionCopiedPaths = copied }) { ok, copyFailures, reference, serverId ->
+                            submit(true, suggestionBody, suggestionImages, onResult = { ok, copyFailures, reference, serverId ->
                                 suggestionSentReference = reference
                                 suggestionServerId = serverId
                                 suggestionResult = if (ok) {
@@ -997,7 +999,9 @@ internal fun SupportScreen(onBack: () -> Unit) {
                                 suggestionResult += copyFailureNote(copyFailures)
                                 // ح1(ج): يُمسح النص فورًا فقط حين لا توجد صور تنتظر المشاركة.
                                 if (ok && suggestionImages.isEmpty()) suggestionBody = ""
-                            }
+                            },
+                                onCopied = { copied -> suggestionCopiedPaths = copied }
+                            )
                         },
                         onShareImages = {
                             val shared = shareSupportImages(

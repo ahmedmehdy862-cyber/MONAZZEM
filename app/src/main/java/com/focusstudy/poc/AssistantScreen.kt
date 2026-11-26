@@ -154,31 +154,6 @@ internal fun AssistantScreen(
         AssistantStore.saveHistory(context, messages)
     }
 
-    fun send(rawText: String) {
-        val clean = rawText.trim()
-        if (clean.isBlank()) return
-        input = ""
-        voiceNote = null
-        avatarState = AssistantAvatarState.TALKING
-        addMessage("user", clean)
-        scope.launch {
-            val fresh = AssistantKnowledge.load(context, userName)
-            snapshot = fresh
-            val reply = AssistantEngine.reply(clean, fresh, settings, facts, profile, today = today, zone = zone)
-            reply.learnedFact?.let { learned ->
-                facts = facts + learned
-                AssistantStore.saveFacts(context, facts)
-            }
-            // الفعل يُنفَّذ أولًا، ثم يُعرض تأكيده: نص المحرك عند النجاح، أو
-            // رسالة بديلة دقيقة عند الفشل أو عند فتح إعداد الجلسة بدل بدئها.
-            val finalText = reply.action?.let { executeAssistantAction(it, reply.text) } ?: reply.text
-            addMessage("assistant", finalText)
-            if (settings.speakReplies) voice.speak(finalText)
-            delay(finalText.length.coerceIn(30, 130) * 45L)
-            avatarState = AssistantAvatarState.IDLE
-        }
-    }
-
     /**
      * ينفّذ فعل المساعد عبر دوال رد النداء من MainActivity، ويعيد نص التأكيد
      * النهائي للعرض في المحادثة.
@@ -213,6 +188,31 @@ internal fun AssistantScreen(
         AssistantAction.OpenToday -> {
             onAssistantOpenToday()
             confirmation
+        }
+    }
+
+    fun send(rawText: String) {
+        val clean = rawText.trim()
+        if (clean.isBlank()) return
+        input = ""
+        voiceNote = null
+        avatarState = AssistantAvatarState.TALKING
+        addMessage("user", clean)
+        scope.launch {
+            val fresh = AssistantKnowledge.load(context, userName)
+            snapshot = fresh
+            val reply = AssistantEngine.reply(clean, fresh, settings, facts, profile, today = today, zone = zone)
+            reply.learnedFact?.let { learned ->
+                facts = facts + learned
+                AssistantStore.saveFacts(context, facts)
+            }
+            // الفعل يُنفَّذ أولًا، ثم يُعرض تأكيده: نص المحرك عند النجاح، أو
+            // رسالة بديلة دقيقة عند الفشل أو عند فتح إعداد الجلسة بدل بدئها.
+            val finalText = reply.action?.let { executeAssistantAction(it, reply.text) } ?: reply.text
+            addMessage("assistant", finalText)
+            if (settings.speakReplies) voice.speak(finalText)
+            delay(finalText.length.coerceIn(30, 130) * 45L)
+            avatarState = AssistantAvatarState.IDLE
         }
     }
 
@@ -595,8 +595,8 @@ internal fun AssistantAvatar(
             )
         }
         Canvas(Modifier.fillMaxSize().offset(y = (-bob.value).dp)) {
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val radius = size.minDimension / 2f
+            val center = Offset(this.size.width / 2f, this.size.height / 2f)
+            val radius = this.size.minDimension / 2f
             drawCircle(color = background, radius = radius, center = center)
             drawCircle(color = skin, radius = radius * 0.72f, center = center)
             // الشعر: قوس علوي بنفس لوحة الكرتون.
