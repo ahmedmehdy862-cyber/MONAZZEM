@@ -126,6 +126,10 @@ dependencies {
     // pick (see FaceAnalyzer); when no face is found the old colour-seed cartoon
     // is kept, so nothing regresses.
     implementation("com.google.mlkit:face-detection:16.1.7")
+    // Tasks API ‏(play-services-tasks): يعتمد عليها FaceAnalyzer مباشرةً
+    // (MlKit.initialize()‎ يرجع Task، وaddOnSuccessListener/addOnFailureListener
+    // من هذه المكتبة) — كانت تصل ترانزيتيف فقط فلا تظهر في compile classpath.
+    implementation("com.google.android.gms:play-services-tasks:18.4.1")
     // EXIF orientation for camera photos picked for the avatar (see FaceAnalyzer).
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     // 3D companion «منظم» (0.34.0): SceneView فوق Filament — العارض التصريحي
