@@ -43,6 +43,9 @@ class QuranZoomScreenshotTest {
     private lateinit var shotDir: File
     private lateinit var logFile: File
     private var scenario: androidx.test.core.app.ActivityScenario<MainActivity>? = null
+    // تُضبط في launch(): تُلحق بأسماء ملفات التشخيص حتى لا يمحو اختبار
+    // الداكن دليل اختبار الفاتح (QaExport يحذف النسخة السابقة بنفس الاسم).
+    private var currentTheme = "light"
 
     @After
     fun tearDown() {
@@ -101,6 +104,7 @@ class QuranZoomScreenshotTest {
     }
 
     private fun launch(theme: String, zoomLevel: Int = QuranZoom.DEFAULT_LEVEL) {
+        currentTheme = theme
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         val ctx = appContext()
         shotDir = File(ctx.getExternalFilesDir(null), "qa-screenshots").apply { mkdirs() }
@@ -111,6 +115,10 @@ class QuranZoomScreenshotTest {
         composeRule.waitForIdle()
         Thread.sleep(1500)
         log("launched MainActivity theme=$theme zoom=$zoomLevel")
+        // لقطة + هرمية للشاشة الرئيسية قبل أي تنقّل: إن فشل فتح «الأقسام»
+        // يبيّنان ما الذي كان على الشاشة فعلًا (حوار إذن؟ إعداد أولي؟).
+        shot("home-after-launch-$currentTheme")
+        dumpHierarchy("home-after-launch-$currentTheme")
     }
 
     private fun relaunchKeepPrefs() {
@@ -127,6 +135,17 @@ class QuranZoomScreenshotTest {
         val ok = runCatching { device.takeScreenshot(file) }.getOrDefault(false)
         val size = if (file.exists()) file.length() else -1
         log("shot $name ok=$ok size=$size")
+    }
+
+    /**
+     * يفرّغ هرمية النافذة الحالية إلى ملف يُصدَّر مع اللقطات: عند فشل تنقّل
+     * ما (كأن لا يظهر زر «الأقسام») يبيّن الملف النصوص الموجودة فعلًا على
+     * الشاشة، بدل التخمين من لقطة وحدها.
+     */
+    private fun dumpHierarchy(name: String) {
+        val file = File(shotDir, "$name.xml")
+        val ok = runCatching { device.dumpWindowHierarchy(file) }.getOrDefault(false)
+        log("hierarchy $name ok=$ok size=${if (file.exists()) file.length() else -1}")
     }
 
     private fun clickText(label: String) {
@@ -179,6 +198,13 @@ class QuranZoomScreenshotTest {
             device.wait(Until.hasObject(By.text("كل الأقسام")), 10000)
         }.getOrDefault(false)
         log("SHEET CHECK after [الأقسام]: open=$sheetOpen")
+        // فشل سريع موثّق بدل متابعة التصوير على شاشة خاطئة: إن لم تفتح
+        // الورقة فاللقطة والهرمية هنا هما الدليل التشخيصي.
+        if (!sheetOpen) {
+            shot("nav-debug-home-$currentTheme")
+            dumpHierarchy("nav-debug-home-$currentTheme")
+        }
+        assertTrue("sections sheet [كل الأقسام] must open after tapping [الأقسام]", sheetOpen)
         val visible = scrollSheetTo(title)
         log("SHEET SCROLL [$title]: visible=$visible")
         clickText(title)
@@ -186,6 +212,11 @@ class QuranZoomScreenshotTest {
             device.wait(Until.hasObject(By.text("رجوع")), 10000)
         }.getOrDefault(false)
         log("NAV CHECK [$title]: arrived=$arrived")
+        if (!arrived) {
+            shot("nav-debug-after-sheet-$currentTheme")
+            dumpHierarchy("nav-debug-after-sheet-$currentTheme")
+        }
+        assertTrue("reader screen must open after tapping [$title]", arrived)
     }
 
     /** النقر على زرّي الزوم «−» / «+» في صف الزوم أعلى نص المصحف. */
@@ -197,8 +228,8 @@ class QuranZoomScreenshotTest {
         composeRule.waitForIdle()
     }
 
-    private fun assertZoomLabel(percentArabic: String) {
-        val label = "حجم الخط $percentArabic٪"
+    private fun assertZoomLabel(percent: String) {
+        val label = "حجم الخط $percent٪"
         val found = device.wait(Until.hasObject(By.text(label)), 5000)
         log("ZOOM LABEL [$label]: found=$found")
         assertTrue("zoom label [$label] must be visible", found)
@@ -230,15 +261,15 @@ class QuranZoomScreenshotTest {
     /** لقطات الزوم الثلاثة لصفحة واحدة: افتراضي، أدنى، أقصى — ثم عودة للافتراضي. */
     private fun shootPageZooms(page: Int, prefix: String) {
         shot("${prefix}-default")
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
         zoomTap("−", 2)
         shot("${prefix}-min")
-        assertZoomLabel("٧٥")
+        assertZoomLabel("75")
         zoomTap("+", 4)
         shot("${prefix}-max")
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         zoomTap("−", 2)
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
     }
 
     @Test
@@ -255,7 +286,7 @@ class QuranZoomScreenshotTest {
         // الحفظ: آخر مستوى مضبوط بالأزرار كان الأقصى قبل العودة للافتراضي
         // في shootPageZooms؛ نضبط الأقصى صراحةً ثم نتحقق من التفضيلة.
         zoomTap("+", 2)
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         val saved = QuranZoom.loadZoomLevel(appContext())
         log("ZOOM PREF after +2: $saved")
         assertEquals(QuranZoom.MAX_LEVEL, saved)
@@ -265,11 +296,11 @@ class QuranZoomScreenshotTest {
         goBack()
         relaunchKeepPrefs()
         openSection("المصحف")
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         shot("quran-p2-zoom-max-relaunch")
         // إعادة للافتراضي عبر الضغط على النسبة نفسها.
-        clickText("حجم الخط ١٣٠٪")
-        assertZoomLabel("١٠٠")
+        clickText("حجم الخط 130٪")
+        assertZoomLabel("100")
         assertEquals(QuranZoom.DEFAULT_LEVEL, QuranZoom.loadZoomLevel(appContext()))
     }
 
@@ -278,13 +309,13 @@ class QuranZoomScreenshotTest {
         launch("dark")
         openSection("المصحف")
         shot("quran-p2-zoom-default-dark")
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
         zoomTap("+", 2)
         shot("quran-p2-zoom-max-dark")
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         zoomTap("−", 2)
         jumpToPage(597)
         shot("quran-p597-zoom-default-dark")
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
     }
 }
