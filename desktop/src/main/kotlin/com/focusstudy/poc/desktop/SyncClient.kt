@@ -18,7 +18,9 @@ import java.time.Duration
  * نفس النقطة (POST /api/sync)، ونفس الأفعال الثلاثة (register/pull/push)،
  * ونفس القواعد:
  *  - الخادم: update-site/api/sync.js + lib/sync-store.js.
- *  - كلمة المرور تُرسل في جسم الطلب عبر HTTPS فقط، ولا تُحفظ على الجهاز.
+ *  - كلمة المرور تُرسل في جسم الطلب عبر HTTPS فقط، وتُحفظ على الجهاز
+ *    في Windows Credential Manager حصرًا (لا ملف ولا قاعدة بيانات) —
+ *    انظر WindowsCredentialStore؛ فتستعيدها المزامنة التلقائية عند الفتح.
  *  - الدمج last-write-wins لكل سجل؛ والطابع الزمني المتساوي يُبقي الصف
  *    المحلي، فلا يعتمد الترتيب على من يتكلم أخيرًا.
  *  - البصمات تُحفظ فقط بعد أن يقبل الخادم الـ push، فلا يبدو تغيير محلي
@@ -132,7 +134,7 @@ data class LastSync(val at: Long, val revision: Long, val ok: Boolean, val messa
 
 sealed interface SyncOutcome {
     data class Ok(val snapshot: SyncSnapshot?) : SyncOutcome
-    data class Error(val message: String) : SyncOutcome
+    data class Error(val message: String, val status: Int = 0) : SyncOutcome
 }
 
 class SyncClient(
@@ -143,8 +145,28 @@ class SyncClient(
         .connectTimeout(Duration.ofSeconds(20))
         .build()
 
-    /** التسجيل الأول ينشئ الحساب؛ وتغيير كلمة المرور يتطلب الحالية. */
+    /**
+     * التسجيل الأول ينشئ الحساب؛ وتغيير كلمة المرور يتطلب الحالية.
+     *
+     * إصلاح جذري لمسار الربط: الخادم (`update-site/api/sync.js`) يرفض
+     * `register` لحساب موجود بلا `currentPassphrase` صحيح (401) — وأندرويد
+     * لا يقع فيه لأنه يسجّل مرة واحدة عند إنشاء الحساب، بينما ويندوز
+     * يستدعي `register` عند كل ربط. فربط ويندوز الأول لحساب سُجّل من
+     * الهاتف كان يفشل بكلمة المرور الصحيحة نفسها إن تُرك حقل «الحالية»
+     * فارغًا. لذلك: عند 401 بلا current تُعاد المحاولة مرة واحدة
+     * بـ currentPassphrase = passphrase نفسها — أي «اربط بالحساب الموجود
+     * بكلمة مروره الحالية»؛ وتثبيت نفس القيمة عبر setAccount لا يغيّرها.
+     * كلمة مرور خاطئة تفشل في المحاولتين معًا، وحساب جديد ينجح من الأولى.
+     */
     fun register(profileId: String, passphrase: String, currentPassphrase: String? = null): SyncOutcome {
+        val first = registerAttempt(profileId, passphrase, currentPassphrase)
+        if (first is SyncOutcome.Error && first.status == 401 && currentPassphrase == null) {
+            return registerAttempt(profileId, passphrase, passphrase)
+        }
+        return first
+    }
+
+    private fun registerAttempt(profileId: String, passphrase: String, currentPassphrase: String?): SyncOutcome {
         val body = json.encodeToString(
             SyncRequest("register", profileId, passphrase, currentPassphrase = currentPassphrase)
         )
@@ -155,7 +177,7 @@ class SyncClient(
                 }.getOrDefault(false)
                 if (ok) SyncOutcome.Ok(null) else SyncOutcome.Error("تعذّر ربط الحساب")
             }
-            is PostResult.Failed -> SyncOutcome.Error(result.message)
+            is PostResult.Failed -> SyncOutcome.Error(result.message, result.status)
         }
     }
 
@@ -166,7 +188,7 @@ class SyncClient(
                 SyncOutcome.Ok(json.decodeFromString<SyncSnapshot>(result.body))
             }.getOrElse { SyncOutcome.Error("رد غير مفهوم من الخادم") }
 
-            is PostResult.Failed -> SyncOutcome.Error(result.message)
+            is PostResult.Failed -> SyncOutcome.Error(result.message, result.status)
         }
     }
 
@@ -178,13 +200,13 @@ class SyncClient(
                 SyncOutcome.Ok(json.decodeFromString<SyncSnapshot>(result.body))
             }.getOrElse { SyncOutcome.Error("رد غير مفهوم من الخادم") }
 
-            is PostResult.Failed -> SyncOutcome.Error(result.message)
+            is PostResult.Failed -> SyncOutcome.Error(result.message, result.status)
         }
     }
 
     private sealed interface PostResult {
         data class Ok(val body: String) : PostResult
-        data class Failed(val message: String) : PostResult
+        data class Failed(val message: String, val status: Int = 0) : PostResult
     }
 
     private fun post(body: String): PostResult {
@@ -210,7 +232,8 @@ class SyncClient(
                 error.contains("invalid_passphrase") -> "كلمة المرور بين 10 و 200 حرف"
                 error.contains("invalid_profile") -> "معرّف الحساب غير صالح"
                 else -> "فشلت المزامنة (رمز ${response.statusCode()})"
-            }
+            },
+            status = response.statusCode(),
         )
     }
 }
