@@ -2,4 +2,7 @@
 <paths>
     <!-- Private copies of images attached to support messages (phase 7b). -->
     <files-path name="support_images" path="support_images/" />
+    <!-- APKs downloaded by the direct in-app updater (0.32.0): app-private external
+         Downloads dir, served to the system installer through FileProvider only. -->
+    <external-files-path name="updates" path="Download/" />
 </paths>

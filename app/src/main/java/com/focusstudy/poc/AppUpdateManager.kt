@@ -23,7 +23,9 @@ internal data class AppRelease(
     val versionName: String,
     val storeUrl: String,
     val releasePageUrl: String,
-    val releaseNotes: String
+    val releaseNotes: String,
+    /** رابط ملف APK المباشر من الموجز؛ فارغ إن لم ينشره الموجز بعد. */
+    val apkUrl: String
 )
 
 internal sealed interface UpdateCheckResult {
@@ -109,7 +111,9 @@ internal object AppUpdateManager {
                 versionName = json.optString("versionName", versionCode.toString()),
                 storeUrl = storeUrl,
                 releasePageUrl = releasePage,
-                releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة.")
+                releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة."),
+                apkUrl = json.optString("apkUrl").trim().takeIf { it.isNotEmpty() }
+                    ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty()
             )
 
             preferences.edit()
@@ -146,7 +150,9 @@ internal object AppUpdateManager {
                 storeUrl = json.optString("storeUrl").trim().takeIf { it.isNotEmpty() }
                     ?.let { requireHttps(it, "رابط المتجر") }.orEmpty(),
                 releasePageUrl = requireHttps(json.getString("releasePageUrl"), "صفحة الإصدار"),
-                releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة.")
+                releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة."),
+                apkUrl = json.optString("apkUrl").trim().takeIf { it.isNotEmpty() }
+                    ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty()
             )
             if (release.versionCode > currentVersionCode(context)) UpdateCheckResult.Available(release)
             else UpdateCheckResult.UpToDate
@@ -179,7 +185,7 @@ internal object AppUpdateManager {
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val message = "الإصدار ${release.versionName} يضيف تحسينات جديدة. افتح التطبيق للتحديث من المتجر."
+        val message = "الإصدار ${release.versionName} يضيف تحسينات جديدة. افتح التطبيق لتنزيله وتثبيته مباشرةً من الداخل."
         val notification = AppNotifications.builder(
             context = context,
             channel = AppNotifications.UPDATE,

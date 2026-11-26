@@ -1,5 +1,6 @@
 package com.focusstudy.poc
 
+import android.app.DownloadManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -57,6 +58,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -1033,6 +1035,11 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    // التنزيل المباشر (0.32.0): حالة التنزيل الحالية، ونافذة بوابة إذن التثبيت
+    // المعلّقة، والإصدار الذي طُلب تنزيله قبل فتح إعدادات النظام.
+    var downloadState by remember { mutableStateOf<DirectDownloadState>(DirectDownloadState.Idle) }
+    var installDialog by remember { mutableStateOf<InstallGateDialogKind?>(null) }
+    var pendingRelease by remember { mutableStateOf<AppRelease?>(null) }
 
     fun runCheck(manual: Boolean) {
         if (checking || !AppUpdateManager.configured()) return
@@ -1044,6 +1051,112 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
     }
 
     LaunchedEffect(Unit) { runCheck(manual = false) }
+
+    // يستعلم عن التنزيل كل ثانية حتى ينتهي؛ يبقى DownloadManager نفسه يعمل
+    // حتى لو غادر المستخدم الشاشة، وتُستعاد الحالة عند العودة (انظر أدناه).
+    fun pollDownload(downloadId: Long) {
+        scope.launch {
+            while (true) {
+                delay(1000)
+                val query = withContext(Dispatchers.IO) {
+                    DirectUpdateDownloader.queryDownload(context, downloadId)
+                }
+                when (query.status) {
+                    DownloadManager.STATUS_SUCCESSFUL -> {
+                        downloadState = DirectDownloadState.ReadyToInstall
+                        return@launch
+                    }
+                    DownloadManager.STATUS_RUNNING,
+                    DownloadManager.STATUS_PENDING,
+                    DownloadManager.STATUS_PAUSED -> {
+                        val progress = if (query.totalBytes > 0) {
+                            query.downloadedBytes.toFloat() / query.totalBytes.toFloat()
+                        } else -1f
+                        downloadState = DirectDownloadState.Downloading(progress)
+                    }
+                    else -> {
+                        downloadState = DirectDownloadState.Failed(
+                            "تعذّر تنزيل التحديث. تحقق من الاتصال وحاول مجددًا، أو حمّله من المتجر."
+                        )
+                        return@launch
+                    }
+                }
+            }
+        }
+    }
+
+    fun doDownload(release: AppRelease) {
+        downloadState = DirectDownloadState.Downloading(-1f)
+        scope.launch {
+            val downloadId = withContext(Dispatchers.IO) {
+                runCatching { DirectUpdateDownloader.startDownload(context, release) }.getOrNull()
+            }
+            if (downloadId == null) {
+                downloadState = DirectDownloadState.Failed(
+                    "تعذّر بدء التنزيل. تحقق من الاتصال وحاول مجددًا، أو حمّله من المتجر."
+                )
+            } else {
+                pollDownload(downloadId)
+            }
+        }
+    }
+
+    // نقطة الدخول الوحيدة لضغطة التنزيل المباشر: الإذن ممنوح ← التنزيل فورًا؛
+    // سبق فتح الإعدادات ورُفض ← التلميح اليدوي فقط؛ لم يُطلب قط ← الشرح أولًا.
+    fun requestDirectDownload(release: AppRelease) {
+        when {
+            InstallPermissionGate.canInstall(context) -> doDownload(release)
+            InstallPermissionGate.wasAsked(context) -> {
+                pendingRelease = release
+                installDialog = InstallGateDialogKind.DENIED_HINT
+            }
+            else -> {
+                pendingRelease = release
+                installDialog = InstallGateDialogKind.EXPLAIN
+            }
+        }
+    }
+
+    // العودة من إعدادات التثبيت: إن مُنح الإذن يبدأ التنزيل فورًا، وإلا تُعرض
+    // نافذة التلميح اليدوي مرة واحدة (بلا أي فتح تلقائي آخر للإعدادات).
+    val installSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        val release = pendingRelease
+        pendingRelease = null
+        if (release != null && InstallPermissionGate.canInstall(context)) {
+            doDownload(release)
+        } else if (release != null) {
+            installDialog = InstallGateDialogKind.DENIED_HINT
+        }
+    }
+
+    // استعادة حالة تنزيل سابق عند ظهور إصدار متاح: ملف مكتمل ← جاهز للتثبيت،
+    // وتنزيل جارٍ لنفس الإصدار ← متابعة الاستعلام عنه (بلا إعادة تنزيل).
+    LaunchedEffect(result) {
+        val release = (result as? UpdateCheckResult.Available)?.release ?: return@LaunchedEffect
+        if (downloadState !is DirectDownloadState.Idle) return@LaunchedEffect
+        if (DirectUpdateDownloader.hasDownloadedApk(context, release)) {
+            downloadState = DirectDownloadState.ReadyToInstall
+            return@LaunchedEffect
+        }
+        val lastId = DirectUpdateDownloader.lastDownloadId(context)
+        if (lastId != 0L && DirectUpdateDownloader.lastDownloadVersionCode(context) == release.versionCode) {
+            val query = withContext(Dispatchers.IO) {
+                DirectUpdateDownloader.queryDownload(context, lastId)
+            }
+            if (query.status == DownloadManager.STATUS_RUNNING ||
+                query.status == DownloadManager.STATUS_PENDING ||
+                query.status == DownloadManager.STATUS_PAUSED
+            ) {
+                val progress = if (query.totalBytes > 0) {
+                    query.downloadedBytes.toFloat() / query.totalBytes.toFloat()
+                } else -1f
+                downloadState = DirectDownloadState.Downloading(progress)
+                pollDownload(lastId)
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1067,7 +1180,52 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(6.dp))
                     Text(release.releaseNotes.ifBlank { "تحسينات وإصلاحات جديدة." }, color = FocusColors.TextSecondary)
                     Spacer(Modifier.height(10.dp))
-                    if (release.storeUrl.isNotBlank()) {
+                    if (release.apkUrl.isNotBlank()) {
+                        // التنزيل المباشر: زر أساسي ينزّل APK من الموجز ويثبّته من داخل
+                        // التطبيق؛ المتجر يبقى خيارًا احتياطيًا تحته.
+                        val downloading = downloadState is DirectDownloadState.Downloading
+                        Button(
+                            onClick = {
+                                if (downloadState is DirectDownloadState.ReadyToInstall) {
+                                    if (!DirectUpdateDownloader.installDownloadedApk(context, release)) {
+                                        downloadState = DirectDownloadState.Failed("تعذّر فتح ملف التحديث. أعد التنزيل أو حمّله من المتجر.")
+                                    }
+                                } else {
+                                    requestDirectDownload(release)
+                                }
+                            },
+                            enabled = !downloading,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text(
+                                when (downloadState) {
+                                    is DirectDownloadState.ReadyToInstall -> "تثبيت التحديث · ${release.versionName}"
+                                    is DirectDownloadState.Failed -> "إعادة تنزيل التحديث"
+                                    else -> "تنزيل وتثبيت · ${release.versionName}"
+                                }
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        when (val state = downloadState) {
+                            is DirectDownloadState.Downloading -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                                Text(if (state.progress >= 0f) "جارٍ التنزيل… ${(state.progress * 100).toInt()}%" else "جارٍ التنزيل…", color = FocusColors.TextSecondary)
+                            }
+                            is DirectDownloadState.ReadyToInstall -> Text("اكتمل التنزيل. اضغط «تثبيت التحديث» وسيُفتح مثبّت النظام؛ وافق على التثبيت لتحديث النسخة الحالية مع بقاء بياناتك.", color = FocusColors.TextSecondary)
+                            is DirectDownloadState.Failed -> Text(state.message, color = FocusColors.Error)
+                            is DirectDownloadState.Idle -> Text("يُنزَّل التحديث مباشرةً من داخل التطبيق دون فتح المتجر، ويُثبَّت فوق النسخة الحالية مع بقاء بياناتك.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (release.storeUrl.isNotBlank()) {
+                            TextButton(onClick = { openReleaseLink(context, release) }, modifier = Modifier.fillMaxWidth()) {
+                                Text("أو حمّل من المتجر")
+                            }
+                        } else {
+                            TextButton(onClick = { openReleaseLink(context, release) }, modifier = Modifier.fillMaxWidth()) {
+                                Text("تفاصيل التحديث")
+                            }
+                        }
+                    } else if (release.storeUrl.isNotBlank()) {
                         Button(onClick = { openReleaseLink(context, release) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                             Text("التحديث من المتجر · ${release.versionName}")
                         }
@@ -1098,6 +1256,17 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp)
         ) { Text(if (checking) "جارٍ الفحص…" else "فحص الآن") }
+        installDialog?.let { kind ->
+            InstallPermissionDialog(
+                kind = kind,
+                onOpenSettings = {
+                    installDialog = null
+                    InstallPermissionGate.markAsked(context)
+                    installSettingsLauncher.launch(InstallPermissionGate.installSettingsIntent(context))
+                },
+                onDismiss = { installDialog = null; pendingRelease = null }
+            )
+        }
         if (!AppUpdateManager.configured()) {
             Spacer(Modifier.height(10.dp))
             Text("سيظل الإصدار الحالي يعمل. لإشعارات الإصدارات القادمة، يجب ربط موجز الإصدارات وصفحة التطبيق في المتجر.", color = FocusColors.TextSecondary, style = MaterialTheme.typography.bodySmall)

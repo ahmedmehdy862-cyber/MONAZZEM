@@ -118,7 +118,13 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
           VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
         run: |
-          NOTES="$(git log -1 --pretty=%B)"
+          # User-facing notes live in docs/release-notes.md (plain Arabic, no
+          # technical commit text); a friendly generic line is the fallback.
+          if [ -s docs/release-notes.md ] && grep -q '[^[:space:]]' docs/release-notes.md; then
+            NOTES="$(cat docs/release-notes.md)"
+          else
+            NOTES="تحديث جديد من مُنظِّم: تحسينات وإصلاحات وتجربة أفضل."
+          fi
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" app/build/outputs/apk/release/MONAZZEM.apk --clobber
             gh release edit "$TAG_NAME" --title "مُنظِّم $VERSION_NAME" --notes "$NOTES"
@@ -135,7 +141,13 @@ jobs:
           VERSION_CODE: ${{ steps.metadata.outputs.version_code }}
         run: |
           test -n "$SYNC_TOKEN"
-          NOTES="$(git log -1 --pretty=%B)"
+          # Same user-facing notes as the GitHub Release above, so the feed and
+          # the store page show exactly what the user reads on the release.
+          if [ -s docs/release-notes.md ] && grep -q '[^[:space:]]' docs/release-notes.md; then
+            NOTES="$(cat docs/release-notes.md)"
+          else
+            NOTES="تحديث جديد من مُنظِّم: تحسينات وإصلاحات وتجربة أفضل."
+          fi
           APK_URL="https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}/MONAZZEM.apk"
           export NOTES APK_URL
           python3 - <<'PY' > /tmp/focus-release.json
