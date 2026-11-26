@@ -71,6 +71,7 @@ internal fun NotificationCenterScreen(
     val context = LocalContext.current
     var allowed by remember { mutableStateOf(AppNotifications.canPost(context)) }
     var exactAlarms by remember { mutableStateOf(NotificationMaintenance.canScheduleExact(context)) }
+    var lockScreen by remember { mutableStateOf(AppNotifications.lockScreenState(context)) }
     var diagnostics by remember { mutableStateOf(emptyList<NotificationRecord>()) }
     var sent by remember { mutableStateOf(false) }
     // Dhikr, wird and skill reminders live in their own preference files; this revision makes
@@ -95,6 +96,7 @@ internal fun NotificationCenterScreen(
         val previous = previousPermissionState.value
         allowed = nowAllowed
         exactAlarms = nowExact
+        lockScreen = AppNotifications.lockScreenState(context)
         previousPermissionState.value = nowAllowed to nowExact
         if (nowAllowed != previous.first || nowExact != previous.second) {
             NotificationMaintenance.rescheduleAll(context)
@@ -137,6 +139,8 @@ internal fun NotificationCenterScreen(
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             StatusCard(allowed, exactAlarms, onAllow = onRequestNotifications)
+            Spacer(Modifier.height(12.dp))
+            LockScreenCard(lockScreen)
             Spacer(Modifier.height(12.dp))
             PrayerCard(revision = prayerRevision, onChanged = { prayerRevision++ })
             Spacer(Modifier.height(12.dp))
@@ -572,6 +576,45 @@ private fun BatteryGuidanceCard() {
                     ignoring = PrayerBatteryGuidance.isIgnoringOptimizations(context)
                 }) { Text("استثناء من البطارية") }
                 TextButton(onClick = { PrayerBatteryGuidance.openAppSettings(context) }) { Text("إعدادات التطبيق") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LockScreenCard(state: AppNotifications.LockScreenState) {
+    val context = LocalContext.current
+    val ok = state.systemShowsOnLock && state.blockedChannels.isEmpty()
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(
+                if (ok) "تظهر على شاشة القفل ✓" else "لا تظهر على شاشة القفل",
+                style = MaterialTheme.typography.titleSmall,
+                color = if (ok) FocusColors.Blue else FocusColors.TextPrimary,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                if (ok) "تذكير الورد والمهام والأذان تظهر بمحتواها الكامل على شاشة القفل."
+                else if (!state.systemShowsOnLock) "إشعارات شاشة القفل معطّلة في إعدادات النظام. فعّلها من: الإعدادات ← الإشعارات ← شاشة القفل."
+                else "القنوات التالية محظورة في إعدادات النظام: ${state.blockedChannels.joinToString("، ")}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            if (!ok) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }) { Text("إعدادات النظام") }
             }
         }
     }

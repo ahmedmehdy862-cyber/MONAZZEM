@@ -35,8 +35,16 @@ class BlockVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        // v2: أهمية DEFAULT حتى تظهر جلسة التركيز على شاشة القفل (قناة LOW
+        // لا تظهر عليها أصلًا)؛ وتبقى صامتة (بلا صوت ولا اهتزاز) لأنها
+        // إشعار مستمر لا تنبيه. المعرّف الجديد لأن أندرويد يتجاهل تغيير
+        // أهمية قناة موجودة؛ والقناة القديمة تبقى خاملة على الأجهزة السابقة.
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "جلسة التركيز", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID, "جلسة التركيز", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null)
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
         )
     }
 
@@ -180,6 +188,7 @@ class BlockVpnService : VpnService() {
             .setSmallIcon(R.drawable.ic_stat_focus)
             .setOngoing(true)
             .setContentIntent(open)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .build()
     }
 
@@ -189,7 +198,8 @@ class BlockVpnService : VpnService() {
         const val EXTRA_PACKAGES = "com.focusstudy.poc.extra.PACKAGES"
 
         private const val TAG = "FocusVpn"
-        private const val CHANNEL_ID = "focus_session"
+        // v2: رُفعت من LOW إلى DEFAULT لشاشة القفل (انظر onCreate).
+        private const val CHANNEL_ID = "focus_session_v2"
         private const val NOTIFICATION_ID = 42
 
         /** Read by the UI to warn when filtering silently stopped. */

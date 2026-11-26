@@ -136,7 +136,8 @@ internal class AdhanPlaybackService : Service() {
             .setOngoing(true)
             .setSound(null)
             .setVibrate(null)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(R.drawable.ic_stat_focus, "إيقاف الأذان", stop)
             .build()
     }

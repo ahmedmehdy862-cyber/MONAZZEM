@@ -11,6 +11,7 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -21,8 +22,9 @@ import androidx.core.content.ContextCompat
  * Android will not raise a heads-up banner for a channel created at IMPORTANCE_DEFAULT, and the
  * importance of an existing channel cannot be lowered or raised later. That is why the alert
  * channels below have new ids: upgrading the app creates them correctly even on a device that
- * already has the old, quiet channels. The low-priority focus-session channel deliberately
- * stays outside this helper and remains silent. (The old `session_summary` channel was removed
+ * already has the old, quiet channels. The focus-session channel deliberately stays outside
+ * this helper and remains silent (no sound or vibration), though it is now DEFAULT importance
+ * so it shows on the lock screen. (The old `session_summary` channel was removed
  * in phase 4: it was created but nothing ever posted on it.)
  *
  * The channel *sound* can be changed after creation, unlike importance. `soundKey` is the id the
@@ -123,9 +125,14 @@ internal object AppNotifications {
         soundKey = NotificationSounds.DHIKR,
         highPriority = false
     )
-    /** Silent, ongoing channel for the adhan playback service — never chooses an audible sound. */
+    /**
+     * Silent, ongoing channel for the adhan playback service — never chooses an audible sound.
+     * v2 (was v1 at IMPORTANCE_LOW): Android ignores an importance change on an existing
+     * channel, so a new id is what makes DEFAULT importance (and lock-screen visibility)
+     * apply on devices that already have the quiet v1 channel. It stays silent and ongoing.
+     */
     val ADHAN_PLAYBACK = AlertChannel(
-        id = "adhan_playback_v1",
+        id = "adhan_playback_v2",
         name = "تشغيل الأذان",
         description = "إشعار هادئ يبقي صوت الأذان يعمل حتى لو أُغلقت شاشة التنبيه.",
         soundRes = R.raw.notification_chime,
@@ -186,15 +193,17 @@ internal object AppNotifications {
     /** Playback channel is created separately: it must stay silent whatever the dashboard selects. */
     fun ensurePlaybackChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        // DEFAULT لا LOW: قناة LOW لا تظهر إشعاراتها على شاشة القفل أصلًا.
+        // تبقى صامتة (بلا صوت ولا اهتزاز) لأنها إشعار مستمر لا تنبيه.
         val channel = NotificationChannel(
             ADHAN_PLAYBACK.id,
             ADHAN_PLAYBACK.name,
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
             description = ADHAN_PLAYBACK.description
             setSound(null, null)
             enableVibration(false)
-            lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
         }
         manager(context).createNotificationChannel(channel)
     }
@@ -217,6 +226,26 @@ internal object AppNotifications {
 
     fun manager(context: Context): NotificationManager =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    /**
+     * حالة إشعارات شاشة القفل لبطاقة مركز الإشعارات: المفتاح العام للنظام
+     * + أي قناة تنبيه محظورة. القيمة العامة تُقرأ من Settings.Secure
+     * (lock_screen_show_notifications، والافتراضي ظاهر)؛ وإن لم تكن قابلة
+     * للقراءة على جهاز ما فالبطاقة توجّه المستخدم إلى «الإعدادات ←
+     * الإشعارات ← شاشة القفل» برسالة واضحة.
+     */
+    data class LockScreenState(val systemShowsOnLock: Boolean, val blockedChannels: List<String>)
+
+    fun lockScreenState(context: Context): LockScreenState {
+        val systemShows = runCatching {
+            Settings.Secure.getInt(context.contentResolver, "lock_screen_show_notifications", 1) == 1
+        }.getOrNull() ?: true
+        val blocked = (ALL + ADHAN_PLAYBACK).mapNotNull { channel ->
+            val importance = runCatching { manager(context).getNotificationChannel(channel.id)?.importance }.getOrNull()
+            if (importance == NotificationManager.IMPORTANCE_NONE) channel.name else null
+        }
+        return LockScreenState(systemShows, blocked)
+    }
 
     /** Re-applies cached admin choices to channel sounds after the public feed is fetched. */
     fun refreshChannels(context: Context) = ALL.forEach { ensure(context, it) }
@@ -260,7 +289,9 @@ internal object AppNotifications {
             setSound(resolvedSound(context, channel), attributes)
             enableVibration(true)
             vibrationPattern = vibration
-            lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+            // المحتوى غير حساس (عناوين المهام، تذكير الورد، مواقيت الصلاة)
+            // فيظهر كاملًا على شاشة القفل لا «مخفيًا».
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
             if (channel.highPriority) {
                 enableLights(true)
                 lightColor = 0x5FE0CE
@@ -292,7 +323,7 @@ internal object AppNotifications {
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setContentIntent(contentIntent)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(channel.category)
             .setPriority(
                 if (channel.highPriority) NotificationCompat.PRIORITY_HIGH
