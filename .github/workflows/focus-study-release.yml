@@ -1,5 +1,15 @@
 name: Build and sync مُنظِّم release
 
+# ملاحظة تكافؤ: خطوة «Verify update feed after sync» هنا تتحقق من أندرويد
+# فقط (versionCode/versionName) — لا من حقل windows. workflow ويندوز
+# (windows-desktop-release.yml) يعمل بعد نشر الـ Release وينشر حقل windows
+# ويتحقق منه بنفسه. فنجاح هذا الـ workflow لا يعني اكتمال الإصدار:
+# إن فشل workflow ويندوز يبقى الإصدار أندرويد فقط بصمت — أعد تشغيله
+# يدويًا عبر workflow_dispatch للوسم نفسه (انظر رأسه).
+#
+# فحص اكتمال تلقائي (workflow يراقب نجاح/فشل ويندوز ويفتح issue عند غياب
+# windows) مؤجَّل بانتظار قرار أحمد — لم يُنفَّذ هنا عمدًا.
+
 on:
   push:
     tags:

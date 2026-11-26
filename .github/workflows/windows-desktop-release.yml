@@ -4,6 +4,12 @@ name: Build and publish مُنظِّم Windows MSI
 # فيبني MSI لنفس الإصدار ويرفعه إلى الـ Release نفسه، ثم يبلّغ الموجز
 # المركزي بحقل windows. لا ينشئ Release ولا وسمًا ولا يمس إصدار أندرويد.
 #
+# الاسترداد اليدوي: إن فشل هذا الـ workflow (أو أُعيد تشغيل workflow
+# أندرويد لنفس الوسم — فإعادة التشغيل لا تطلق حدث published أصلًا)،
+# شغّله يدويًا من Actions عبر workflow_dispatch مع مدخل tag للوسم
+# المطلوب؛ لا حاجة لرفع versionCode لأن publish-ci يكتب فوق نفس
+# versionCode عند أي تغيير في windows.
+#
 # يعتمد على دعم الخادم لحقل windows في /api/admin/publish-ci (جزء أ — يضيف
 # "windows" إلى حقول الإصدار المنشورة ويعيده /api/latest). حتى يصل ذلك
 # الدعم، خطوة «Verify feed shows Windows build» ستفشل بصوت عالٍ بدل أن
@@ -11,17 +17,30 @@ name: Build and publish مُنظِّم Windows MSI
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "الوسم المراد بناء MSI له (مثال: focus-v0.34.0) — إن تُرك فارغًا يُستخدم أحدث وسم focus-v* منشور"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
 
 jobs:
   windows:
-    if: startsWith(github.event.release.tag_name, 'focus-v')
+    # بلا شرط على مستوى المهمة: حدث النشر لا يحمل مدخل tag، والتشغيل
+    # اليدوي لا يحمل release.tag_name — التحقق من بادئة focus-v يتم
+    # بصوت عالٍ داخل خطوة «Read release metadata».
     runs-on: windows-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          # عند التشغيل اليدوي: تحقق من الوسم المطلوب نفسه؛ عند حدث النشر:
+          # github.ref هو الوسم أصلًا. بلا مدخل يُستخدم الفرع المختار في الواجهة.
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Set up Java 17 (Temurin)
         uses: actions/setup-java@v4
@@ -44,12 +63,27 @@ jobs:
         shell: python
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           import json, os, re, subprocess
-          tag = os.environ["TAG_NAME"]
+          # مصدر الوسم حسب المشغّل: مدخل workflow_dispatch أولًا، ثم حدث
+          # النشر، ثم أحدث وسم focus-v* منشور إن تُرك المدخل فارغًا.
+          tag = os.environ.get("INPUT_TAG") or os.environ.get("RELEASE_TAG") or ""
           repo = os.environ["REPOSITORY"]
+          if not tag:
+              out = subprocess.check_output(
+                  ["gh", "api", f"repos/{repo}/releases?per_page=5"],
+                  env=dict(os.environ), text=True, encoding="utf-8",
+              )
+              tag = next(
+                  (r["tag_name"] for r in json.loads(out)
+                   if str(r.get("tag_name", "")).startswith("focus-v")),
+                  "",
+              )
+          if not tag.startswith("focus-v"):
+              raise SystemExit(f"No focus-v* tag resolved (got {tag!r})")
           # Version is read from the Android app module; the tag must match it,
           # same rule as the Android release workflow.
           text = open("app/build.gradle.kts", encoding="utf-8").read()
@@ -81,6 +115,7 @@ jobs:
               raise SystemExit("MONAZZEM.apk asset not found on the release yet")
           notes = release.get("body") or ""
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"tag_name={tag}\n")
               fh.write(f"version_code={code.group(1)}\n")
               fh.write(f"version_name={name.group(1)}\n")
               fh.write(f"apk_url={apk_url}\n")
@@ -126,7 +161,7 @@ jobs:
       - name: Upload MSI to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          TAG_NAME: ${{ steps.metadata.outputs.tag_name }}
         shell: pwsh
         run: gh release upload $env:TAG_NAME ${{ steps.msi.outputs.asset }} --clobber
 
@@ -135,7 +170,7 @@ jobs:
         env:
           SYNC_TOKEN: ${{ secrets.FOCUS_RELEASE_SYNC_TOKEN }}
           REPOSITORY: ${{ github.repository }}
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          TAG_NAME: ${{ steps.metadata.outputs.tag_name }}
           VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
           VERSION_CODE: ${{ steps.metadata.outputs.version_code }}
           APK_URL: ${{ steps.metadata.outputs.apk_url }}
@@ -179,7 +214,7 @@ jobs:
         env:
           VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
           REPOSITORY: ${{ github.repository }}
-          TAG_NAME: ${{ github.event.release.tag_name }}
+          TAG_NAME: ${{ steps.metadata.outputs.tag_name }}
           MSI_ASSET: ${{ steps.msi.outputs.asset }}
         run: |
           import json, os, time, urllib.request

@@ -55,9 +55,9 @@ desktop/
 | Gradle | 9.6.0 | غلاف الريبو نفسه |
 
 إصدار التطبيق (`packageVersion` في MSI) يُقرأ من `app/build.gradle.kts`
-(`versionName`/`versionCode`)، أو يُمرَّر من الـ workflow
-(`-PdesktopVersion` / `-PdesktopVersionCode`) — فيبقى MSI مطابقًا لإصدار
-APK المنشور معه.
+(`versionName`/`versionCode`) فقط — لا يُمرَّر عبر `-P` إطلاقًا (سطر
+أوامر ويندوز يقطّع القيمة المنقّطة)، وأي فشل في قراءته يفشل التهيئة
+بخطأ صريح بدل رقم قديم صامت. فيبقى MSI مطابقًا لإصدار APK المنشور معه.
 
 ## المزامنة
 
@@ -126,6 +126,23 @@ Release لوسم `focus-v*` (أي بعد أن يبني workflow أندرويد �
    (versionCode/versionName/apkUrl/releaseNotes) مع
    `windows: {downloadUrl, version, sizeBytes}`.
 5. يتحقق أن `/api/latest` يعرض `windows` لنفس الإصدار.
+
+### الاسترداد عند فشل workflow ويندوز
+
+إن فشل `windows-desktop-release.yml` في أي خطوة (بناء MSI، WiX، رفع MSI،
+publish-ci، التحقق)، يبقى الإصدار أندرويد فقط — لا تنبيه خارج Actions،
+ولا إعادة محاولة تلقائية. الإجراء:
+
+1. افتح Actions ← تشغيل `windows-desktop-release.yml` الفاشل ← **Re-run failed jobs**.
+2. أو شغّله يدويًا عبر **workflow_dispatch** مع مدخل `tag` للوسم نفسه
+   (مثال: `focus-v0.34.0`) — يبني MSI ويرفعه وينشر `windows` من جديد.
+3. **لا حاجة لرفع `versionCode`** ولا لوسم جديد: `publish-ci` يكتب فوق
+   نفس `versionCode` عند أي تغيير في `windows` (`decideCiPublish`).
+4. تحقق أن `https://update-site-sigma.vercel.app/api/latest` يعرض
+   `windows` لنفس الإصدار ونفس رابط MSI.
+5. ملاحظة: إعادة تشغيل workflow أندرويد (`focus-study-release.yml`)
+   لنفس الوسم لا تعيد تشغيل workflow ويندوز أصلًا — `release edit`
+   لا يطلق حدث `published`. الاسترداد دائمًا من workflow ويندوز نفسه.
 
 ### دعم الخادم لحقل `windows` — موجود في أساس هذا الفرع
 

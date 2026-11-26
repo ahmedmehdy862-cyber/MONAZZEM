@@ -28,28 +28,27 @@ plugins {
  *   kotlinx-serialization-json 1.9.0، kotlinx-coroutines 1.10.2، JDK 17.
  */
 
-// مصدر واحد للإصدار: نسخة تطبيق أندرويد (app/build.gradle.kts). الـ workflow
-// يمرّر -PdesktopVersion / -PdesktopVersionCode لنفس القيمتين بعد قراءتهما
-// من الـ Release، فيبقى MSI مطابقًا لإصدار APK المنشور معه.
+// مصدر واحد للإصدار: نسخة تطبيق أندرويد (app/build.gradle.kts) فقط.
+// لا يُمرَّر الإصدار عبر -P إطلاقًا: على windows-latest تُقطَّع القيمة
+// المنقّطة في سطر الأوامر — ‎-PdesktopVersion=0.34.0 وصلت خاصية "0" +
+// مهمة ".34.0" (runs 45753643685 / 45752350562). وأي فشل في قراءة
+// الإصدار من الملف يفشل التهيئة بخطأ صريح — لا احتياطي صامت برقم قديم.
 val appBuildScript = rootProject.file("app/build.gradle.kts").readText()
-fun appVersion(pattern: String, property: String, fallback: String): String {
-    val fromApp = Regex(pattern).find(appBuildScript)?.groupValues?.getOrNull(1)
-    // مصدر الحقيقة هو app/build.gradle.kts دائمًا: خاصية Gradle
-    // (-PdesktopVersion=0.34.0) وصلت في run 45752350562 بقيمة "0" لأن سطر
-    // أوامر ويندوز يقطّع القيمة المنقّطة (خاصية "0" + مهمة ".34.0" كما
-    // أثبت run 45753643685) — فلا يُعتمد على -P للإصدار أبدًا. الخاصية
-    // تبقى احتياطيًا فقط إن غاب الإصدار من الملف.
-    return fromApp ?: providers.gradleProperty(property).orNull ?: fallback
+fun appVersion(pattern: String, what: String): String {
+    return Regex(pattern).find(appBuildScript)?.groupValues?.getOrNull(1)
+        ?: throw GradleException(
+            "Could not read $what from app/build.gradle.kts — " +
+            "the desktop module has no silent version fallback; " +
+            "fix the app module version line."
+        )
 }
 val desktopVersionName = appVersion(
     """versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"""",
-    "desktopVersion",
-    "0.33.0"
+    "versionName"
 )
 val desktopVersionCode = appVersion(
     """versionCode\s*=\s*(\d+)""",
-    "desktopVersionCode",
-    "41"
+    "versionCode"
 )
 
 
