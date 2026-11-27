@@ -377,6 +377,27 @@ internal object PrayerNotificationScheduler {
         val sound = if (type == PrayerAlertType.AT) rule.atSound else rule.beforeSound
         val voice = settings.voice
         val channel = channel(type)
+        // مكالمة جارية (0.35.0 — لا معاينة «جرّب الآن»، فهي نقرة صريحة من المستخدم):
+        // لا صوت أذان، ولا نية ملء شاشة فوق المكالمة، ولا صوت/اهتزاز إشعار —
+        // إشعار صامت على قناة تشغيل الأذان، وإعادة جدولة الأذان بعد 15 دقيقة.
+        if (!test && CallAware.isInCall(context)) {
+            val silentTitle = if (type == PrayerAlertType.AT) "حان وقت صلاة $name" else "قبل صلاة $name"
+            val silentBody = if (type == PrayerAlertType.AT) {
+                "الأذان مؤجل — مكالمة جارية. سيُعاد بعد ١٥ دقيقة."
+            } else {
+                rule.beforeMinutes.let { "يبدأ وقت $name بعد $it دقائق." }
+            }
+            postSilentAdhanNotice(
+                context,
+                if (type == PrayerAlertType.AT) AT_NOTIFICATION else BEFORE_NOTIFICATION,
+                silentTitle,
+                silentBody
+            )
+            if (type == PrayerAlertType.AT) {
+                AdhanCallDeferral.scheduleRetry(context, name, voice, 0)
+            }
+            return
+        }
         // The full adhan plays from a foreground service with an exclusive alarm focus, so no
         // later notification can duck or cut it. The notification itself stays audible-free to
         // avoid playing the same recording twice.

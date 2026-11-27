@@ -27,7 +27,8 @@ class NotificationPolicyTest {
         quietStart: Int? = null,
         quietEnd: Int? = null,
         respectQuietHours: Boolean = true,
-        snoozedUntil: Long? = null
+        snoozedUntil: Long? = null,
+        inCall: Boolean = false
     ) = PolicyInput(
         now = now,
         kind = kind,
@@ -42,8 +43,21 @@ class NotificationPolicyTest {
         quietStart = quietStart,
         quietEnd = quietEnd,
         respectQuietHours = respectQuietHours,
-        snoozedUntil = snoozedUntil
+        snoozedUntil = snoozedUntil,
+        inCall = inCall
     )
+
+    @Test
+    fun `call defers companion reminder fifteen minutes`() {
+        val decision = NotificationPolicy.decide(input(inCall = true))
+        assertEquals(ReminderDecision.Defer(now + 15 * minute, DeferReason.IN_CALL), decision)
+    }
+
+    @Test
+    fun `explicit snooze still wins over a call`() {
+        val decision = NotificationPolicy.decide(input(inCall = true, snoozedUntil = now + 10 * minute))
+        assertEquals(ReminderDecision.Defer(now + 10 * minute, DeferReason.SNOOZED), decision)
+    }
 
     @Test
     fun `notifications disabled drops everything`() {

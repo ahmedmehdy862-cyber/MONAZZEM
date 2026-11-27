@@ -45,9 +45,13 @@ internal class AdhanPlaybackService : Service() {
     private val audioManager: AudioManager by lazy { getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        // A notification losing focus is normal and must not interrupt the adhan. Only a permanent
-        // loss (typically a phone call) ends playback; transient losses are deliberately ignored.
-        if (change == AudioManager.AUDIOFOCUS_LOSS) stopPlayback()
+        // A notification ducking request (CAN_DUCK) is normal and must not
+        // interrupt the adhan. A permanent loss — and a transient loss, whose
+        // main cause for an exclusive holder is a phone call starting — end
+        // playback at once (0.35.0: the adhan must never play over a call).
+        if (change == AudioManager.AUDIOFOCUS_LOSS ||
+            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+        ) stopPlayback()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -72,6 +76,26 @@ internal class AdhanPlaybackService : Service() {
         PrayerAdhanSounds.stopPreview()
         val voice = PrayerAdhanVoice.from(intent.getStringExtra(EXTRA_VOICE))
         val name = intent.getStringExtra(EXTRA_NAME).orEmpty().ifBlank { "الصلاة" }
+        // حماية من سباق (0.35.0): مكالمة بدأت بعد جدولة الأذان وقبل تشغيله.
+        // القرار العادي يُتخذ في PrayerNotifications قبل استدعاء الخدمة؛ هنا
+        // إعادة فحص فقط. لا إشعار من الخدمة عند التأجيل (إشعار الصلاة الصامت
+        // موجود أصلًا) إلا عند استنفاد التأجيلات في محاولة إعادة.
+        val deferCount = AdhanCallDeferral.deferCountOf(intent)
+        if (CallAware.isInCall(audioManager)) {
+            when (CallAwareAdhanPolicy.decide(true, deferCount)) {
+                AdhanCallDecision.DEFER -> AdhanCallDeferral.scheduleRetry(this, name, voice, deferCount)
+                AdhanCallDecision.MISSED -> postSilentAdhanNotice(
+                    this,
+                    AdhanCallDeferral.MISSED_NOTIFICATION_ID,
+                    "فاتك أذان صلاة $name",
+                    "كان الأذان مؤجلًا أثناء مكالمة وانتهت محاولات إعادته. الصلاة التالية في وقتها إن شاء الله."
+                )
+                AdhanCallDecision.PLAY -> Unit // لا يحدث: decide(inCall=true) لا تعيد PLAY أبدًا.
+            }
+            starting = false
+            stopSelf()
+            return
+        }
         // Promote to a foreground service before doing anything that could block: Android only
         // allows a few seconds between startForegroundService() and startForeground().
         runCatching { startForeground(NOTIFICATION_ID, ongoingNotification(name, voice)) }

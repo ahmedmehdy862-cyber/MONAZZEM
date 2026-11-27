@@ -37,7 +37,9 @@ internal enum class DeferReason(val label: String) {
     PRAYER("نافذة صلاة"),
     QUIET_HOURS("ساعات الهدوء"),
     MIN_GAP("الحد الأدنى بين التنبيهات"),
-    SNOOZED("مؤجّل بطلبك")
+    SNOOZED("مؤجّل بطلبك"),
+    /** مكالمة جارية (0.35.0): لا صوت ولا اهتزاز أثناء مكالمة. */
+    IN_CALL("مكالمة جارية")
 }
 
 internal enum class DropReason(val label: String) {
@@ -61,7 +63,9 @@ internal data class PolicyInput(
     val quietEnd: Int? = null,
     /** When false, the quiet window below is ignored: every kind may arrive at any hour. */
     val respectQuietHours: Boolean = true,
-    val snoozedUntil: Long? = null
+    val snoozedUntil: Long? = null,
+    /** مكالمة جارية (0.35.0): التنبيهات غير الحرجة تُؤجَّل ولا تُصدر صوتًا. */
+    val inCall: Boolean = false
 )
 
 internal object NotificationPolicy {
@@ -110,6 +114,16 @@ internal object NotificationPolicy {
         if (!input.enabled) return ReminderDecision.Drop(DropReason.DISABLED)
 
         input.snoozedUntil?.let { if (it > input.now) return ReminderDecision.Defer(it, DeferReason.SNOOZED) }
+
+        // A phone call wins over a companion reminder the same way a focus session
+        // does (0.35.0): nothing sounds or vibrates mid-call; the reminder is
+        // deferred 15 minutes and re-decided then.
+        if (input.inCall) {
+            return ReminderDecision.Defer(
+                input.now + CallAwareAdhanPolicy.DEFER_INTERVAL_MILLIS,
+                DeferReason.IN_CALL
+            )
+        }
 
         // A running focus session always wins: nothing interrupts it, everything is summarised after.
         input.sessionEndsAt?.let { if (it > input.now) return ReminderDecision.Defer(it, DeferReason.ACTIVE_SESSION) }

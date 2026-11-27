@@ -53,7 +53,10 @@ internal object NotificationDelivery {
                 },
                 quietStart = prefs.quietStartHour * 60,
                 quietEnd = prefs.quietEndHour * 60,
-                respectQuietHours = prefs.quietHoursEnabled
+                respectQuietHours = prefs.quietHoursEnabled,
+                // مكالمة جارية (0.35.0): التنبيهات غير الحرجة تُؤجَّل 15 دقيقة
+                // ولا تُصدر صوتًا/اهتزازًا أثناء المكالمة.
+                inCall = CallAware.isInCall(appContext)
             ),
             zone
         )
