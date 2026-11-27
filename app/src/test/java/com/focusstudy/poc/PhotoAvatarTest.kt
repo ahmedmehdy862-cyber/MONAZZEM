@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import org.robolectric.RuntimeEnvironment
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -36,6 +37,16 @@ class PhotoAvatarTest {
 
     private val context: Context
         get() = RuntimeEnvironment.getApplication()
+
+    @After
+    fun tearDown() {
+        // أغلق مساعد StudyDb: تحميل التفضيلات يفتح قاعدة البيانات (v17)
+        // عبر StudyDb.get، واتصال مفتوح يبقي الملف حيًا بعد deleteDatabase
+        // فيدخل صنف اختبار لاحق (DbMigrationV16ToV17Test) في
+        // «Can't downgrade database from version 17 to 16».
+        runCatching { StudyDb.get(context).close() }
+        runCatching { context.deleteDatabase("focus_study.db") }
+    }
 
     @Test fun plainPhotoIsCopiedAsJpeg() = runBlocking {
         val source = File(context.cacheDir, "source.png")

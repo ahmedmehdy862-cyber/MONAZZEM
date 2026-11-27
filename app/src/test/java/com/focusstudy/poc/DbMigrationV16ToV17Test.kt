@@ -12,6 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.io.File
 
 /**
  * Real migration test for DB v16 → v17 (م6): a database file created at version 16
@@ -68,7 +69,21 @@ class DbMigrationV16ToV17Test {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
+        // أغلق أي مساعد StudyDb مفتوح قبل الحذف: اتصال مفتوح يبقي ملف
+        // v17 حيًا بعد deleteDatabase فيفشل V16SeedHelper بـ
+        // «Can't downgrade database from version 17 to 16».
+        runCatching { StudyDb.get(context).close() }
         context.deleteDatabase(DB_FILE)
+        // تحقق مباشر: إن بقي الملف (اتصال مفتوح من صنف اختبار آخر)،
+        // احذفه مع ملفات اليومية؛ وإلا فشل واضح بدل خطأ downgrade مربك.
+        val dbFile = context.getDatabasePath(DB_FILE)
+        if (dbFile.exists()) {
+            dbFile.delete()
+            File(dbFile.path + "-journal").delete()
+            File(dbFile.path + "-wal").delete()
+            File(dbFile.path + "-shm").delete()
+        }
+        check(!dbFile.exists()) { "تعذر حذف ملف قاعدة بيانات اختبار سابق ($DB_FILE)" }
     }
 
     @After
