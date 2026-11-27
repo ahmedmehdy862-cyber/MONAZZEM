@@ -1,8 +1,15 @@
 const {
-  readMessages, readUsers, upsertUser, readNotificationSounds, normalizeProfileId, appendDeliveryEvents
+  readMessages, readUsers, upsertUser, readNotificationSounds, normalizeProfileId,
+  appendDeliveryEvents, appendRegistrationEvents, deleteUser,
 } = require("../lib/messaging-store");
+const { authenticate } = require("../lib/sync-store");
+const { createMessagesLimiter } = require("../lib/messages-rate-limit");
 const { userCode } = require("../lib/user-code");
 const { parseBody } = require("../lib/admin-auth");
+
+// H2: one limiter instance per serverless container (same caveat as the sync limiter:
+// a cold start resets it; the ownership proof is the real control).
+const registerLimiter = createMessagesLimiter();
 
 const cut = (value, max) => String(value || "").trim().slice(0, max);
 const ALLOWED_PROFILES = new Set(["", "student", "graduate", "professional", "retired", "general"]);
@@ -21,7 +28,8 @@ module.exports = async function messages(request, response) {
   if (request.method === "POST") {
     const body = parseBody(request.body);
     const action = String(body.action || "");
-    if (action === "register") return register(body, response);
+    if (action === "register") return register(request, body, response);
+    if (action === "delete") return remove(request, body, response);
     if (action === "delivered") return delivered(body, response);
     return response.status(400).json({ error: "invalid_action" });
   }
@@ -91,12 +99,84 @@ module.exports = async function messages(request, response) {
   }
 };
 
-async function register(body, response) {
+/**
+ * H2 (audit §11.2) — registration now requires ownership proof:
+ *
+ * - A FRESH install id registers freely; the server always issues its own
+ *   profile id (a client-suggested id is never adopted).
+ * - An ALREADY-REGISTERED install id must prove ownership before the server
+ *   returns its profile id: either present the stored profile id (the
+ *   legitimate client keeps it in its private prefs) or the sync passphrase
+ *   for that profile id. Otherwise the caller learns nothing: 409
+ *   `already_registered`, no profile id in the response.
+ * - Registration is rate-limited per caller address and per install id, every
+ *   outcome is written to the registration audit log, and a full registry
+ *   refuses new installs (503 `registry_full`) instead of evicting the
+ *   oldest user - eviction is manual admin only.
+ */
+/**
+ * P-02: permanently deletes this install's user row and its support messages.
+ * Same ownership proof as registration: the stored profile id or the sync
+ * passphrase. The sync snapshot/account are deleted separately through
+ * /api/sync?action=delete (different secret), so one leaked secret cannot
+ * wipe both.
+ */
+async function remove(request, body, response) {
   const id = cut(body.uid, 64).toLowerCase();
   if (!/^[a-z0-9-]{6,64}$/.test(id)) {
     return response.status(400).json({ error: "invalid_user" });
   }
-  const suggestedProfileId = normalizeProfileId(body.profileId);
+  const gate = registerLimiter.check(request, id);
+  if (!gate.allowed) {
+    response.setHeader("Retry-After", String(gate.retryAfter));
+    return response.status(429).json({ error: "too_many_requests" });
+  }
+  const presentedProfileId = normalizeProfileId(body.profileId);
+  try {
+    const users = await readUsers();
+    const existing = users.find((item) => item.id === id);
+    if (!existing) {
+      registerLimiter.record(gate.keys);
+      response.setHeader("Cache-Control", "no-store");
+      return response.status(200).json({ ok: true, deleted: false });
+    }
+    const storedProfileId = normalizeProfileId(existing.profileId);
+    const ownsByProfileId = Boolean(storedProfileId) && presentedProfileId === storedProfileId;
+    const ownsByPassphrase = Boolean(storedProfileId) &&
+      typeof body.passphrase === "string" && body.passphrase.length > 0 &&
+      (await authenticate(storedProfileId, body.passphrase));
+    if (!ownsByProfileId && !ownsByPassphrase) {
+      await appendRegistrationEvents([{
+        event: "delete_rejected", uid: id, profileId: storedProfileId, reason: "no_proof",
+      }]);
+      registerLimiter.record(gate.keys);
+      response.setHeader("Cache-Control", "no-store");
+      return response.status(409).json({ error: "already_registered" });
+    }
+    await deleteUser(id);
+    await appendRegistrationEvents([{
+      event: "deleted", uid: id, profileId: storedProfileId,
+    }]);
+    registerLimiter.record(gate.keys);
+    response.setHeader("Cache-Control", "no-store");
+    return response.status(200).json({ ok: true, deleted: true });
+  } catch (error) {
+    console.error("deletion failed", error?.message || "unknown");
+    return response.status(503).json({ error: "deletion_unavailable" });
+  }
+}
+
+async function register(request, body, response) {
+  const id = cut(body.uid, 64).toLowerCase();
+  if (!/^[a-z0-9-]{6,64}$/.test(id)) {
+    return response.status(400).json({ error: "invalid_user" });
+  }
+  const gate = registerLimiter.check(request, id);
+  if (!gate.allowed) {
+    response.setHeader("Retry-After", String(gate.retryAfter));
+    return response.status(429).json({ error: "too_many_requests" });
+  }
+  const presentedProfileId = normalizeProfileId(body.profileId);
   const entry = {
     id,
     name: cut(body.name, 60) || "مستخدم مُنظِّم",
@@ -104,11 +184,39 @@ async function register(body, response) {
     versionName: cut(body.versionName, 32),
     versionCode: Math.max(0, Math.min(1_000_000, Number(body.versionCode) || 0)),
   };
-  if (suggestedProfileId) entry.profileId = suggestedProfileId;
   try {
-    const users = await upsertUser(entry);
-    const registered = users.find((item) => item.id === id);
+    const users = await readUsers();
+    const existing = users.find((item) => item.id === id);
+    if (existing) {
+      const storedProfileId = normalizeProfileId(existing.profileId);
+      const ownsByProfileId = Boolean(storedProfileId) && presentedProfileId === storedProfileId;
+      const ownsByPassphrase = Boolean(storedProfileId) &&
+        typeof body.passphrase === "string" && body.passphrase.length > 0 &&
+        (await authenticate(storedProfileId, body.passphrase));
+      if (!ownsByProfileId && !ownsByPassphrase) {
+        await appendRegistrationEvents([{
+          event: "register_rejected", uid: id, profileId: storedProfileId, reason: "no_proof",
+        }]);
+        registerLimiter.record(gate.keys);
+        response.setHeader("Cache-Control", "no-store");
+        return response.status(409).json({ error: "already_registered" });
+      }
+    }
+    const updated = await upsertUser(entry);
+    if (!updated) {
+      await appendRegistrationEvents([{
+        event: "register_rejected", uid: id, reason: "registry_full",
+      }]);
+      registerLimiter.record(gate.keys);
+      response.setHeader("Cache-Control", "no-store");
+      return response.status(503).json({ error: "registry_full" });
+    }
+    const registered = updated.find((item) => item.id === id);
     const profileId = normalizeProfileId(registered && registered.profileId);
+    await appendRegistrationEvents([{
+      event: "registered", uid: id, profileId, isNew: !existing,
+    }]);
+    registerLimiter.record(gate.keys);
     response.setHeader("Cache-Control", "no-store");
     return response.status(200).json({ ok: true, code: userCode(id), profileId });
   } catch (error) {

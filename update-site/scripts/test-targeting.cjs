@@ -58,6 +58,7 @@ function makeStore(users, messages) {
   let currentUsers = users.map((item) => ({ ...item }));
   let currentMessages = messages.map((item) => ({ ...item }));
   let currentDeliveries = [];
+  let currentRegistrations = [];
   const generated = [
     "11111111-1111-4111-8111-111111111111",
     "22222222-2222-4222-8222-222222222222",
@@ -74,19 +75,23 @@ function makeStore(users, messages) {
       return currentMessages.map((entry) => ({ ...entry }));
     },
     readNotificationSounds: async () => ({ sounds: {}, updatedAt: "" }),
+    // H2 mirror of the real store: a suggested id is never adopted, and a full
+    // registry refuses a new install instead of evicting the oldest user.
     upsertUser: async (entry) => {
       const existing = currentUsers.find((item) => item.id === entry.id);
-      const suggested = normalizeProfileId(entry.profileId);
-      const takenByOther = Boolean(suggested) && currentUsers.some((item) =>
-        item.id !== entry.id && normalizeProfileId(item.profileId) === suggested
-      );
+      if (!existing && currentUsers.length >= 1000) return null;
       const profileId = normalizeProfileId(existing && existing.profileId)
-        || (suggested && !takenByOther ? suggested : generated[issued++]);
+        || generated[issued++];
       const record = { ...entry, profileId };
       currentUsers = existing
         ? currentUsers.map((item) => (item.id === entry.id ? { ...item, ...record } : item))
         : [record, ...currentUsers];
       return currentUsers.map((item) => ({ ...item }));
+    },
+    readRegistrationEvents: async () => currentRegistrations.map((item) => ({ ...item })),
+    appendRegistrationEvents: async (events) => {
+      currentRegistrations = [...events.map((e) => ({ ...e })), ...currentRegistrations];
+      return currentRegistrations.map((item) => ({ ...item }));
     },
     readDeliveryEvents: async () => currentDeliveries.map((item) => ({ ...item })),
     appendDeliveryEvents: async (events) => {
@@ -102,6 +107,7 @@ function makeStore(users, messages) {
       return currentDeliveries.map((item) => ({ ...item }));
     },
     _addMessage: (item) => { currentMessages = [item, ...currentMessages]; },
+    _registrations: () => currentRegistrations.map((item) => ({ ...item })),
     _users: () => currentUsers.map((item) => ({ ...item })),
     _messages: () => currentMessages.map((item) => ({ ...item })),
     _deliveries: () => currentDeliveries.map((item) => ({ ...item })),
@@ -127,9 +133,10 @@ function loadAdminHandler(store, isAdmin = true) {
   });
 }
 
-function loadMessagesHandler(store) {
+function loadMessagesHandler(store, syncStore) {
   return loadMocked("api/messages.js", {
     "../lib/messaging-store": store,
+    "../lib/sync-store": syncStore || { authenticate: async () => false },
     "../lib/admin-auth": { parseBody: (body) => body || {} },
   });
 }
@@ -163,11 +170,25 @@ async function testRegistration() {
   res = makeRes();
   await handler({
     method: "POST",
+    body: { action: "register", uid: NEW_ID, name: "سارة", profile: "professional", profileId: first.profileId },
+  }, res);
+  assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+  assert.equal(res.body.profileId, first.profileId, "a second registration with the stored id must keep the profile id");
+  assert.equal(store._users().length, 1, "re-registration must not create a duplicate user");
+  console.log("✓ repeated registration with the stored id keeps the same profile id and creates no duplicate");
+
+  // H2: presenting a different profile id for an already-registered install is
+  // an impersonation attempt - 409, and the real id is never revealed.
+  res = makeRes();
+  await handler({
+    method: "POST",
     body: { action: "register", uid: NEW_ID, name: "سارة", profile: "professional", profileId: OTHER_PROFILE_ID },
   }, res);
-  assert.equal(res.body.profileId, first.profileId, "a second registration must not change the profile id");
-  assert.equal(store._users().length, 1, "re-registration must not create a duplicate user");
-  console.log("✓ repeated registration keeps the same profile id and creates no duplicate");
+  assert.equal(res.statusCode, 409, JSON.stringify(res.body));
+  assert.equal(res.body.error, "already_registered");
+  assert.equal(res.body.profileId, undefined, "a rejected registration must not leak the profile id");
+  assert.equal(store._users().length, 1);
+  console.log("✓ re-registration without ownership proof is rejected without leaking the profile id");
 
   res = makeRes();
   await handler({

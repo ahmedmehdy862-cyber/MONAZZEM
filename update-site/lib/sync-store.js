@@ -370,9 +370,38 @@ async function writeSync(profileId, record) {
   await writeJson(syncPathFor(profileId), record);
 }
 
+/** P-02: permanently removes a stored blob (or its local file fallback). */
+async function deleteJson(blobPath) {
+  const token = storageToken(ACCESS);
+  if (token) {
+    const { del } = await import("@vercel/blob");
+    await del(blobPath, { access: ACCESS, token });
+    return;
+  }
+  try {
+    fs.unlinkSync(path.join(LOCAL_DIR, path.basename(blobPath)));
+  } catch {
+    // Already gone locally; deletion is still complete.
+  }
+}
+
+/** P-02: deletes the stored sync snapshot for one account. */
+async function deleteSync(profileId) {
+  await deleteJson(syncPathFor(profileId));
+}
+
+/** P-02: deletes the sync account (passphrase hash) for one profile id. */
+async function deleteAccount(profileId) {
+  const accounts = await readAccounts();
+  const next = accounts.filter((item) => item.profileId !== profileId);
+  if (next.length === accounts.length) return false;
+  await writeJson(ACCOUNTS_PATH, { accounts: next });
+  return true;
+}
+
 module.exports = {
   COLLECTIONS, PASSWORD_MIN, PASSWORD_MAX, MAX_RECORDS, MAX_ENC_CHARS, stripEncrypted,
   normalizeProfileId, validatePassphrase, hashPassphrase, verifyPassphrase,
   normalizeSyncPayload, mergeSync, readAccounts, hasAccount, setAccount,
-  authenticate, readSync, writeSync,
+  authenticate, readSync, writeSync, deleteSync, deleteAccount,
 };

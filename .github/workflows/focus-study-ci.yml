@@ -144,6 +144,9 @@ jobs:
       - name: Run message targeting and delivery tests
         run: npm run test:targeting
 
+      - name: Run message registration (H2) tests
+        run: npm run test:messages
+
       - name: Run sync tests
         run: npm run test:sync
 

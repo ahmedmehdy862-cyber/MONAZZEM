@@ -9,6 +9,7 @@
     "build": "node build-admin.cjs",
     "check": "node scripts/check-release-publish.cjs",
     "test:targeting": "node scripts/test-targeting.cjs",
+    "test:messages": "node scripts/test-messages.cjs",
     "test:sync": "node scripts/test-sync.cjs",
     "test:web": "node scripts/test-web-data.cjs",
     "test:history": "node scripts/test-release-history.cjs",

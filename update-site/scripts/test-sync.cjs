@@ -59,6 +59,8 @@ function makeMockStore() {
     authenticate: async (pid, pass) => accounts.get(pid) === pass,
     setAccount: async (pid, pass) => { accounts.set(pid, pass); },
     stripEncrypted: real.stripEncrypted,
+    deleteSync: async (pid) => { syncs.delete(pid); },
+    deleteAccount: async (pid) => accounts.delete(pid),
     readSync: async (pid, includeEncrypted = true) => {
       const record = syncs.get(pid) || {
         revision: 0, updatedAt: 0, data: real.normalizeSyncPayload({}),
@@ -75,7 +77,12 @@ function makeMockStore() {
 function makeHandler(store, limiter = realRate.createLimiter()) {
   return loadMocked("api/sync.js", {
     "../lib/sync-store": store,
-    "../lib/messaging-store": { readUsers: async () => [{ profileId: PID_A }, { profileId: PID_B }] },
+    "../lib/messaging-store": {
+      readUsers: async () => [
+        { id: "uid-a", profileId: PID_A },
+        { id: "uid-b", profileId: PID_B },
+      ],
+    },
     "../lib/sync-rate-limit": { limiter },
   });
 }
@@ -248,11 +255,11 @@ async function main() {
   await test("register requires the current passphrase before changing it", async () => {
     const store = makeMockStore();
     const handler = makeHandler(store);
-    assert.equal((await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A })).statusCode, 200);
+    assert.equal((await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a" })).statusCode, 200);
     assert.equal(store._accounts.get(PID_A), PASS_A);
-    assert.equal((await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_B })).statusCode, 401);
+    assert.equal((await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_B, uid: "uid-a" })).statusCode, 401);
     assert.equal((await post(handler, {
-      action: "register", profileId: PID_A, passphrase: PASS_B, currentPassphrase: PASS_A,
+      action: "register", profileId: PID_A, passphrase: PASS_B, currentPassphrase: PASS_A, uid: "uid-a",
     })).statusCode, 200);
     assert.equal(store._accounts.get(PID_A), PASS_B);
   });
@@ -260,8 +267,8 @@ async function main() {
   await test("push and pull require credentials and keep accounts isolated", async () => {
     const store = makeMockStore();
     const handler = makeHandler(store);
-    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
-    await post(handler, { action: "register", profileId: PID_B, passphrase: PASS_B });
+    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a" });
+    await post(handler, { action: "register", profileId: PID_B, passphrase: PASS_B, uid: "uid-b" });
 
     const bad = await post(handler, {
       action: "push", profileId: PID_A, passphrase: "wrong passphrase", data: { tasks: [] },
@@ -309,7 +316,7 @@ async function main() {
 
   await test("repeated failed auth is throttled per caller without blocking another account", async () => {
     const handler = makeHandler(makeMockStore());
-    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a" });
     for (let i = 0; i < realRate.LIMITS.pull; i += 1) {
       const res = await post(handler, { action: "pull", profileId: PID_A, passphrase: "wrong passphrase" });
       assert.equal(res.statusCode, 401);
@@ -337,7 +344,7 @@ async function main() {
     }, headers);
     assert.equal(throttled.statusCode, 429);
     const other = await post(handler, {
-      action: "register", profileId: PID_A, passphrase: PASS_A,
+      action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a",
     }, { "x-forwarded-for": "203.0.113.8" });
     assert.equal(other.statusCode, 200);
   });
@@ -433,7 +440,7 @@ async function main() {
   await test("API: v2 client sees envelopes, v1 client does not (pull and push)", async () => {
     const store = makeMockStore();
     const handler = makeHandler(store);
-    const reg = await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    const reg = await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a" });
     assert.equal(reg.statusCode, 200);
     const pushed = await post(handler, {
       action: "push", profileId: PID_A, passphrase: PASS_A, syncVersion: 2,
@@ -464,6 +471,73 @@ async function main() {
     assert.equal(pushed1.statusCode, 200);
     assert.equal(pushed1.body.data.tasks.length, 1);
     assert.equal(pushed1.body.data.tasks[0].id, "9");
+  });
+
+  // ---- M1 (H2): first sync registration requires uid ownership proof ----
+  await test("first sync registration requires the owner install id (M1)", async () => {
+    const store = makeMockStore();
+    const handler = makeHandler(store);
+    // No uid at all: forbidden.
+    const noUid = await post(handler, {
+      action: "register", profileId: PID_A, passphrase: PASS_A,
+    });
+    assert.equal(noUid.statusCode, 403);
+    assert.equal(noUid.body.error, "profile_not_owner");
+    // Wrong uid: forbidden.
+    const wrongUid = await post(handler, {
+      action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-b",
+    });
+    assert.equal(wrongUid.statusCode, 403);
+    assert.equal(wrongUid.body.error, "profile_not_owner");
+    // The owner uid: allowed, and the account is now created.
+    const ok = await post(handler, {
+      action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a",
+    });
+    assert.equal(ok.statusCode, 200);
+    // A second device with only the profile id cannot take it over afterwards:
+    // the account exists, so only the current passphrase works.
+    const takeover = await post(handler, {
+      action: "register", profileId: PID_A, passphrase: PASS_B, uid: "uid-b",
+    });
+    assert.equal(takeover.statusCode, 401);
+  });
+
+  // ---- P-02: sync account deletion ----
+  await test("sync delete removes the snapshot and the account (P-02)", async () => {
+    const store = makeMockStore();
+    const handler = makeHandler(store);
+    await post(handler, {
+      action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a",
+    });
+    const pushed = await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A,
+      data: { tasks: [{ id: "1", updatedAt: 1000, title: "مهمة" }] },
+    });
+    assert.equal(pushed.statusCode, 200);
+    // Wrong passphrase: nothing is deleted.
+    const wrong = await post(handler, {
+      action: "delete", profileId: PID_A, passphrase: "wrong passphrase",
+    });
+    assert.equal(wrong.statusCode, 401);
+    const stillThere = await post(handler, {
+      action: "pull", profileId: PID_A, passphrase: PASS_A,
+    });
+    assert.equal(stillThere.statusCode, 200);
+    // Right passphrase: snapshot + account are gone.
+    const deleted = await post(handler, {
+      action: "delete", profileId: PID_A, passphrase: PASS_A,
+    });
+    assert.equal(deleted.statusCode, 200);
+    assert.equal(deleted.body.ok, true);
+    const gone = await post(handler, {
+      action: "pull", profileId: PID_A, passphrase: PASS_A,
+    });
+    assert.equal(gone.statusCode, 401);
+    // Re-registration after deletion works (fresh account, same owner uid).
+    const again = await post(handler, {
+      action: "register", profileId: PID_A, passphrase: PASS_A, uid: "uid-a",
+    });
+    assert.equal(again.statusCode, 200);
   });
 
   console.log(`sync tests: ${passed} passed`);

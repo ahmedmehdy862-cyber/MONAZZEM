@@ -19,6 +19,9 @@ const SOUNDS_ACCESS = "private";
 const DELIVERIES_ACCESS = "private";
 const MAX_USERS = 1000;
 const MAX_DELIVERIES = 500;
+const REGISTRATIONS_PATH = "focus-study/registration-audit.json";
+const REGISTRATIONS_ACCESS = "private";
+const MAX_REGISTRATIONS = 500;
 
 const SOUND_CATEGORIES = ["prayer", "task", "exam", "team", "update", "daily", "dhikr"];
 const SOUND_CHOICES = ["default", "chime", "adhan", "system", "silent"];
@@ -184,6 +187,44 @@ function deliveryKey(event) {
  * Append-only audit trail in the existing private Blob store. No new Vercel function is needed.
  * Retried receipts are ignored, so an offline app reporting the same message twice leaves one row.
  */
+/**
+ * P-02: permanently deletes one install's user row and every support message
+ * it sent (matched by uid). Returns true when a user row existed.
+ */
+async function deleteUser(id) {
+  const users = await readUsers();
+  const existing = users.find((item) => item.id === id);
+  if (!existing) return false;
+  await writeJson(USERS_PATH, {
+    users: users.filter((item) => item.id !== id),
+  }, USERS_ACCESS);
+  const items = await readInbox();
+  const remaining = items.filter((item) => String(item.uid || "") !== id);
+  if (remaining.length !== items.length) {
+    await writeJson(INBOX_PATH, { items: remaining }, INBOX_ACCESS);
+  }
+  return true;
+}
+
+async function readRegistrationEvents() {
+  const record = await readJson(REGISTRATIONS_PATH, { events: [] }, REGISTRATIONS_ACCESS, true);
+  return Array.isArray(record.events) ? record.events : [];
+}
+
+/** H2 audit log: every registration outcome (new / re-registered / rejected). */
+async function appendRegistrationEvents(events) {
+  const existing = await readRegistrationEvents();
+  const added = events.map((event) => ({
+    ...event,
+    id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    at: new Date().toISOString(),
+  }));
+  if (!added.length) return existing;
+  const next = [...added, ...existing].slice(0, MAX_REGISTRATIONS);
+  await writeJson(REGISTRATIONS_PATH, { events: next }, REGISTRATIONS_ACCESS);
+  return next;
+}
+
 async function appendDeliveryEvents(events) {
   const existing = await readDeliveryEvents();
   const seen = new Set(existing.map(deliveryKey));
@@ -221,27 +262,27 @@ function issueProfileId(users) {
 /**
  * Upsert by anonymous install id, keeping the original first-seen timestamp and profile id.
  *
- * Existing registry rows get a profile id on their next registration, so no Blob migration or
- * destructive rewrite is needed. A client-supplied id is adopted only when this install has none
- * and nobody else already uses it; otherwise the server keeps or issues its own value.
+ * H2: a client-supplied profile id is NEVER adopted - the server always issues its own
+ * UUID for a new install (a suggested id is only ever presented as ownership proof, and
+ * the handler checks it before calling this). Existing registry rows keep their id.
+ *
+ * H2: no eviction on unauthenticated registration. When the registry is full, a NEW
+ * install is refused (returns null; the handler answers 503 registry_full) instead of
+ * silently evicting the oldest user; eviction happens only by manual admin action.
+ * Re-registering an existing install never grows the list, so it always succeeds.
  */
 async function upsertUser(entry) {
   const users = await readUsers();
   const now = new Date().toISOString();
   const existing = users.find((item) => item.id === entry.id);
-  const suggested = normalizeProfileId(entry.profileId);
-  const takenByOther = Boolean(suggested) && users.some((item) =>
-    item.id !== entry.id && normalizeProfileId(item.profileId) === suggested
-  );
-  const profileId = normalizeProfileId(existing && existing.profileId)
-    || (suggested && !takenByOther ? suggested : issueProfileId(users));
+  if (!existing && users.length >= MAX_USERS) return null;
+  const profileId = normalizeProfileId(existing && existing.profileId) || issueProfileId(users);
   const record = { ...entry, profileId };
   const next = existing
     ? users.map((item) => item.id === entry.id
       ? { ...item, ...record, code: userCode(entry.id), lastSeen: now, updatedAt: now }
       : item)
-    : [{ ...record, code: userCode(entry.id), firstSeen: now, lastSeen: now, updatedAt: now }, ...users]
-      .slice(0, MAX_USERS);
+    : [{ ...record, code: userCode(entry.id), firstSeen: now, lastSeen: now, updatedAt: now }, ...users];
   await writeJson(USERS_PATH, { users: next }, USERS_ACCESS);
   return next;
 }
@@ -250,5 +291,6 @@ module.exports = {
   readMessages, appendMessage, removeMessage, readInbox, appendSupport, markSupport,
   readUsers, upsertUser, readNotificationSounds, writeNotificationSounds,
   readDeliveryEvents, appendDeliveryEvents,
+  readRegistrationEvents, appendRegistrationEvents, deleteUser,
   normalizeSounds, normalizeProfileId, SOUND_CATEGORIES, SOUND_CHOICES, DEFAULT_SOUNDS,
 };

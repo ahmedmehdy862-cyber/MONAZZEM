@@ -1,12 +1,12 @@
 const {
   normalizeProfileId, validatePassphrase, hasAccount, setAccount, authenticate,
-  readSync, writeSync, mergeSync, stripEncrypted,
+  readSync, writeSync, mergeSync, stripEncrypted, deleteSync, deleteAccount,
 } = require("../lib/sync-store");
 const { readUsers } = require("../lib/messaging-store");
 const { parseBody, json } = require("../lib/admin-auth");
 const { limiter } = require("../lib/sync-rate-limit");
 
-const ACTIONS = new Set(["register", "pull", "push"]);
+const ACTIONS = new Set(["register", "pull", "push", "delete"]);
 
 /**
  * Private, per-account sync over the existing Vercel Blob project. No Supabase, no new push system.
@@ -39,7 +39,9 @@ module.exports = async function sync(request, response) {
       ? await register(profileId, body)
       : action === "pull"
         ? await pull(profileId, body)
-        : await push(profileId, body);
+        : action === "delete"
+          ? await remove(profileId, body)
+          : await push(profileId, body);
     limiter.record(gate.key, action, outcome.status < 400);
     return json(response, outcome.status, outcome.body);
   } catch (error) {
@@ -54,13 +56,24 @@ async function register(profileId, body) {
   if (!passphrase) return { status: 400, body: { error: "invalid_passphrase" } };
 
   const users = await readUsers();
-  if (!users.some((item) => normalizeProfileId(item.profileId) === profileId)) {
+  const owner = users.find((item) => normalizeProfileId(item.profileId) === profileId);
+  if (!owner) {
     return { status: 403, body: { error: "profile_unknown" } };
   }
   if (await hasAccount(profileId)) {
     const current = validatePassphrase(body.currentPassphrase);
     if (!current || !(await authenticate(profileId, current))) {
       return { status: 401, body: { error: "invalid_credentials" } };
+    }
+  } else {
+    // M1 (H2): first registration binds the profile id to its owner. Knowing the
+    // profile id alone must not register the account: the caller presents the
+    // install id that owns this profile id in the user registry (the Android
+    // client sends its own uid). The desktop links to an account the phone
+    // already created, so it always takes the existing-account path above.
+    const uid = String(body.uid || "").trim().toLowerCase();
+    if (!uid || String(owner.id || "").toLowerCase() !== uid) {
+      return { status: 403, body: { error: "profile_not_owner" } };
     }
   }
   await setAccount(profileId, passphrase);
@@ -75,6 +88,22 @@ async function pull(profileId, body) {
   // H1: only a client that declares syncVersion 2 receives v2 envelopes.
   const wantsEncrypted = Number(body.syncVersion) === 2;
   return { status: 200, body: await readSync(profileId, wantsEncrypted) };
+}
+
+/**
+ * P-02: permanently deletes the sync snapshot and the sync account for this
+ * profile id. Authenticated by the sync passphrase, like pull/push. The
+ * client clears its local stamps afterwards so a later re-registration
+ * starts fresh.
+ */
+async function remove(profileId, body) {
+  const passphrase = validatePassphrase(body.passphrase);
+  if (!passphrase || !(await authenticate(profileId, passphrase))) {
+    return { status: 401, body: { error: "invalid_credentials" } };
+  }
+  await deleteSync(profileId);
+  await deleteAccount(profileId);
+  return { status: 200, body: { ok: true } };
 }
 
 async function push(profileId, body) {
