@@ -20,6 +20,12 @@ name: Size check (0.35.0 diagnostics)
 
 on:
   workflow_dispatch:
+  # GitHub cannot dispatch a workflow that exists only on a non-default
+  # branch (404), so this branch-only diagnostic also runs on push to
+  # this branch. It never publishes, tags or releases anything.
+  push:
+    branches:
+      - fix-035-feedback
 
 permissions:
   contents: read
