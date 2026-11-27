@@ -199,9 +199,16 @@ class QuranZoomScreenshotTest {
 
     // التطبيق يعرض النسبة بأرقام غربية («حجم الخط 100٪») اتساقًا مع ترويسة
     // القارئ («صفحة 4 من 604») — لا بأرقام مشرقية؛ توقّع الأرقام الغربية.
+    // الكشف عبر UiAutomator أولًا ثم دلالات Compose: التسمية نص داخل
+    // صف أزرار، وشجرة الوصول على API 34 لا تراها دائمًا رغم ظهورها في
+    // اللقطات (مثبت: found=false للملصق الافتراضي 100٪ في تشغيل البوابة
+    // 45951038278 بينما اللقطة تظهره) — نفس نمط «اليوم» في waitForHome.
     private fun assertZoomLabel(percentDigits: String) {
         val label = "حجم الخط $percentDigits٪"
-        val found = device.wait(Until.hasObject(By.text(label)), 5000)
+        val found = device.wait(Until.hasObject(By.text(label)), 5000) ||
+            runCatching {
+                composeRule.onAllNodesWithText(label).fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false)
         log("ZOOM LABEL [$label]: found=$found")
         assertTrue("zoom label [$label] must be visible", found)
     }
