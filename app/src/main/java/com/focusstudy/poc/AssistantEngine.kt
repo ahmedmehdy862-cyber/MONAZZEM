@@ -249,11 +249,26 @@ internal object AssistantStore {
     }
 }
 
-/** نتيجة رد المحرك: النص، مع حقيقة تعلّمها من الرسالة إن وُجدت، وفعل ينفَّذ إن طُلب. */
+/** مهمة مقترحة من كلام عادي («عندي امتحان بكرة») — تعرضها الشاشة بزر تأكيد. */
+data class ProposedTask(
+    val title: String,
+    val dueAt: Long?,
+    val priorityLevel: Int?,
+    val recurrence: Recurrence
+)
+
+/**
+ * نتيجة رد المحرك: النص، مع حقيقة تعلّمها من الرسالة إن وُجدت، وفعل ينفَّذ إن
+ * طُلب، ومهمة مقترحة بزر تأكيد إن وُجدت، ورقاقات توضيحية إن كان الرد سؤالًا،
+ * ومعرّف ذكرى استُخدمت في الرد لتسجيل استخدامها.
+ */
 data class AssistantReply(
     val text: String,
     val learnedFact: LearnedFact? = null,
-    val action: AssistantAction? = null
+    val action: AssistantAction? = null,
+    val proposedTask: ProposedTask? = null,
+    val chips: List<String> = emptyList(),
+    val usedMemoryId: Long? = null
 )
 
 /**
@@ -275,6 +290,191 @@ internal object AssistantEngine {
         }
     }
 
+    /**
+     * تحية متكيفة من السياق الواسع: تذكر حال اليوم الفعلي (مهام، ورد، سلسلة،
+     * مهمة متأخرة) بدل التحية الثابتة نفسها كل مرة.
+     */
+    fun greeting(settings: AssistantSettings, snapshot: AssistantSnapshot): String {
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val context = snapshot.context
+        val parts = ArrayList<String>()
+        parts += when (settings.tone) {
+            AssistantTone.FORMAL -> "أهلًا بك يا $user"
+            AssistantTone.CALM -> "أهلًا يا $user"
+            AssistantTone.PLAYFUL -> "أهلًا يا $user!"
+        }
+        val state = ArrayList<String>()
+        if (snapshot.openTasksToday > 0) state += "عندك ${snapshot.openTasksToday} مهام النهاردة"
+        if (!snapshot.wirdDoneToday) state += "وردك لسه ما اتسجّلش"
+        if (context.overdueCount > 0) state += "وفيه ${context.overdueCount} مهام متأخرة"
+        if (context.wirdStreakDays >= 3) state += "وسلسلة وردك ${context.wirdStreakDays} أيام"
+        if (state.isEmpty()) {
+            parts += when (settings.tone) {
+                AssistantTone.FORMAL -> "يومك يبدو هادئًا حتى الآن. كيف أقدر أساعدك؟"
+                AssistantTone.CALM -> "يوم هادي لحد دلوقتي. موجود معاك."
+                AssistantTone.PLAYFUL -> "يومك فاضي لحد دلوقتي — نرتبه مع بعض؟"
+            }
+        } else {
+            parts += state.joinToString("، ") + "."
+        }
+        return parts.joinToString("، ")
+    }
+
+    /** يختار صياغة من مجموعة متنوعة ببذرة اليوم واسم المستخدم — لا تكرار يومي. */
+    private fun pick(pool: List<String>, seed: Long): String =
+        pool[Math.floorMod(seed, pool.size.toLong()).toInt()]
+
+    /** بذرة تنويع الصياغة: يوم مختلف = صياغة مختلفة لنفس الموقف. */
+    private fun varietySeed(snapshot: AssistantSnapshot, today: LocalDate): Long =
+        today.toEpochDay() * 31 + snapshot.userName.hashCode()
+
+    /**
+     * ملخص اليوم عبر كل الأقسام: مهام، ورد، تركيز، عادات، مزاج، فلوس،
+     * تمارين — في سطور قصيرة، مع خطوة تالية واحدة مقترحة.
+     */
+    private fun daySummaryAnswer(snapshot: AssistantSnapshot, settings: AssistantSettings): String {
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val context = snapshot.context
+        val lines = ArrayList<String>()
+        lines += "ملخص يومك يا $user:"
+        val tasksLine = when {
+            snapshot.openTasksToday == 0 && snapshot.doneTasksToday == 0 -> "• مهام: مفيش مهام مستحقة النهاردة."
+            else -> "• مهام: خلّصت ${snapshot.doneTasksToday}، ولسه ${snapshot.openTasksToday} مفتوحة."
+        }
+        lines += tasksLine
+        if (context.overdueCount > 0) lines += "• متأخر: ${context.overdueCount} مهام فات موعدها."
+        lines += if (snapshot.wirdDoneToday) {
+            "• ورد: متسجّل — ${snapshot.wirdPagesPerDay} صفحات، وسلسلتك ${context.wirdStreakDays} أيام."
+        } else {
+            "• ورد: لسه ما اتسجّلش (${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah})."
+        }
+        if (context.focusMinutesToday > 0) {
+            lines += "• تركيز: ${context.focusMinutesToday} دقيقة في ${context.focusSessionsToday} جلسات."
+        }
+        if (snapshot.habitsTotal > 0) {
+            lines += "• عادات: ${context.habitsDoneTodayCount} من ${snapshot.habitsTotal} اتعملت النهاردة."
+        }
+        if (context.spentToday > 0) lines += "• فلوس: صرفت النهاردة ${formatMoney(context.spentToday)}."
+        context.moodToday?.let { lines += "• مزاجك النهاردة: ${moodLabel(it)}." }
+        val nextStep = when {
+            !snapshot.wirdDoneToday -> "الخطوة الجاية: وردك — صفحتين بس."
+            context.overdueTasks.isNotEmpty() -> "الخطوة الجاية: «${context.overdueTasks.first().title}» — أقدم مهمة متأخرة."
+            snapshot.openTasksToday > 0 && snapshot.nextTaskTitle != null -> "الخطوة الجاية: «${snapshot.nextTaskTitle}»."
+            else -> "يومك شبه مكتمل — راحة مستحقة."
+        }
+        lines += nextStep
+        return lines.joinToString("\n")
+    }
+
+    /**
+     * اقتراح خطة متكيف: المتأخر أولًا، ثم المهمة التالية، مع موعد التركيز
+     * المفضل ومدة الجلسة المفضلة من التعلّم، وساعة الورد المعتادة.
+     */
+    private fun planAdviceAnswer(snapshot: AssistantSnapshot, settings: AssistantSettings): String {
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val context = snapshot.context
+        val learned = context.learned
+        val lines = ArrayList<String>()
+        lines += "طيب يا $user، دي خطتي المقترحة لباقي يومك — من بياناتك مش من قالب:"
+        var step = 1
+        context.overdueTasks.firstOrNull()?.let { overdue ->
+            val lateNote = if (context.mostDelayedCategory != null) {
+                " (مهام «${context.mostDelayedCategory.label}» بتتأخر منك عادةً، فنخلصها الأول)"
+            } else {
+                ""
+            }
+            lines += "${step++}. «${overdue.title}» — متأخرة$lateNote."
+        }
+        snapshot.nextTaskTitle?.let { next ->
+            val minutes = learned.preferredFocusMinutes ?: 25
+            val hourNote = learned.bestFocusHours.firstOrNull()?.let { hour ->
+                " — وأفضل وقت تركيز ليك الساعة ${hour.hour}:00"
+            }.orEmpty()
+            lines += "${step++}. جلسة تركيز $minutes دقيقة على «$next»$hourNote."
+        }
+        if (!snapshot.wirdDoneToday) {
+            val hourNote = learned.bestWirdHour?.let { hour ->
+                " (بتقراه عادةً الساعة ${hour.hour}:00)"
+            }.orEmpty()
+            lines += "${step++}. وردك: ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}$hourNote."
+        }
+        if (step == 1) {
+            lines += "مفيش حاجة مستعجلة — يومك ماشي. لو حابب، نبدأ جلسة تركيز قصيرة؟"
+        }
+        return lines.joinToString("\n")
+    }
+
+    /** إجابة الفلوس من بيانات «حياتي» الفعلية: اليوم والشهر وأكثر فئة. */
+    private fun moneyAnswer(snapshot: AssistantSnapshot, settings: AssistantSettings): String {
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val context = snapshot.context
+        val learned = context.learned
+        val lines = ArrayList<String>()
+        lines += "فلوسك يا $user:"
+        lines += "• النهاردة: ${formatMoney(context.spentToday)}."
+        lines += "• الشهر ده: ${formatMoney(context.spentMonth)}."
+        if (learned.avgDailySpend30d > 0) {
+            lines += "• متوسطك اليومي آخر 30 يوم: ${formatMoney(learned.avgDailySpend30d)}."
+        }
+        learned.topExpenseCategory?.let { lines += "• أكتر حاجة بتصرف عليها: «$it»." }
+        if (context.spentToday > learned.avgDailySpend30d * 1.5 && learned.avgDailySpend30d > 0) {
+            lines += "النهاردة صرفك أعلى من متوسطك بكتير — لو مش ضروري، كفاية كده النهاردة."
+        }
+        return lines.joinToString("\n")
+    }
+
+    /**
+     * استرجاع ذاكرة: يطابق كلمات الرسالة مع الذكريات المحفوظة (بالفئة أو
+     * النص)، ويذكر أعلى ثقة؛ وإن لم يجد شيئًا يعدد آخر ما تعلّمه بصراحة.
+     */
+    private fun memoryAnswer(
+        query: String,
+        snapshot: AssistantSnapshot,
+        settings: AssistantSettings
+    ): Pair<String, Long?> {
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val memories = snapshot.context.memories
+        if (memories.isEmpty()) {
+            return Pair(
+                "لسه ما حفظتش عنك حاجة من المحادثة يا $user — قولي عن نفسك (هدفك، روتينك، اللي بتحبه) وأنا أحفظه وأستخدمه.",
+                null
+            )
+        }
+        val keywords = query.split(Regex("\\s+")).filter { it.length >= 3 }
+        val matched = memories
+            .filter { memory ->
+                keywords.any { word -> memory.text.contains(word) || memory.category.contains(word) }
+            }
+            .maxByOrNull { it.confidence * 100 + it.useCount }
+        if (matched != null) {
+            return Pair("أيوه فاكر يا $user: «${matched.text}» — قلتلي كده قبل كده.", matched.id)
+        }
+        val top = memories.sortedByDescending { it.confidence }.take(3)
+        val listed = top.joinToString("؛ ") { it.text }
+        return Pair("فاكر عنك يا $user: $listed.", top.firstOrNull()?.id)
+    }
+
+    /** نص اقتراح المهمة من كلام عادي — الشاشة تعرض زر تأكيد بجانبه. */
+    private fun proposeTaskText(proposed: ClassifiedIntent.ProposeTask, snapshot: AssistantSnapshot): String {
+        val user = snapshot.userName.ifBlank { "صديقي" }
+        val whenText = proposed.dueAt?.let { " — وحطيت لها موعدًا من كلامك" }.orEmpty()
+        return "سمعتك بتقول «${proposed.title}» يا $user$whenText — أضيفها كمهمة عشان أتابعك فيها؟ اضغط «أيوه ضيفها» وأنا أضيفها على طول."
+    }
+
+    private fun moodLabel(mood: Int): String = when (mood) {
+        1 -> "يوم صعب"
+        2 -> "مش أحسن حاجة"
+        3 -> "عادي"
+        4 -> "كويس"
+        5 -> "ممتاز"
+        else -> "غير مسجّل"
+    }
+
+    private fun formatMoney(amount: Double): String {
+        val rounded = if (amount == amount.toLong().toDouble()) amount.toLong().toString() else "%.2f".format(amount)
+        return "$rounded ج.م"
+    }
+
     fun reply(
         input: String,
         snapshot: AssistantSnapshot,
@@ -287,10 +487,36 @@ internal object AssistantEngine {
         val text = input.trim()
         val lower = text.lowercase()
         val learned = extractFact(text, lower)
+        // فهم النية من كلام حر أولًا — قبل محلل الأوامر ذي الصيغ الثابتة:
+        // «أعمل إيه دلوقتي؟» كانت تتحول خطأً إلى مهمة بعنوان «إيه دلوقتي»،
+        // و«خلصت» بلا موضوع كانت تسقط في الرد الاحتياطي العام.
+        when (val classified = AssistantIntentClassifier.classify(text, snapshot, today, zone)) {
+            ClassifiedIntent.AskDaySummary ->
+                return AssistantReply(text = daySummaryAnswer(snapshot, settings), learnedFact = learned)
+            ClassifiedIntent.AskPlanAdvice ->
+                return AssistantReply(text = planAdviceAnswer(snapshot, settings), learnedFact = learned)
+            ClassifiedIntent.AskMoney ->
+                return AssistantReply(text = moneyAnswer(snapshot, settings), learnedFact = learned)
+            is ClassifiedIntent.AskMemory -> {
+                val (answer, usedId) = memoryAnswer(classified.query, snapshot, settings)
+                return AssistantReply(text = answer, learnedFact = learned, usedMemoryId = usedId)
+            }
+            is ClassifiedIntent.ProposeTask ->
+                return AssistantReply(
+                    text = proposeTaskText(classified, snapshot),
+                    learnedFact = learned,
+                    proposedTask = ProposedTask(
+                        classified.title, classified.dueAt, classified.priorityLevel, classified.recurrence
+                    )
+                )
+            is ClassifiedIntent.Clarify ->
+                return AssistantReply(text = classified.question, learnedFact = learned, chips = classified.options)
+            ClassifiedIntent.PassThrough -> Unit
+        }
         // النوايا التنفيذية تُفحص أولًا: «ضيف مهمة…» و«سجّل وردي» مثلًا تحوي
         // كلمات («مهمة»، «ورد») تطابق أيضًا فروع الإجابة الإخبارية أدناه.
         val decision = decideAction(lower, snapshot, today, zone)
-        val core = decision?.text ?: answerFor(lower, snapshot, settings, facts, profileText)
+        val core = decision?.text ?: answerFor(lower, snapshot, settings, facts, profileText, today)
         val withLearning = if (learned != null) {
             "$core\n\nحفظت إن «${learned.text}»، وهستخدمها في ردودي الجاية."
         } else {
@@ -561,7 +787,8 @@ internal object AssistantEngine {
         snapshot: AssistantSnapshot,
         settings: AssistantSettings,
         facts: List<LearnedFact>,
-        profileText: String
+        profileText: String,
+        today: LocalDate = LocalDate.now()
     ): String {
         val name = settings.name
         val user = snapshot.userName.ifBlank { "صديقي" }
@@ -579,9 +806,31 @@ internal object AssistantEngine {
             lower.contains("ورد") || lower.contains("قرآن") || lower.contains("قران") ||
                 lower.contains("قرأت") || lower.contains("قرات") ->
                 if (snapshot.wirdDoneToday) {
-                    "ما شاء الله يا $user، ورد النهاردة اتسجّل: ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}. إجمالي اللي قرأته ${snapshot.wirdTotalPages} صفحة."
+                    // ربط عبر الأقسام: الورد + التركيز + السلسلة، بصياغة متنوعة.
+                    val streak = snapshot.context.wirdStreakDays
+                    val celebration = if (streak >= 3) {
+                        " " + pick(
+                            listOf(
+                                "وسلسلتك $streak أيام متواصلة — ما شاء الله!",
+                                "دي السلسلة رقم $streak على التوالي — كمّل بنفس الإيقاع.",
+                                "ما شاء الله، $streak أيام ورد ورا بعض."
+                            ),
+                            varietySeed(snapshot, today)
+                        )
+                    } else {
+                        ""
+                    }
+                    val focusNote = if (snapshot.context.focusMinutesToday > 0) {
+                        " وكمان ركزت النهاردة ${snapshot.context.focusMinutesToday} دقيقة — يوم متوازن."
+                    } else {
+                        ""
+                    }
+                    "ما شاء الله يا $user، ورد النهاردة اتسجّل: ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}. إجمالي اللي قرأته ${snapshot.wirdTotalPages} صفحة.$celebration$focusNote"
                 } else {
-                    "ورد النهاردة ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}، بداية من صفحة ${snapshot.wirdNextPage}. لسه ما اتسجّلش — افتح المصحف من «حياتي» واقرأ على مهلك."
+                    val hourNote = snapshot.context.learned.bestWirdHour?.let { hour ->
+                        " بتقراه عادةً الساعة ${hour.hour}:00."
+                    }.orEmpty()
+                    "ورد النهاردة ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}، بداية من صفحة ${snapshot.wirdNextPage}. لسه ما اتسجّلش$hourNote — افتح المصحف من «حياتي» واقرأ على مهلك."
                 }
             lower.contains("مهام") || lower.contains("مهامي") || lower.contains("خطة اليوم") ||
                 lower.contains("عندي ايه") || lower.contains("النهاردة") ->
@@ -622,25 +871,39 @@ internal object AssistantEngine {
                 "العفو يا $user، ده واجبي. أي وقت تحتاجني، أنا موجود."
             lower.contains("هدف") ->
                 "هدفك خطوة مهمة يا $user. قولي هدفك بصيغة واضحة — مثلًا «هدفي أخلص مادة كذا قبل نهاية الشهر» — وهحفظه وأفكرك بيه."
-            else -> fallback(settings, user)
+            else -> fallback(settings, user, snapshot, today)
         }
     }
 
     private fun tasksAnswer(snapshot: AssistantSnapshot, user: String): String {
         val next = snapshot.nextTaskTitle?.let { " والمهمة الجاية عندك: «$it»." } ?: ""
-        return if (snapshot.openTasksToday == 0 && snapshot.doneTasksToday == 0) {
-            "مفيش مهام مستحقة النهاردة يا $user — يوم هادي. لو حابب، ضيف مهمة صغيرة من زر الإضافة السريع."
+        // ربط عبر الأقسام: المتأخر وساعة التركيز المفضلة من التعلّم.
+        val overdueNote = if (snapshot.context.overdueCount > 0) {
+            " وفيه ${snapshot.context.overdueCount} مهام فات موعدها — أقدمها «${snapshot.context.overdueTasks.first().title}»."
         } else {
-            "النهاردة عندك ${snapshot.openTasksToday} مهام لسه ما خلصتش، وخلّصت ${snapshot.doneTasksToday}.$next ابدأ بأصغر واحدة، وأنا هتابع معاك."
+            ""
+        }
+        val focusNote = snapshot.context.learned.bestFocusHours.firstOrNull()?.let { hour ->
+            " أفضل وقت تركيز ليك الساعة ${hour.hour}:00."
+        }.orEmpty()
+        return if (snapshot.openTasksToday == 0 && snapshot.doneTasksToday == 0) {
+            "مفيش مهام مستحقة النهاردة يا $user — يوم هادي.$overdueNote لو حابب، ضيف مهمة صغيرة من زر الإضافة السريع."
+        } else {
+            "النهاردة عندك ${snapshot.openTasksToday} مهام لسه ما خلصتش، وخلّصت ${snapshot.doneTasksToday}.$next$overdueNote$focusNote ابدأ بأصغر واحدة، وأنا هتابع معاك."
         }
     }
 
     private fun caloriesAnswer(snapshot: AssistantSnapshot, user: String): String {
         val target = snapshot.dailyCalorieTarget
+        val exerciseNote = if (snapshot.context.exerciseDays7d == 0) {
+            " ولسه ما اتمرنتش في آخر 7 أيام — تمرين بيتي قصير النهاردة هيفرق."
+        } else {
+            ""
+        }
         return if (target == null) {
             "لسه ما سجّلتش بيانات جسمك في «حياتي»، فمقدرش أحسب هدف سعراتك. سجّل وزنك وطولك ونشاطك هناك، وهقولك هدفك اليومي."
         } else {
-            "هدفك اليومي $target سعرة، وسجّلت النهاردة ${snapshot.caloriesToday} سعرة يا $user. باقي لك ${maxOf(target - snapshot.caloriesToday, 0)} سعرة لحد نهاية اليوم."
+            "هدفك اليومي $target سعرة، وسجّلت النهاردة ${snapshot.caloriesToday} سعرة يا $user. باقي لك ${maxOf(target - snapshot.caloriesToday, 0)} سعرة لحد نهاية اليوم.$exerciseNote"
         }
     }
 
@@ -676,10 +939,29 @@ internal object AssistantEngine {
         return parts.joinToString("\n")
     }
 
-    private fun fallback(settings: AssistantSettings, user: String): String {
+    /**
+     * الرد الاحتياطي: بدل قالبين ثابتين لكل نبرة، يذكر أهم شيء معلّق فعلًا
+     * (متأخر/ورد/عادة) ويتنوع بتغيّر اليوم — فلا يسمع المستخدم الجملة نفسها
+     * كل مرة يسأل فيها سؤالًا غير مفهوم.
+     */
+    private fun fallback(
+        settings: AssistantSettings,
+        user: String,
+        snapshot: AssistantSnapshot,
+        today: LocalDate
+    ): String {
+        val pending = when {
+            snapshot.context.overdueTasks.isNotEmpty() ->
+                "عندك «${snapshot.context.overdueTasks.first().title}» متأخرة — تحب نخلصها الأول؟"
+            !snapshot.wirdDoneToday ->
+                "وردك النهاردة لسه ما اتسجّلش — تحب أفتح لك المصحف؟"
+            snapshot.openTasksToday > 0 ->
+                "عندك ${snapshot.openTasksToday} مهام مفتوحة النهاردة — تحب أرتبها لك؟"
+            else -> null
+        }
         val options = when (settings.tone) {
             AssistantTone.FORMAL -> listOf(
-                "سؤال وجيه يا $user. لحد دلوقتي أقدر أساعدك في متابعة وردك ومهامك وصلاتك وسعراتك وعاداتك — جرّب تسألني عن واحد منهم.",
+                "سؤال وجيه يا $user. لحد دلوقتي أقدر أساعدك في متابعة وردك ومهامك وصلاتك وسعراتك وعاداتك وفلوسك — جرّب تسألني عن واحد منهم، أو قولي «لخّص يومي».",
                 "لم أفهم المقصود تمامًا. يمكنك سؤالي عن ورد اليوم أو مهامك أو الصلاة القادمة، وسأجيبك من بيانات التطبيق."
             )
             AssistantTone.CALM -> listOf(
@@ -688,10 +970,11 @@ internal object AssistantEngine {
             )
             AssistantTone.PLAYFUL -> listOf(
                 "هممم، دي لسه مش من الحاجات اللي بعرف أرد عليها يا $user! بس اسألني عن وردك أو مهامك أو الصلاة الجاية — دي منطقتي.",
-                "فهمت نص الكلام بس يا $user! جرّب تسألني: «وردي النهاردة إيه؟» أو «عندي مهام إيه؟» وأنا أجاوبك على طول."
+                "فهمت نص الكلام بس يا $user! جرّب تسألني: «وردي النهاردة إيه؟» أو «لخّص يومي» وأنا أجاوبك على طول."
             )
         }
-        return options[Math.floorMod(user.hashCode(), options.size)]
+        val base = pick(options, varietySeed(snapshot, today))
+        return if (pending != null) "$base\n$pending" else base
     }
 
     private fun isGreeting(lower: String): Boolean =

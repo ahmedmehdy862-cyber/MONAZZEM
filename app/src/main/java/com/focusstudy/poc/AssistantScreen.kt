@@ -123,6 +123,13 @@ internal fun AssistantScreen(
     var profile by remember { mutableStateOf(AssistantStore.loadProfile(context)) }
     var messages by remember { mutableStateOf(AssistantStore.loadHistory(context)) }
     var snapshot by remember { mutableStateOf(AssistantSnapshot(userName = userName)) }
+    var pendingProposal by remember { mutableStateOf<ProposedTask?>(null) }
+    var pendingChips by remember { mutableStateOf<List<String>>(emptyList()) }
+    var memories by remember { mutableStateOf<List<AssistantMemoryRow>>(emptyList()) }
+    // اقتراحات متكيفة من بيانات المستخدم (لا أسئلة ثابتة).
+    val suggestions = remember(snapshot) {
+        runCatching { AssistantSuggestions.suggest(snapshot) }.getOrDefault(emptyList())
+    }
     // تاريخ اليوم ومنطقته الزمنية (من إعدادات التطبيق) لتمريرهما إلى المحرك:
     // استخراج موعد مهمة أو مدة جلسة يحتاجان تاريخ اليوم والمنطقة الصحيحين.
     val today = rememberCurrentDate()
@@ -203,7 +210,17 @@ internal fun AssistantScreen(
             reply.learnedFact?.let { learned ->
                 facts = facts + learned
                 AssistantStore.saveFacts(context, facts)
+                // تُحفظ الحقيقة أيضًا في ذاكرة قاعدة البيانات (بثقة واضمحلال)
+                // لتُسترجع في محادثات لاحقة.
+                withContext(Dispatchers.IO) {
+                    AssistantMemoryStore.saveMemory(context, learned.text, learned.category, source = "chat")
+                }
             }
+            reply.usedMemoryId?.let { id ->
+                withContext(Dispatchers.IO) { AssistantMemoryStore.touchMemory(context, id) }
+            }
+            pendingProposal = reply.proposedTask
+            pendingChips = reply.chips
             // الفعل يُنفَّذ أولًا، ثم يُعرض تأكيده: نص المحرك عند النجاح، أو
             // رسالة بديلة دقيقة عند الفشل أو عند فتح إعداد الجلسة بدل بدئها.
             val finalText = reply.action?.let { executeAssistantAction(it, reply.text) } ?: reply.text
@@ -302,9 +319,25 @@ internal fun AssistantScreen(
     }
 
     LaunchedEffect(Unit) {
-        snapshot = AssistantKnowledge.load(context, userName)
+        val loaded = AssistantKnowledge.load(context, userName)
+        snapshot = loaded
+        memories = loaded.context.memories
         if (messages.isEmpty()) {
-            addMessage("assistant", AssistantEngine.greeting(settings, userName))
+            addMessage("assistant", AssistantEngine.greeting(settings, loaded))
+        }
+    }
+    // تُسجَّل الاقتراحات المعروضة (قبول/عرض) مرة لكل لقطة، ليتعلم المساعد
+    // أي نوع اقتراح ينفع فعلًا وأي نوع يتجاهله المستخدم.
+    var suggestionsRecordedFor by remember { mutableStateOf<AssistantSnapshot?>(null) }
+    LaunchedEffect(snapshot) {
+        memories = snapshot.context.memories
+        if (suggestions.isNotEmpty() && suggestionsRecordedFor != snapshot) {
+            suggestionsRecordedFor = snapshot
+            withContext(Dispatchers.IO) {
+                suggestions.forEach { suggestion ->
+                    AssistantMemoryStore.recordInteraction(context, suggestion.kind, suggestion.text, accepted = false)
+                }
+            }
         }
     }
     // التمرير التلقائي لآخر رسالة يبدأ بعد التحميل الأولي فقط: عند التحميل
@@ -415,12 +448,86 @@ internal fun AssistantScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
+            // رقاقات متكيفة من بيانات المستخدم (لا أسئلة ثابتة): كل رقاقة
+            // تُرسل نصها وتُسجَّل قبولًا ليتعلم المساعد ما ينفع. بلا بيانات
+            // كافية تُعرض الأسئلة المعروفة كبداية فقط.
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
             ) {
-                (ASSISTANT_KNOWLEDGE_PROMPTS + ASSISTANT_TEACH_ME_PROMPTS.take(3)).forEach { prompt ->
-                    AssistChip(onClick = { send(prompt) }, label = { Text(prompt) })
+                if (suggestions.isNotEmpty()) {
+                    suggestions.forEach { suggestion ->
+                        AssistChip(
+                            onClick = {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        AssistantMemoryStore.recordInteraction(
+                                            context, suggestion.kind, suggestion.text, accepted = true
+                                        )
+                                    }
+                                }
+                                send(suggestion.sendText)
+                            },
+                            label = { Text(suggestion.text) }
+                        )
+                    }
+                } else {
+                    ASSISTANT_KNOWLEDGE_PROMPTS.forEach { prompt ->
+                        AssistChip(onClick = { send(prompt) }, label = { Text(prompt) })
+                    }
+                }
+            }
+            // مهمة مقترحة من كلام عادي: زر تأكيد يضيفها فعلًا، أو رفض يلغيها.
+            pendingProposal?.let { proposed ->
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh),
+                    shape = RoundedCornerShape(FocusSpacing.radiusCard)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(FocusSpacing.card)) {
+                        Text(
+                            text = "أضيف مهمة «${proposed.title}»؟",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = FocusColors.TextPrimary
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                val toAdd = proposed
+                                pendingProposal = null
+                                scope.launch {
+                                    val added = onAssistantAddTask(
+                                        toAdd.title, toAdd.dueAt, toAdd.priorityLevel, toAdd.recurrence
+                                    )
+                                    addMessage(
+                                        "assistant",
+                                        if (added) "تم إضافة المهمة «${toAdd.title}»، وهتلاقيها في «مهامي»."
+                                        else "ما قدرتش أضيف المهمة. جرّب من زر الإضافة السريع."
+                                    )
+                                }
+                            }) { Text("أيوه ضيفها") }
+                            OutlinedButton(onClick = { pendingProposal = null }) { Text("لا مش مهم") }
+                        }
+                    }
+                }
+            }
+            // رقاقات توضيحية: خيارات سؤال المساعد التوضيحي (مثلًا «خلصت إيه؟»).
+            if (pendingChips.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
+                ) {
+                    pendingChips.forEach { chip ->
+                        AssistChip(
+                            onClick = {
+                                pendingChips = emptyList()
+                                send(chip)
+                            },
+                            label = { Text(chip) }
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -519,10 +626,20 @@ internal fun AssistantScreen(
                     onClearHistory = {
                         messages = emptyList()
                         AssistantStore.clearHistory(context)
-                        addMessage("assistant", AssistantEngine.greeting(settings, userName))
+                        addMessage("assistant", AssistantEngine.greeting(settings, snapshot))
                         importStatus = "اتمسح سجل المحادثة."
                     },
-                    onOpenTasks = onOpenTasks
+                    onOpenTasks = onOpenTasks,
+                    learnedEntries = snapshot.context.profileEntries,
+                    memories = memories,
+                    onDeleteMemory = { memory ->
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                AssistantMemoryStore.deleteMemory(context, memory.id)
+                            }
+                            memories = memories.filter { it.id != memory.id }
+                        }
+                    }
                 )
                 Spacer(Modifier.height(8.dp))
             }
@@ -587,7 +704,10 @@ private fun AssistantProfileTab(
     onDeleteProfile: () -> Unit,
     onDeleteFact: (LearnedFact) -> Unit,
     onClearHistory: () -> Unit,
-    onOpenTasks: () -> Unit
+    onOpenTasks: () -> Unit,
+    learnedEntries: List<AssistantProfileEntry> = emptyList(),
+    memories: List<AssistantMemoryRow> = emptyList(),
+    onDeleteMemory: (AssistantMemoryRow) -> Unit = {}
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh),
@@ -777,6 +897,67 @@ private fun AssistantProfileTab(
                 OutlinedButton(onClick = onOpenTasks) { Text("فتح مهامي") }
                 TextButton(onClick = onClearHistory) {
                     Text("مسح سجل المحادثة", color = FocusColors.Error)
+                }
+            }
+        }
+    }
+
+    // ما تعلّمه المساعد من سلوكك (لا من كلامك فقط): أنماط محفوظة على جهازك.
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(FocusSpacing.card)) {
+            Text(
+                text = "اللي اتعلمته عنك من سلوكك",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = FocusColors.TextPrimary
+            )
+            Text(
+                text = "أنماط استنتجها المساعد من مهامك وجلساتك ووردك وعاداتك — على جهازك فقط، وتتطور مع الاستخدام. احذف أي ذكرى لا تريدها.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Spacer(Modifier.height(8.dp))
+            if (learnedEntries.isEmpty() && memories.isEmpty()) {
+                Text(
+                    text = "لسه بتعلم عنك — استخدم التطبيق أيامًا قليلة وستظهر هنا أنماطك (أفضل وقت تركيز، مدة الجلسة المفضلة، الفئات التي تتأخر).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FocusColors.TextMuted
+                )
+            } else {
+                learnedEntries.forEach { entry ->
+                    Text(
+                        text = "• ${entry.textValue}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextPrimary
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                memories.forEach { memory ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = memory.category,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = FocusColors.onTint(FocusColors.Blue)
+                            )
+                            Text(
+                                text = memory.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FocusColors.TextPrimary
+                            )
+                        }
+                        IconButton(onClick = { onDeleteMemory(memory) }) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = "حذف الذكرى",
+                                tint = FocusColors.TextMuted
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
                 }
             }
         }

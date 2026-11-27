@@ -168,6 +168,18 @@ internal object WirdReminderScheduler {
             ReminderDecision.Send -> {
                 post(app, slot, settings, range, test = false)
                 NotificationDelivery.logSent(app, "wird", now, now)
+                // «زنان»: بعد الإشعار الأول تبدأ سلسلة متابعة تعيد التذكير
+                // بفواصل متصاعدة حتى يُسجَّل الورد أو يؤجَّل أو يُلغى صراحةً.
+                val detail = if (range.completed) {
+                    "أكملت ختم المصحف! اضغط لبدء ختمة جديدة من سورة ${settings.surah}."
+                } else {
+                    "صفحات ${range.firstPage}–${range.lastPage} من سورة ${settings.surah} (${settings.pagesPerDay} صفحات). اضغط لفتح المصحف على صفحة ورد اليوم."
+                }
+                AssistantFollowUpScheduler.scheduleAfterPost(
+                    app,
+                    if (slot == SLOT_EVENING) FollowUpKind.WIRD_EVENING else FollowUpKind.WIRD_MORNING,
+                    slot = slot, day = todayKey, detail = detail
+                )
                 schedule(app)
             }
             is ReminderDecision.Defer -> {

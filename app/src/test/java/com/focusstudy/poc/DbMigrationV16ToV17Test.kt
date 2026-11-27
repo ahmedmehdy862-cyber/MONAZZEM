@@ -77,6 +77,8 @@ class DbMigrationV16ToV17Test {
      * أولًا (بلا ذلك يبقى مربوطًا بملف sandbox صنف سابق ويعيد إنشاء
      * الملف المحذوف فارغًا بإصدار 17)، ثم احذف الملف وملفات اليومية
      * بلا شرط (ملف يومية يتيم من صنف سابق قد يُستعاد في الملف الجديد).
+     * (يغني عن resetForTest + deleteDatabase في assistant-learn —
+     * cleanDbFiles يفعلهما مع التنظيف الكامل.)
      */
     private fun cleanDbFiles() {
         StudyDb.resetForTest()
@@ -98,6 +100,7 @@ class DbMigrationV16ToV17Test {
         // the v15 life tables (CI run 45756885728: "no such table: habit_logs"
         // in SyncApplyDbTest).
         runCatching { StudyDb.get(context).close() }
+        StudyDb.resetForTest()
         runCatching { context.deleteDatabase(DB_FILE) }
         StudyDb.resetForTest()
     }

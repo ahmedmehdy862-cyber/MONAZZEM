@@ -93,6 +93,8 @@ internal object NotificationMaintenance {
             "dhikr" to { DhikrReminderScheduler.schedule(app) },
             "wird" to { WirdReminderScheduler.schedule(app) },
             "skill" to { SkillReminderScheduler.schedule(app) },
+            "exercise" to { ExerciseReminderScheduler.schedule(app) },
+            "followup" to { AssistantFollowUpScheduler.rescheduleActive(app) },
             "update" to { AppUpdateManager.schedule(app) },
             "session" to { SessionEngine.refresh(app) }
         )

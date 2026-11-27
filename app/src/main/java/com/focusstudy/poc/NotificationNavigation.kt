@@ -30,6 +30,10 @@ internal object NotificationNavigation {
     var openPrayerTimesRequest by mutableStateOf(0)
         private set
 
+    /** The exercise reminder opens the life tracker (health section). */
+    var openLifeRequest by mutableStateOf(0)
+        private set
+
     var requestedTaskId by mutableStateOf<Long?>(null)
         private set
 
@@ -51,6 +55,10 @@ internal object NotificationNavigation {
 
     fun requestPrayerTimes() {
         openPrayerTimesRequest += 1
+    }
+
+    fun requestLife() {
+        openLifeRequest += 1
     }
 
     fun requestTask(taskId: Long) {

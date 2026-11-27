@@ -83,6 +83,8 @@ internal fun NotificationCenterScreen(
     val dhikrEnabled = remember(localRevision) { DhikrPrefs.enabled(context) }
     val wirdSettings = remember(localRevision) { WirdPrefs.load(context) }
     val skillSettings = remember(localRevision) { SkillReminderPrefs.load(context) }
+    val exerciseSettings = remember(localRevision) { ExerciseReminderPrefs.load(context) }
+    val nagSettings = remember(localRevision) { AssistantNagPrefs.load(context) }
     var wirdToday by remember { mutableStateOf<WirdRange?>(null) }
 
     // The permission dialog is async: re-check when the activity resumes instead of immediately
@@ -356,6 +358,55 @@ internal fun NotificationCenterScreen(
                         }) { Text("الموعد · ${hhmm(skillSettings.hour, skillSettings.minute)}") }
                     }
                     TextButton(onClick = { SkillReminderScheduler.notifyTest(context) }) { Text("جرّب تذكير المهارات") }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
+                    Spacer(Modifier.height(8.dp))
+                    PreferenceSwitchRow(
+                        "تذكير التمارين",
+                        "في أيام خطة التمرين فقط (السبت والاثنين والأربعاء) في الوقت الذي تختاره. النقر يفتح «حياتي» لتسجيل التمرين، وإن سجّلت تمرين اليوم فلا يصلك التذكير — وإن تجاهلته يعيد المساعد تذكيرك.",
+                        exerciseSettings.enabled
+                    ) {
+                        ExerciseReminderPrefs.save(context, exerciseSettings.copy(enabled = it))
+                        ExerciseReminderScheduler.schedule(context)
+                        localRevision++
+                    }
+                    if (exerciseSettings.enabled) {
+                        TextButton(onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                ExerciseReminderPrefs.save(context, exerciseSettings.copy(hour = hour, minute = minute))
+                                ExerciseReminderScheduler.schedule(context)
+                                localRevision++
+                            }, exerciseSettings.hour, exerciseSettings.minute, true).show()
+                        }) { Text("الموعد · ${hhmm(exerciseSettings.hour, exerciseSettings.minute)}") }
+                    }
+                    TextButton(onClick = { ExerciseReminderScheduler.notifyTest(context) }) { Text("جرّب تذكير التمارين") }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.HorizontalDivider(color = FocusColors.SurfaceHigh)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "إلحاح المساعد (زنان)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = FocusColors.TextPrimary
+                    )
+                    Text(
+                        text = "بعد التذكير الأول، يعيد المساعد التذكير بفواصل متصاعدة حتى تنجز أو تؤجّل أو تلغي صراحةً. «مثابر» (افتراضي): حتى 5 محاولات؛ «متوسط»: 3 محاولات؛ «هادئ»: إشعار واحد فقط. سحب 3 إشعارات متتالية يوقف المتابعة دائمًا.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FocusColors.TextSecondary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AssistantNagLevel.entries.forEach { level ->
+                            FilterChip(
+                                selected = nagSettings.level == level,
+                                onClick = {
+                                    AssistantNagPrefs.save(context, nagSettings.copy(level = level))
+                                    localRevision++
+                                },
+                                label = { Text(level.label) }
+                            )
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))

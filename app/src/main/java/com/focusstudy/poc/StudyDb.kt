@@ -30,6 +30,13 @@ data class SessionRow(
  *   v17 — user_profile (single-row display name, migrated once from preferences)
  *        and support_messages (local copy of every support/suggestion message with
  *        its send status and the private copies of its attached images).
+ *   v18 — assistant learning (local only, never synced): assistant_memories
+ *        (conversation memories with confidence and use counts),
+ *        assistant_interactions (suggestion outcomes: shown/accepted),
+ *        assistant_profile (learned profile entries: best hours, preferred
+ *        focus minutes, most-delayed category, streaks), and
+ *        assistant_followups (persistent follow-up chains for wird/exercise
+ *        reminders: attempts, next alarm, snooze, state).
  *
  * Every upgrade is additive: no column or table is dropped, so existing data survives.
  */
@@ -82,6 +89,7 @@ class StudyDb private constructor(context: Context) :
         migrateToV15(db)
         migrateToV16(db)
         migrateToV17(db)
+        migrateToV18(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -101,6 +109,7 @@ class StudyDb private constructor(context: Context) :
         if (oldVersion < 15) migrateToV15(db)
         if (oldVersion < 16) migrateToV16(db)
         if (oldVersion < 17) migrateToV17(db)
+        if (oldVersion < 18) migrateToV18(db)
     }
 
     private fun migrateToV4(db: SQLiteDatabase) {
@@ -909,7 +918,7 @@ class StudyDb private constructor(context: Context) :
 
     fun lastNonCriticalDelivery(): Long? =
         readableDatabase.rawQuery(
-            "SELECT MAX(delivered_at) FROM notification_log WHERE delivered_at IS NOT NULL AND kind IN ('task_due','task_overdue','companion','pledge','dhikr','daily','wird','skill')",
+            "SELECT MAX(delivered_at) FROM notification_log WHERE delivered_at IS NOT NULL AND kind IN ('task_due','task_overdue','companion','pledge','dhikr','daily','wird','skill','followup','exercise')",
             null
         ).use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
 
@@ -1697,6 +1706,72 @@ class StudyDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_support_messages_created ON support_messages(created_at)")
     }
 
+    /**
+     * v18 — assistant learning + persistent follow-ups. All four tables are
+     * local-only: none of them is in the sync contract (see SyncPayload), so
+     * the Windows desktop needs no schema change for v18.
+     */
+    private fun migrateToV18(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_memories(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              text TEXT NOT NULL,
+              category TEXT NOT NULL DEFAULT 'عام',
+              source TEXT NOT NULL DEFAULT 'chat',
+              confidence REAL NOT NULL DEFAULT 0.8,
+              use_count INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              last_used_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_interactions(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              detail TEXT NOT NULL DEFAULT '',
+              accepted INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_assistant_interactions_kind ON assistant_interactions(kind)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_profile(
+              key TEXT PRIMARY KEY,
+              text_value TEXT NOT NULL DEFAULT '',
+              real_value REAL,
+              confidence REAL NOT NULL DEFAULT 0.0,
+              samples INTEGER NOT NULL DEFAULT 0,
+              updated_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_followups(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              slot TEXT NOT NULL DEFAULT '',
+              day TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 1,
+              max_attempts INTEGER NOT NULL DEFAULT 5,
+              next_at INTEGER NOT NULL DEFAULT 0,
+              state TEXT NOT NULL DEFAULT 'active',
+              snooze_until INTEGER,
+              detail TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              UNIQUE(kind, slot, day)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_assistant_followups_state ON assistant_followups(state, next_at)")
+    }
+
     // ------------------------------------------------------- life tracking
 
     fun habits(): List<Habit> = readableDatabase.rawQuery(
@@ -2466,9 +2541,272 @@ class StudyDb private constructor(context: Context) :
             }
         }
 
+
+    // ------------------------------------------------- assistant learning (v18)
+
+    /** سجلات الورد من يوم معين (للتعلم: السلاسل وساعة الورد المعتادة). */
+    fun wirdLogsSince(sinceDay: String): List<WirdLog> =
+        readableDatabase.rawQuery(
+            "SELECT day, pages, surah, logged_at FROM wird_logs WHERE day >= ? ORDER BY day",
+            arrayOf(sinceDay)
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        WirdLog(
+                            day = cursor.getString(0).orEmpty(),
+                            pages = cursor.getInt(1),
+                            surah = cursor.getString(2).orEmpty(),
+                            loggedAt = cursor.getLong(3)
+                        )
+                    )
+                }
+            }
+        }
+
+    fun saveAssistantMemory(text: String, category: String, source: String, confidence: Double): Long {
+        val values = ContentValues().apply {
+            put("text", text)
+            put("category", category)
+            put("source", source)
+            put("confidence", confidence)
+            put("use_count", 0)
+            put("created_at", System.currentTimeMillis())
+            put("last_used_at", System.currentTimeMillis())
+        }
+        return writableDatabase.insert("assistant_memories", null, values)
+    }
+
+    fun assistantMemories(): List<AssistantMemoryRow> =
+        readableDatabase.rawQuery(
+            "SELECT id, text, category, source, confidence, use_count, created_at, last_used_at FROM assistant_memories ORDER BY last_used_at DESC",
+            null
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        AssistantMemoryRow(
+                            id = cursor.getLong(0),
+                            text = cursor.getString(1).orEmpty(),
+                            category = cursor.getString(2).orEmpty(),
+                            source = cursor.getString(3).orEmpty(),
+                            confidence = cursor.getDouble(4),
+                            useCount = cursor.getInt(5),
+                            createdAt = cursor.getLong(6),
+                            lastUsedAt = cursor.getLong(7)
+                        )
+                    )
+                }
+            }
+        }
+
+    fun deleteAssistantMemory(id: Long) {
+        writableDatabase.delete("assistant_memories", "id = ?", arrayOf(id.toString()))
+    }
+
+    fun touchAssistantMemory(id: Long, now: Long) {
+        writableDatabase.execSQL(
+            "UPDATE assistant_memories SET use_count = use_count + 1, last_used_at = ?, confidence = MIN(1.0, confidence + 0.02) WHERE id = ?",
+            arrayOf<Any?>(now, id)
+        )
+    }
+
+    fun updateAssistantMemoryConfidence(id: Long, confidence: Double) {
+        writableDatabase.execSQL(
+            "UPDATE assistant_memories SET confidence = ? WHERE id = ?",
+            arrayOf<Any?>(confidence, id)
+        )
+    }
+
+    fun recordAssistantInteraction(kind: String, detail: String, accepted: Boolean) {
+        val values = ContentValues().apply {
+            put("kind", kind)
+            put("detail", detail)
+            put("accepted", if (accepted) 1 else 0)
+            put("created_at", System.currentTimeMillis())
+        }
+        writableDatabase.insert("assistant_interactions", null, values)
+    }
+
+    fun assistantInteractionStats(): List<AssistantInteractionRow> =
+        readableDatabase.rawQuery(
+            "SELECT id, kind, detail, accepted, created_at FROM assistant_interactions ORDER BY created_at DESC LIMIT 500",
+            null
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        AssistantInteractionRow(
+                            id = cursor.getLong(0),
+                            kind = cursor.getString(1).orEmpty(),
+                            detail = cursor.getString(2).orEmpty(),
+                            accepted = cursor.getInt(3) == 1,
+                            createdAt = cursor.getLong(4)
+                        )
+                    )
+                }
+            }
+        }
+
+    fun saveAssistantProfile(entries: List<AssistantProfileEntry>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            entries.forEach { entry ->
+                val values = ContentValues().apply {
+                    put("key", entry.key)
+                    put("text_value", entry.textValue)
+                    if (entry.realValue != null) put("real_value", entry.realValue) else putNull("real_value")
+                    put("confidence", entry.confidence)
+                    put("samples", entry.samples)
+                    put("updated_at", entry.updatedAt)
+                }
+                db.insertWithOnConflict("assistant_profile", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun assistantProfile(): List<AssistantProfileEntry> =
+        readableDatabase.rawQuery(
+            "SELECT key, text_value, real_value, confidence, samples, updated_at FROM assistant_profile ORDER BY updated_at DESC",
+            null
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        AssistantProfileEntry(
+                            key = cursor.getString(0).orEmpty(),
+                            textValue = cursor.getString(1).orEmpty(),
+                            realValue = if (cursor.isNull(2)) null else cursor.getDouble(2),
+                            confidence = cursor.getDouble(3),
+                            samples = cursor.getInt(4),
+                            updatedAt = cursor.getLong(5)
+                        )
+                    )
+                }
+            }
+        }
+
+    /**
+     * ينشئ سلسلة متابعة أو يترك الموجودة كما هي (CONFLICT_IGNORE): إعادة
+     * الاستدعاء في اليوم نفسه لا تصفّر عدّاد المحاولات أبدًا.
+     */
+    fun upsertAssistantFollowUp(
+        kind: String,
+        slot: String,
+        day: String,
+        attempts: Int,
+        maxAttempts: Int,
+        nextAt: Long,
+        state: String,
+        snoozeUntil: Long?,
+        detail: String,
+        now: Long
+    ) {
+        val values = ContentValues().apply {
+            put("kind", kind)
+            put("slot", slot)
+            put("day", day)
+            put("attempts", attempts)
+            put("max_attempts", maxAttempts)
+            put("next_at", nextAt)
+            put("state", state)
+            if (snoozeUntil != null) put("snooze_until", snoozeUntil) else putNull("snooze_until")
+            put("detail", detail)
+            put("created_at", now)
+            put("updated_at", now)
+        }
+        writableDatabase.insertWithOnConflict(
+            "assistant_followups", null, values, SQLiteDatabase.CONFLICT_IGNORE
+        )
+    }
+
+    fun assistantFollowUp(kind: String, slot: String, day: String): AssistantFollowUpRow? =
+        readableDatabase.rawQuery(
+            "SELECT id, kind, slot, day, attempts, max_attempts, next_at, state, snooze_until, detail, created_at, updated_at FROM assistant_followups WHERE kind = ? AND slot = ? AND day = ? LIMIT 1",
+            arrayOf(kind, slot, day)
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) {
+                null
+            } else {
+                AssistantFollowUpRow(
+                    id = cursor.getLong(0),
+                    kind = cursor.getString(1).orEmpty(),
+                    slot = cursor.getString(2).orEmpty(),
+                    day = cursor.getString(3).orEmpty(),
+                    attempts = cursor.getInt(4),
+                    maxAttempts = cursor.getInt(5),
+                    nextAt = cursor.getLong(6),
+                    state = cursor.getString(7).orEmpty(),
+                    snoozeUntil = if (cursor.isNull(8)) null else cursor.getLong(8),
+                    detail = cursor.getString(9).orEmpty(),
+                    createdAt = cursor.getLong(10),
+                    updatedAt = cursor.getLong(11)
+                )
+            }
+        }
+
+    fun assistantFollowUpsActive(): List<AssistantFollowUpRow> =
+        readableDatabase.rawQuery(
+            "SELECT id, kind, slot, day, attempts, max_attempts, next_at, state, snooze_until, detail, created_at, updated_at FROM assistant_followups WHERE state = 'active' ORDER BY next_at",
+            null
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(
+                        AssistantFollowUpRow(
+                            id = cursor.getLong(0),
+                            kind = cursor.getString(1).orEmpty(),
+                            slot = cursor.getString(2).orEmpty(),
+                            day = cursor.getString(3).orEmpty(),
+                            attempts = cursor.getInt(4),
+                            maxAttempts = cursor.getInt(5),
+                            nextAt = cursor.getLong(6),
+                            state = cursor.getString(7).orEmpty(),
+                            snoozeUntil = if (cursor.isNull(8)) null else cursor.getLong(8),
+                            detail = cursor.getString(9).orEmpty(),
+                            createdAt = cursor.getLong(10),
+                            updatedAt = cursor.getLong(11)
+                        )
+                    )
+                }
+            }
+        }
+
+    fun updateAssistantFollowUpState(id: Long, state: String, now: Long) {
+        writableDatabase.execSQL(
+            "UPDATE assistant_followups SET state = ?, updated_at = ? WHERE id = ?",
+            arrayOf<Any?>(state, now, id)
+        )
+    }
+
+    fun updateAssistantFollowUpNextAt(id: Long, nextAt: Long, now: Long) {
+        writableDatabase.execSQL(
+            "UPDATE assistant_followups SET next_at = ?, updated_at = ? WHERE id = ?",
+            arrayOf<Any?>(nextAt, now, id)
+        )
+    }
+
+    fun updateAssistantFollowUpAttempts(id: Long, attempts: Int, now: Long) {
+        writableDatabase.execSQL(
+            "UPDATE assistant_followups SET attempts = ?, updated_at = ? WHERE id = ?",
+            arrayOf<Any?>(attempts, now, id)
+        )
+    }
+
+    fun updateAssistantFollowUpSnooze(id: Long, snoozeUntil: Long, now: Long) {
+        writableDatabase.execSQL(
+            "UPDATE assistant_followups SET snooze_until = ?, updated_at = ? WHERE id = ?",
+            arrayOf<Any?>(snoozeUntil, now, id)
+        )
+    }
+
     companion object {
         private const val DB_NAME = "focus_study.db"
-        private const val DB_VERSION = 17
+        private const val DB_VERSION = 18
         private const val STATE_ACTIVE = "active"
         private const val SEPARATOR = "\n"
 
