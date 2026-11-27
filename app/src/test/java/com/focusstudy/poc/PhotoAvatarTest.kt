@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
