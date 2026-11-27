@@ -46,7 +46,7 @@ class NavigationCatalogTest {
             .filter { it.shelf in NavigationCatalog.moreShelves }.map { it.id }
         assertEquals(
             listOf("settings", "notifications", "prayer_times", "bottom_bar", "permanent_apps",
-                "messages", "updates", "support", "sync"),
+                "messages", "updates", "support", "sync", "privacy"),
             moreIds
         )
     }
@@ -76,6 +76,13 @@ class NavigationCatalogTest {
             assertTrue("$id must stay reachable", id in routes)
             assertFalse("$id is a settings sub-page, not a dock tab", id in pinnable)
         }
+    }
+
+    @Test fun privacyIsOpenableButNotPinnable() {
+        val routes = NavigationCatalog.allRouteIds()
+        val pinnable = NavigationCatalog.pinnableGroups().flatMap { it.ids }.toSet()
+        assertTrue("privacy must stay reachable", "privacy" in routes)
+        assertFalse("privacy is a settings page, not a dock tab", "privacy" in pinnable)
     }
 
     @Test fun syncIsOpenableButNotPinnable() {

@@ -2825,6 +2825,18 @@ class StudyDb private constructor(context: Context) :
          * file, so a seeded file in a later test's sandbox is never opened
          * (the helper recreates the deleted first file empty instead).
          */
+        /**
+         * P-02: يحذف قاعدة البيانات المحلية بالكامل (بعد إغلاق المساعد).
+         * لا يمس الخادم؛ يعيد التشغيل بعدها التطبيق على حالة جديدة.
+         */
+        fun deleteDatabaseFile(context: Context): Boolean {
+            synchronized(this) {
+                runCatching { instance?.close() }
+                instance = null
+            }
+            return context.deleteDatabase(DB_NAME)
+        }
+
         fun resetForTest() {
             synchronized(this) {
                 runCatching { instance?.close() }

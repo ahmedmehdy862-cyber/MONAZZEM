@@ -1121,6 +1121,7 @@ private fun AppRoot(
                 )
                 "support" -> SupportScreen(onBack = { returnToPreviousTab() })
                 "sync" -> SyncAccountScreen(onBack = { returnToPreviousTab() })
+                "privacy" -> PrivacyScreen(onBack = { returnToPreviousTab() })
                 "planner" -> StudyPlannerScreen(
                     dailyGoal = preferences.dailyGoalMinutes,
                     onBack = { returnToPreviousTab() },

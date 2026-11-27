@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -161,6 +162,21 @@ class SyncClient(
 
     /** التسجيل الأول ينشئ الحساب؛ وتغيير كلمة المرور يتطلب الحالية. */
     fun register(profileId: String, passphrase: String, currentPassphrase: String? = null): SyncOutcome {
+        val outcome = attemptRegister(profileId, passphrase, currentPassphrase)
+        if (outcome is SyncOutcome.Ok || currentPassphrase != null) return outcome
+        // ربط حساب أنشأه الهاتف يحتاج كلمة المرور الحالية؛ أعد المحاولة مرة
+        // واحدة بها فيكفي إدخال واحد.
+        if ((outcome as? SyncOutcome.Error)?.message == "بيانات الدخول غير صحيحة") {
+            return attemptRegister(profileId, passphrase, passphrase)
+        }
+        return outcome
+    }
+
+    private fun attemptRegister(
+        profileId: String,
+        passphrase: String,
+        currentPassphrase: String?,
+    ): SyncOutcome {
         val body = json.encodeToString(
             SyncRequest("register", profileId, passphrase, currentPassphrase = currentPassphrase)
         )
@@ -204,6 +220,24 @@ class SyncClient(
                 SyncOutcome.Ok(decodeSnapshot(result.body, key))
             }.getOrElse { SyncOutcome.Error("رد غير مفهوم من الخادم") }
 
+            is PostResult.Failed -> SyncOutcome.Error(result.message)
+        }
+    }
+
+    /**
+     * P-02: يحذف نسخة المزامنة وحساب المزامنة من الخادم نهائيًا
+     * (مصادقة بكلمة المرور). كلمة المرور الخاطئة ترد 401 فيُترجم إلى
+     * «بيانات الدخول غير صحيحة» عبر [post].
+     */
+    fun deleteAccount(profileId: String, passphrase: String): SyncOutcome {
+        val body = json.encodeToString(SyncRequest("delete", profileId, passphrase))
+        return when (val result = post(body)) {
+            is PostResult.Ok -> {
+                val ok = runCatching {
+                    json.decodeFromString<RegisterResponse>(result.body).ok
+                }.getOrDefault(false)
+                if (ok) SyncOutcome.Ok(null) else SyncOutcome.Error("تعذّر حذف حساب المزامنة")
+            }
             is PostResult.Failed -> SyncOutcome.Error(result.message)
         }
     }
@@ -293,6 +327,7 @@ class SyncClient(
                 response.statusCode() == 429 -> "محاولات كثيرة — أعد المحاولة بعد قليل"
                 response.statusCode() == 503 -> "خدمة المزامنة غير متاحة الآن"
                 error.contains("profile_unknown") -> "هذا الحساب غير معروف على الخادم"
+                error.contains("profile_not_owner") -> "فعّل المزامنة من الهاتف أولًا — هذا الحساب لم يُنشَأ من هذا الجهاز"
                 error.contains("invalid_passphrase") -> "كلمة المرور بين 10 و 200 حرف"
                 error.contains("invalid_profile") -> "معرّف الحساب غير صالح"
                 else -> "فشلت المزامنة (رمز ${response.statusCode()})"
@@ -948,6 +983,23 @@ class SyncService(
                 SyncOutcome.Ok(pushed.snapshot)
             }
         }
+    }
+
+    /**
+     * P-02: يحذف حساب المزامنة من الخادم، ثم يمسح الأختام المحلية
+     * فيبدأ أي ربط لاحق من جديد. البيانات المحلية على هذا الجهاز
+     * لا تُمسّ — الحذف الشامل المحلي زر منفصل في التطبيق.
+     */
+    fun deleteAccount(session: SyncSession): SyncOutcome {
+        val profileId = session.profileId ?: return SyncOutcome.Error("الحساب غير مرتبط")
+        val passphrase = session.passphrase()
+        if (passphrase.isBlank()) return SyncOutcome.Error("أدخل كلمة مرور المزامنة")
+        val outcome = client.deleteAccount(profileId, passphrase)
+        if (outcome is SyncOutcome.Ok) {
+            repo.putSyncMeta("stamps", "{}")
+            saveLastSync(LastSync(System.currentTimeMillis(), 0, true, "حُذف حساب المزامنة من الخادم"))
+        }
+        return outcome
     }
 
     fun syncNow(session: SyncSession): SyncOutcome {

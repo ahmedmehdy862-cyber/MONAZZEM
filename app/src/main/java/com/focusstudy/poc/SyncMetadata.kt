@@ -21,6 +21,11 @@ internal class SyncMetadata(private val prefs: SharedPreferences) {
         return out
     }
 
+    /** P-02: يمسح كل الأختام المحلية (بعد حذف حساب المزامنة من الخادم). */
+    fun clear() {
+        prefs.edit().clear().apply()
+    }
+
     fun save(stamps: Map<String, SyncStamp>) {
         val editor = prefs.edit().clear()
         for ((key, stamp) in stamps) {

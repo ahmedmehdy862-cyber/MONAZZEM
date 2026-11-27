@@ -36,7 +36,8 @@ object UserIdentity {
      */
     @Synchronized
     fun id(context: Context): String {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // P-04: معرّف التثبيت في تفضيلات مشفّرة (مع ترحيل آمن من العادي).
+        val prefs = SecurePrefs.prefs(context, PREFS)
         val existing = prefs.getString(KEY, null)
         if (!existing.isNullOrBlank()) return existing
         val created = UUID.randomUUID().toString()
@@ -47,15 +48,22 @@ object UserIdentity {
     /** Empty until the first successful registration; never invented on the device. */
     @Synchronized
     fun profileId(context: Context): String =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        SecurePrefs.prefs(context, PREFS)
             .getString(KEY_PROFILE, null).orEmpty().trim()
+
+    /** P-02: يمسح معرّف الحساب المحفوظ (بعد حذف الحساب من الخادم). */
+    @Synchronized
+    internal fun clearProfileId(context: Context) {
+        SecurePrefs.prefs(context, PREFS)
+            .edit().remove(KEY_PROFILE).remove(UserRegistry.KEY_SIGNATURE).commit()
+    }
 
     /** Keeps only a server-issued id, so a bad response cannot become a delivery address. */
     @Synchronized
     internal fun storeProfileId(context: Context, value: String) {
         val clean = value.trim().lowercase()
         if (!isValidProfileId(clean)) return
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        SecurePrefs.prefs(context, PREFS)
             .edit().putString(KEY_PROFILE, clean).commit()
     }
 
@@ -85,11 +93,16 @@ object UserIdentity {
  * id, which is saved locally and sent on later attempts; the dashboard still lists the person under
  * the short code shown in «رسائل الفريق», so the team never asks for a phone number or email address.
  *
+ * H2: the profile id sent here is ownership proof, not a suggestion - the server never adopts a
+ * client-suggested id, and it returns an existing profile id only to a caller that presents the
+ * stored id (or the sync passphrase). A 409 (already registered without proof) simply leaves the
+ * local id untouched and the throttled retry applies.
+ *
  * The request is fire-and-forget. A failed attempt is remembered as "not registered" and retried on
  * the next app open or profile change, with a short throttle so an offline device never loops.
  */
 internal object UserRegistry {
-    private const val KEY_SIGNATURE = "registered_signature"
+    internal const val KEY_SIGNATURE = "registered_signature"
     private const val KEY_LAST_ATTEMPT = "register_last_attempt_ms"
     private const val RETRY_DELAY_MS = 60_000L
 
@@ -108,6 +121,25 @@ internal object UserRegistry {
         versionCode.toString()
     ).joinToString("\u001f")
 
+    /**
+     * P-02: يحذف صف المستخدم ورسائل دعمه من الخادم (إثبات الملكية = معرّف
+     * الحساب المحفوظ). يعيد false عند أي فشل؛ والمتصل لا يمسح الهوية
+     * المحلية إلا بعد نجاح حقيقي.
+     */
+    suspend fun deleteAccount(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val uid = UserIdentity.id(context)
+        val profileId = UserIdentity.profileId(context)
+        if (profileId.isBlank()) return@withContext false
+        val payload = JSONObject()
+            .put("action", "delete")
+            .put("uid", uid)
+            .put("profileId", profileId)
+        val response = runCatching {
+            TeamMessages.request("${TeamMessages.BASE}/api/messages", "POST", payload.toString())
+        }.getOrNull() ?: return@withContext false
+        runCatching { JSONObject(response).optBoolean("ok") }.getOrDefault(false)
+    }
+
     /** [force] bypasses the retry throttle when the person's name or profile just changed. */
     suspend fun register(context: Context, force: Boolean = false) = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -119,7 +151,7 @@ internal object UserRegistry {
             // more after the update, so the server can issue the new id without a data migration.
             val signature = signature(uid, profileId.isNotBlank(), prefs, versionCode)
 
-            val store = context.getSharedPreferences(UserIdentity.PREFS, Context.MODE_PRIVATE)
+            val store = SecurePrefs.prefs(context, UserIdentity.PREFS)
             if (store.getString(KEY_SIGNATURE, null) == signature) return@withLock
             val now = System.currentTimeMillis()
             if (!force && now - store.getLong(KEY_LAST_ATTEMPT, 0L) < RETRY_DELAY_MS) return@withLock

@@ -130,6 +130,10 @@ dependencies {
     // EXIF orientation for camera photos picked for the avatar (used directly
     // via ExifInterface in copyAvatarToAppFiles — no face detection anymore).
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    // P-04 (see SecurePrefs): EncryptedSharedPreferences للتفضيلات الحساسة
+    // (معرّفات الهوية أولًا) — AES256-SIV للمفاتيح + AES256-GCM للقيم،
+    // والمفتاح الرئيسي في Android Keystore. مجاني، بلا خدمة، بلا إذن جديد.
+    implementation("androidx.security:security-crypto:1.0.0")
     // 3D companion «منظم» (0.34.0): SceneView فوق Filament — العارض التصريحي
     // لـ Compose، خليفة Sceneform المدعوم. الاختيار مقابل Filament الخام:
     // Filament وحده يحتاج ModelViewer يدويًا بلا تكامل Compose ولا إدارة

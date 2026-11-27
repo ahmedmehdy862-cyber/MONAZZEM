@@ -30,14 +30,38 @@ internal object SyncAccount {
         if (profileId.isBlank()) return@withContext Result.PROFILE_NOT_READY
         if (!UserIdentity.isValidProfileId(profileId)) return@withContext Result.PROFILE_NOT_READY
 
-        val payload = JSONObject()
-            .put("action", "register")
-            .put("profileId", profileId)
-            .put("passphrase", passphrase)
-        val response = try {
-            TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
-        } catch (error: Exception) {
-            return@withContext Result.NETWORK_ERROR
+        // M1 (H2): first registration must prove ownership of the profile id — the
+        // server checks that this install id owns it in the user registry, so
+        // knowing the profile id alone can no longer register the account.
+        val uid = UserIdentity.id(context)
+        fun attempt(currentPassphrase: String?): String {
+            val payload = JSONObject()
+                .put("action", "register")
+                .put("profileId", profileId)
+                .put("passphrase", passphrase)
+                .put("uid", uid)
+            if (currentPassphrase != null) payload.put("currentPassphrase", currentPassphrase)
+            return TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
+        }
+        val response = runCatching { attempt(null) }.getOrElse { error ->
+            // Linking to an already-created account needs the current passphrase;
+            // retry once with it so a single entry suffices.
+            if (error.message?.contains("http 401") != true) {
+                return@withContext if (error.message?.contains("http 403") == true) {
+                    Result.REJECTED
+                } else {
+                    Result.NETWORK_ERROR
+                }
+            }
+            runCatching { attempt(passphrase) }.getOrElse { retryError ->
+                return@withContext if (retryError.message?.contains("http 401") == true ||
+                    retryError.message?.contains("http 403") == true
+                ) {
+                    Result.REJECTED
+                } else {
+                    Result.NETWORK_ERROR
+                }
+            }
         }
         val ok = runCatching { JSONObject(response).optBoolean("ok") }.getOrDefault(false)
         if (ok) Result.SUCCESS else Result.REJECTED
@@ -90,6 +114,34 @@ internal object SyncAccount {
         } else {
             Result.REJECTED
         }
+    }
+
+    /**
+     * P-02: يحذف نسخة المزامنة وحساب المزامنة من الخادم نهائيًا (مصادقة بكلمة
+     * المرور). بعد نجاح الحذف تُمسح الأختام المحلية فيبدأ أي ربط لاحق من جديد.
+     */
+    suspend fun deleteAccount(context: Context, passphrase: String): Result = withContext(Dispatchers.IO) {
+        if (!SyncPassphrase.isValid(passphrase)) return@withContext Result.INVALID_PASSPHRASE
+        val profileId = UserIdentity.profileId(context)
+        if (profileId.isBlank()) return@withContext Result.PROFILE_NOT_READY
+        if (!UserIdentity.isValidProfileId(profileId)) return@withContext Result.PROFILE_NOT_READY
+        val payload = JSONObject()
+            .put("action", "delete")
+            .put("profileId", profileId)
+            .put("passphrase", passphrase)
+        val response = try {
+            TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
+        } catch (error: Exception) {
+            return@withContext if (error.message?.contains("http 401") == true) {
+                Result.REJECTED
+            } else {
+                Result.NETWORK_ERROR
+            }
+        }
+        val ok = runCatching { JSONObject(response).optBoolean("ok") }.getOrDefault(false)
+        if (!ok) return@withContext Result.REJECTED
+        SyncMetadata.get(context).clear()
+        Result.SUCCESS
     }
 
     /**

@@ -85,6 +85,7 @@ class DesktopAppState(val repo: DesktopRepository) {
     var dataVersion by mutableStateOf(0)
     var syncBusy by mutableStateOf(false)
     var syncMessage by mutableStateOf<String?>(null)
+    var confirmDeleteAccount by mutableStateOf(false)
     var loginError by mutableStateOf<String?>(null)
     var loginBusy by mutableStateOf(false)
 
@@ -156,10 +157,42 @@ class DesktopAppState(val repo: DesktopRepository) {
         }
     }
 
+    /**
+     * P-02: حذف حساب المزامنة من الخادم بنقرتين للتأكيد. النقرة الأولى
+     * تطلب التأكيد فقط؛ الثانية تنفذ الحذف، ثم تُلغي الربط محليًا
+     * (كلمة المرور تُمسح من الذاكرة) وتبقى بيانات هذا الجهاز كما هي.
+     */
+    fun deleteAccount() {
+        if (syncBusy || !session.isLinked) return
+        if (!confirmDeleteAccount) {
+            confirmDeleteAccount = true
+            syncMessage = "سيُحذف حساب المزامنة ونسخته من الخادم نهائيًا — اضغط «تأكيد الحذف» مجددًا."
+            return
+        }
+        confirmDeleteAccount = false
+        syncBusy = true
+        syncMessage = "جارٍ حذف حساب المزامنة…"
+        scope.launch(Dispatchers.IO) {
+            val outcome = syncService.deleteAccount(session)
+            when (outcome) {
+                is SyncOutcome.Ok -> {
+                    unlink()
+                    syncMessage = "حُذف حساب المزامنة ونسخته من الخادم نهائيًا"
+                }
+                is SyncOutcome.Error -> {
+                    syncMessage = outcome.message
+                    refresh()
+                }
+            }
+            syncBusy = false
+        }
+    }
+
     fun unlink() {
         session.unlink()
         linked = false
         offlineMode = false
+        confirmDeleteAccount = false
         syncMessage = null
         refresh()
     }
@@ -196,6 +229,11 @@ fun App(state: DesktopAppState) {
                 }
                 Spacer(Modifier.width(8.dp))
                 OutlinedButton(onClick = { state.unlink() }) { Text("تسجيل الخروج") }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { state.deleteAccount() },
+                    enabled = !state.syncBusy,
+                ) { Text(if (state.confirmDeleteAccount) "تأكيد الحذف نهائيًا" else "حذف حساب المزامنة") }
                 Spacer(Modifier.width(8.dp))
             }
             OutlinedButton(onClick = { state.dark = !state.dark }) {

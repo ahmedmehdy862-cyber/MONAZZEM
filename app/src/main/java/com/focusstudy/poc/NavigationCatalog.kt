@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -72,7 +73,8 @@ internal object NavigationCatalog {
         SectionEntry("messages", BottomTab.MESSAGES.label, "إعلانات ومستجدّات بدون تحديث التطبيق.", BottomTab.MESSAGES.mark, SectionShelf.TEAM, BottomTab.MESSAGES.icon),
         SectionEntry("updates", BottomTab.UPDATES.label, "افحص الإصدارات الجديدة واقرأ سجل التغييرات.", BottomTab.UPDATES.mark, SectionShelf.TEAM, BottomTab.UPDATES.icon),
         SectionEntry("support", BottomTab.SUPPORT.label, "تواصل معنا إذا احتجت إلى مساعدة.", BottomTab.SUPPORT.mark, SectionShelf.TEAM, BottomTab.SUPPORT.icon),
-        SectionEntry("sync", "المزامنة", "فعّل حسابك واستخدمه في تطبيق الويب.", "☁", SectionShelf.TEAM, Icons.Filled.Cloud)
+        SectionEntry("sync", "المزامنة", "فعّل حسابك واستخدمه في تطبيق الويب.", "☁", SectionShelf.TEAM, Icons.Filled.Cloud),
+        SectionEntry("privacy", "الخصوصية وبياناتي", "ماذا نعرف عنك وكيف تحذف بياناتك.", "◐", SectionShelf.TEAM, Icons.Filled.PrivacyTip)
     )
 
     /**
