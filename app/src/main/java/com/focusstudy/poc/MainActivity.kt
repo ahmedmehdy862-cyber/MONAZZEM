@@ -232,6 +232,8 @@ import kotlinx.coroutines.SupervisorJob
 
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import io.github.sceneview.rememberEngine
+import io.github.sceneview.rememberModelLoader
 
 import java.util.Locale
 
@@ -636,10 +638,32 @@ private fun AppRoot(
     LaunchedEffect(Unit) {
         if (preferences.companion3dEnabled) companionController.greet()
     }
-    // إصدار المتحكم عند تدمير الجذر (M3): كانت release() ميتة بلا أي متصل.
-    // المتحكم يُنشأ من جديد مع كل تركيب جذري جديد، فلا خطر من تعطيله هنا.
-    DisposableEffect(companionController) {
-        onDispose { companionController.release() }
+    // الرفيق ثلاثي الأبعاد: المحرك + المحمِّل + النموذج مرفوعون إلى
+    // Companion3DHost على مستوى الجذر (0.35.0) — يعيشون مع النشاط كله ولا
+    // يُعاد إنشاؤهم عند إعادة تركيب الرئيسية أو تبديل التبويبات. التحميل
+    // المسبق يبدأ هنا فور فتح التطبيق (أثناء شاشة الترحيب) فلا يحجب
+    // واجهة «اليوم»؛ وتفعيل الرفيق لاحقًا من الإعدادات يبدأ التحميل حينها.
+    val companionEngine = rememberEngine()
+    val companionModelLoader = rememberModelLoader(companionEngine)
+    val companion3DHost = remember(companionEngine, companionModelLoader) {
+        Companion3DHost(companionEngine, companionModelLoader)
+    }
+    LaunchedEffect(companion3DHost.loadRetry, preferences.companion3dEnabled) {
+        if (preferences.companion3dEnabled) companion3DHost.loadModel()
+    }
+    // حارس المهلة للتحميل المعلّق فقط: إن بقي النموذج null بعد المهلة
+    // (ولم يُسجَّل فشل صريح)، يُعرض البديل الثابت.
+    LaunchedEffect(companion3DHost.modelInstance, companion3DHost.loadRetry, preferences.companion3dEnabled) {
+        if (!preferences.companion3dEnabled) return@LaunchedEffect
+        if (companion3DHost.modelInstance != null || companion3DHost.loadFailed) return@LaunchedEffect
+        delay(MODEL_LOAD_TIMEOUT_MS)
+        companion3DHost.markTimedOut()
+    }
+    // إصدار مالك الرفيق عند تدمير الجذر فقط (0.35.0): إصدار المتحكم هنا
+    // أُزيل — كان DisposableEffect يعطّل المتحكم (DISABLED) عند أي مغادرة
+    // للتركيب الجذري فيخفي الرفيق بصمت دون أي سجل.
+    DisposableEffect(companion3DHost) {
+        onDispose { companion3DHost.release() }
     }
     LaunchedEffect(
         preferences.morningMessageEnabled,
@@ -1107,6 +1131,7 @@ private fun AppRoot(
                     onOpenSkills = { openSecondary("skills") },
                     onOpenGoals = { openSecondary("goals") },
                     companionController = companionController,
+                    companion3DHost = companion3DHost,
                     onTaskCompleted = { companionController.celebrateAchievement() },
                     showBack = backStack.isNotEmpty() && current == "tasks",
                     onBack = { returnToPreviousTab() },
@@ -1304,6 +1329,8 @@ private fun TasksScreen(
     onBack: () -> Unit = {},
     // الرفيق ثلاثي الأبعاد (0.34.0): null تعني بلا رفيق في هذه الشاشة.
     companionController: CompanionController? = null,
+    // مالك محرك الرفيق ونموذجه على مستوى الجذر (0.35.0) — null مع null المتحكم.
+    companion3DHost: Companion3DHost? = null,
     // يُستدعى عند انتقال مهمة إلى «منجزة» فقط، لا عند إلغاء الإنجاز.
     onTaskCompleted: () -> Unit = {}
 
@@ -1553,9 +1580,10 @@ private fun TasksScreen(
             // الرفيق ثلاثي الأبعاد (0.34.0) في مساحته المخصصة (§11.1):
             // بطاقة في عمود التمرير نفسه، لا overlay ولا تغطية لأي عنصر.
             // عند التعطيل لا تُركَّب أصلًا فيستعيد التخطيط مساحتها.
-            if (companionController != null) {
+            if (companionController != null && companion3DHost != null) {
                 CompanionHomeSlot(
                     controller = companionController,
+                    host = companion3DHost,
                     assistantName = assistantName,
                     onOpenAssistant = onOpenAssistant,
                     enabled = preferences.companion3dEnabled,

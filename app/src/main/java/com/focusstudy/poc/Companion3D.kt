@@ -3,6 +3,7 @@ package com.focusstudy.poc
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -40,12 +41,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.google.android.filament.Engine
 import io.github.sceneview.SceneView
 import io.github.sceneview.SurfaceType
-import io.github.sceneview.math.Position
 import io.github.sceneview.model.ModelInstance
-import io.github.sceneview.rememberEngine
-import io.github.sceneview.rememberModelLoader
+import io.github.sceneview.model.ModelLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,7 +75,7 @@ internal object CompanionAssets {
 }
 
 /** مهلة اعتبار تحميل نموذج الرفيق فاشلًا (الملف محلي 1.4MB فيُحمَّل عادةً في أقل من ثانية). */
-private const val MODEL_LOAD_TIMEOUT_MS = 8_000L
+internal const val MODEL_LOAD_TIMEOUT_MS = 8_000L
 
 /**
  * حالات الرفيق (المواصفة §17). كل حالة تحمل اسم حركتها في الـ GLB كما هو
@@ -177,6 +177,106 @@ internal class CompanionController(
 }
 
 /**
+ * مالك محرك الرفيق ونموذجه على مستوى الجذر (0.35.0).
+ *
+ * المشكلة: كان المحرك (`rememberEngine`) والمحمِّل والنموذج محصورين في
+ * تركيب `MONAZZEMCompanionView` نفسه — أي إعادة تركيب هيكلية للرئيسية
+ * (تبديل تبويب، تمرير يعيد التركيب) تدمر المحرك والنموذج، فيختفي الرفيق
+ * ويعيد التحميل من جديد (~ثانية حجب على الخيط الرئيسي) أو يبقى مختفيًا.
+ * الحل (وهو النمط الموثق في SceneView 4.18.0: «create one
+ * `rememberEngine()` at app level, share across all scenes» — المحرك كائن
+ * واحد لكل عملية): يُنشأ المحرك والمحمِّل في `AppRoot` بـ `remember`،
+ * فيعيشان مع النشاط كله، ويُحمَّل النموذج مرة واحدة أثناء شاشة الترحيب
+ * (قبل ظهور «اليوم») فلا يحجب واجهة الرئيسية. يُدمَّر كل شيء مع تدمير
+ * الجذر فقط — لا مع مغادرة الرئيسية.
+ *
+ * تحميل النموذج على الخيط الرئيسي صراحةً (إصلاح تعطل الإقلاع 0.35.0):
+ * توثيق SceneView 4.18.0 يقول «Filament JNI calls must run on the main
+ * thread» — فلا «خيط متبنَّى» خارج الرئيسي في هذه النسخة من المكتبة؛
+ * التحميل يبقى على الرئيسي ويُخفى خلف شاشة الترحيب بدل نقله.
+ */
+internal class Companion3DHost(
+    val engine: Engine,
+    val modelLoader: ModelLoader
+) {
+    /** النموذج المحمَّل، أو null أثناء التحميل/بعد الفشل. */
+    var modelInstance by mutableStateOf<ModelInstance?>(null)
+        private set
+
+    /** صحيح بعد فشل صريح أو انتهاء المهلة دون نموذج. */
+    var loadFailed by mutableStateOf(false)
+        private set
+
+    /** مفتاح إعادة التحميل — زيادته تعيد [loadModel] من جديد. */
+    var loadRetry by mutableIntStateOf(0)
+        private set
+
+    fun retryLoad() {
+        loadRetry++
+    }
+
+    /**
+     * تحميل النموذج مرة واحدة (يُستدعى من `LaunchedEffect(loadRetry)` في
+     * الجذر). الإلغاء المنظم يُمرَّر كما هو (لا يُبتلع داخل `runCatching`).
+     */
+    suspend fun loadModel() {
+        modelInstance = null
+        loadFailed = false
+        val started = SystemClock.uptimeMillis()
+        Log.i(CompanionAssets.TAG, "تحميل نموذج الرفيق بدأ (المحاولة ${loadRetry + 1})")
+        val loaded = try {
+            withContext(Dispatchers.Main) {
+                modelLoader.loadModelInstance(CompanionAssets.MODEL_PATH)
+            }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(CompanionAssets.TAG, "فشل تحميل نموذج الرفيق", t)
+            null
+        }
+        if (loaded != null) {
+            modelInstance = loaded
+            loadFailed = false
+            val box = runCatching { loaded.model.boundingBox }.getOrNull()
+            Log.i(
+                CompanionAssets.TAG,
+                "نموذج الرفيق حُمّل في ${SystemClock.uptimeMillis() - started}ms؛ " +
+                    "حدوده (مركز/نصف امتداد)=$box"
+            )
+        } else {
+            loadFailed = true
+            Log.w(
+                CompanionAssets.TAG,
+                "تعذر تحميل نموذج الرفيق بعد ${SystemClock.uptimeMillis() - started}ms — يُعرض البديل الثابت"
+            )
+        }
+    }
+
+    /** يُستدعى من حارس المهلة في الجذر عند انتهائها دون نموذج. */
+    fun markTimedOut() {
+        if (modelInstance == null && !loadFailed) {
+            loadFailed = true
+            Log.w(
+                CompanionAssets.TAG,
+                "انتهت مهلة تحميل نموذج الرفيق (${MODEL_LOAD_TIMEOUT_MS}ms) دون اكتمال — يُعرض البديل الثابت"
+            )
+        }
+    }
+
+    /**
+     * يُستدعى عند تدمير الجذر فقط. التنظيف الأصلي (المحرك/المحمِّل/النموذج)
+     * يتولاه `rememberEngine`/`rememberModelLoader` عند تدميرهما؛ هنا نُسقط
+     * المرجع فقط ونُسجّل — فلا تدمير مبكر يخفي الرفيق أثناء عمل التطبيق.
+     */
+    fun release() {
+        if (modelInstance != null) {
+            Log.i(CompanionAssets.TAG, "مالك الرفيق أُصدر (تدمير الجذر)")
+            modelInstance = null
+        }
+    }
+}
+
+/**
  * الصورة الثابتة للرفيق، تُستخدم في موضعين:
  * 1) داخل التطبيق كـ fallback عند فشل تحميل الـ GLB أو إيقاف الحركات؛
  * 2) كأيقونة كبيرة في الإشعارات ([CompanionNotificationIcon]) — لأن إشعار
@@ -224,18 +324,29 @@ private fun CompanionFallbackImage(modifier: Modifier = Modifier) {
  * - خلفية شفافة: `surfaceType = TextureSurface` مع `isOpaque = false`
  *   (الصيغة المصححة في دليل ترحيل SceneView §6 — `isOpaque` وحده لا يكفي
  *   مع `Surface` الافتراضي، فقد تظهر خلفية سوداء معتمة).
- * - تأطير الكاميرا: `autoFitContent = true` (واجهة 4.18.0 الموثقة) يحرّك
- *   الكاميرا حتى تملأ الشخصية مساحة العرض؛ الإثبات البصري النهائي يبقى
- *   على فحص المحاكي/الجهاز.
+ * - تأطير الكاميرا (إصلاح 0.35.0): `autoFitContent = true` يحرّك الكاميرا
+ *   حتى يملأ المحتوى مساحة العرض، و`autoCenterContent` (الافتراضي true في
+ *   4.18.0) يضع مركز ثقل المحتوى على محور المدار فيُركَّز دون `centerOrigin`
+ *   لكل عقدة — هذا نص توثيق SceneView 4.18.0 نفسه. أُزيل
+ *   `centerOrigin = Position(y = -1f)` (محاذاة سفلية): مع التوسيط الآلي
+ *   كانت الكاميرا تؤطّر أسفل النموذج (1.76م) فقط — ساقان + حذاءان أبيضان
+ *   في لقطتي أحمد — لا مشكلة خامات (الخامات تُرسم: لمعان + حذاء أبيض ظاهر).
  * - الحجم والموضع من الـ [modifier] الذي يمرره المتصل؛ الحركة والتأطير
  *   محصورتان داخل حدوده، والبطاقة الحاوية تقصّ أي تجاوز.
  * - لا إيماءات مدار/تقريب (`cameraManipulator = null`) حتى لا يسرق العارض
  *   التمرير من العمود الذي يعيش فيه.
- * - إدارة دورة حياة: SceneView يوقف الرندر مع دورة حياة الشاشة تلقائيًا،
- *   ويدمر المحرك والنموذج عند مغادرة التركيب. لا معامل `isRendering` في
- *   4.18.0 (مثبَت من مصادر الإصدار نفسه) فلا إيقاف يدوي عند التمرير.
- * - عند التعطيل لا يُركَّب شيء أصلًا؛ وعند إيقاف الحركات تُعرض الصورة
- *   الثابتة بدل العارض (احترامًا لتقليل الحركة ولإعداد الحركات).
+ * - المحرك والمحمِّل والنموذج مرفوعون إلى [Companion3DHost] على مستوى
+ *   الجذر (انظر توثيقه): لا يُعاد إنشاؤهم عند إعادة تركيب الرئيسية، ولا
+ *   تُعاد عقدة النموذج عند تبديل الحركات — `animationName` تفاعلية في
+ *   4.18.0 (تغييرها يوقف السابقة ويبدأ الجديدة، دون إيقاف الرندر).
+ * - لا فراغ أبدًا (0.35.0): عند التعطيل أو أثناء التحميل أو عند الفشل
+ *   تُعرض الصورة الثابتة `companion_static.png`، لا مساحة فارغة.
+ * - تشخيص (0.35.0): التحميل وتبديل الحركات وانتقال العارض بين النموذج
+ *   والبديل تُسجَّل في logcat (وسم `Companion3D`) — من النسخة التجريبية
+ *   التالية على موبايل أحمد يُعرف محفز الاختفاء: هل النموذج فُقد، أم تبديل
+ *   حركة، أم مغادرة التركيب.
+ * - عند إيقاف الحركات تُعرض الصورة الثابتة بدل العارض (احترامًا لتقليل
+ *   الحركة ولإعداد الحركات).
  *
  * تحميل النموذج (إصلاح تعطل الإقلاع 0.35.0 — مثبَت من مصادر 4.18.0
  * نفسها ومن الـ tombstone الخام للتشغيل 45769975636): `rememberModelInstance`
@@ -259,6 +370,7 @@ private fun CompanionFallbackImage(modifier: Modifier = Modifier) {
 @Composable
 internal fun MONAZZEMCompanionView(
     controller: CompanionController,
+    host: Companion3DHost,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     animationsEnabled: Boolean = true,
@@ -266,8 +378,13 @@ internal fun MONAZZEMCompanionView(
 ) {
     // DISABLED من المتحكم (عبر setEnabled/release) تُخفي العارض أيضًا،
     // حتى لو جاءت `enabled` صحيحة من مسار آخر — مصدرا الإيقاف متسقان.
+    // لا فراغ أبدًا (0.35.0): تُعرض الصورة الثابتة بدل اختفاء البطاقة.
     val state by controller.state.collectAsState()
-    if (!enabled || state == CompanionState.DISABLED) return
+    if (!enabled || state == CompanionState.DISABLED) {
+        Log.d(CompanionAssets.TAG, "الرفيق معطّل (enabled=$enabled, state=$state) — صورة ثابتة")
+        CompanionFallbackImage(modifier = modifier.semantics { contentDescription = "منظم — رفيقك" })
+        return
+    }
     if (!animationsEnabled) {
         CompanionFallbackImage(modifier = modifier.semantics { contentDescription = "منظم — رفيقك" })
         return
@@ -284,44 +401,29 @@ internal fun MONAZZEMCompanionView(
                 CompanionController.STALE_ONE_SHOT_MILLIS
         ) CompanionState.IDLE else requested
     }
-    val engine = rememberEngine()
-    val modelLoader = rememberModelLoader(engine)
-    // تحميل النموذج على الخيط الرئيسي صراحةً (إصلاح تعطل الإقلاع 0.35.0 —
-    // انظر توثيق العارض أعلاه): كل استدعاءات Filament داخل
-    // withContext(Dispatchers.Main)، فلا يصل computeTangents أبدًا إلى خيط
-    // غير متبنَّى. مفتاح `loadRetry` يعيد التحميل من جديد عند الضغط على زر
-    // إعادة المحاولة — إعادة التركيب وحدها لا تعيد المحاولة.
-    var loadRetry by remember { mutableIntStateOf(0) }
-    var loadFailed by remember { mutableStateOf(false) }
-    var modelInstance by remember { mutableStateOf<ModelInstance?>(null) }
-    LaunchedEffect(loadRetry) {
-        modelInstance = null
-        loadFailed = false
-        val loaded = runCatching {
-            withContext(Dispatchers.Main) {
-                modelLoader.loadModelInstance(CompanionAssets.MODEL_PATH)
-            }
-        }.getOrNull()
-        if (loaded != null) {
-            modelInstance = loaded
-            loadFailed = false
-        } else {
-            // فشل التحميل (ملف تالف/ناقص): البديل الثابت فورًا، بلا انتظار المهلة.
-            loadFailed = true
-        }
+    // تشخيص (0.35.0): كل تبديل حركة يُسجَّل — يحدد من logcat إن كان اختفاء
+    // البطاقة على موبايل أحمد متزامنًا مع عودة GREETING إلى IDLE.
+    LaunchedEffect(displayState) {
+        Log.i(CompanionAssets.TAG, "حالة الرفيق المعروضة: $displayState (المتحكم: $state)")
     }
-    // حارس المهلة للتحميل المعلّق فقط: إن بقي النموذج null بعد المهلة
-    // (ولم يُسجَّل فشل صريح)، يُعرض البديل الثابت.
-    LaunchedEffect(modelInstance, loadRetry) {
-        if (modelInstance != null || loadFailed) return@LaunchedEffect
-        delay(MODEL_LOAD_TIMEOUT_MS)
-        if (modelInstance == null) loadFailed = true
-    }
+    // النموذج مرفوع إلى الجذر (host): لا تحميل هنا، ولا إعادة تحميل عند
+    // إعادة تركيب الرئيسية — يُقرأ فقط.
+    val modelInstance = host.modelInstance
+    val loadFailed = host.loadFailed
     LaunchedEffect(loadFailed) {
         if (loadFailed) {
-            Log.w(CompanionAssets.TAG, "تعذر تحميل نموذج الرفيق خلال المهلة، يُعرض البديل الثابت")
+            Log.w(CompanionAssets.TAG, "تعذر تحميل نموذج الرفيق، يُعرض البديل الثابت")
             onLoadFailed?.invoke()
         }
+    }
+    // تشخيص (0.35.0): انتقال العارض بين النموذج والبديل يُسجَّل — إن ظهر
+    // هذا السطر دون سطر تحميل/فشل، فالاختفاء من مغادرة التركيب لا من النموذج.
+    LaunchedEffect(modelInstance != null) {
+        Log.i(
+            CompanionAssets.TAG,
+            if (modelInstance != null) "العارض يعرض النموذج ثلاثي الأبعاد"
+            else "العارض يعرض الصورة الثابتة (النموذج null، فشل=$loadFailed)"
+        )
     }
 
     Box(
@@ -338,8 +440,8 @@ internal fun MONAZZEMCompanionView(
             // خارج دورة Compose.
             SceneView(
                 modifier = Modifier.matchParentSize(),
-                engine = engine,
-                modelLoader = modelLoader,
+                engine = host.engine,
+                modelLoader = host.modelLoader,
                 surfaceType = SurfaceType.TextureSurface,
                 isOpaque = false,
                 autoFitContent = true,
@@ -347,10 +449,11 @@ internal fun MONAZZEMCompanionView(
             ) {
                 ModelNode(
                     modelInstance = instance,
-                    // الشخصية 1.76م؛ تُقاس لتملأ مكعب 1م داخل المساحة،
-                    // وقاعدتها (القدمان) على أصل العقدة.
+                    // الشخصية 1.76م؛ تُقاس لتملأ مكعب 1م داخل المساحة.
+                    // بلا centerOrigin (إصلاح تأطير 0.35.0 — انظر توثيق العارض):
+                    // autoCenterContent يركّز النموذج كاملًا، والمحاذاة السفلية
+                    // السابقة كانت تُظهر الساقين فقط.
                     scaleToUnits = 1f,
-                    centerOrigin = Position(y = -1f),
                     autoAnimate = false,
                     animationName = displayState.gltfName,
                     animationLoop = displayState.loop
@@ -374,7 +477,7 @@ internal fun MONAZZEMCompanionView(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 CompanionFallbackImage(Modifier.weight(1f))
-                TextButton(onClick = { loadRetry++ }) {
+                TextButton(onClick = { host.retryLoad() }) {
                     Text("إعادة المحاولة")
                 }
             }
@@ -395,6 +498,7 @@ internal fun MONAZZEMCompanionView(
 @Composable
 internal fun CompanionHomeSlot(
     controller: CompanionController,
+    host: Companion3DHost,
     assistantName: String,
     onOpenAssistant: () -> Unit,
     enabled: Boolean,
@@ -416,6 +520,7 @@ internal fun CompanionHomeSlot(
         ) {
             MONAZZEMCompanionView(
                 controller = controller,
+                host = host,
                 modifier = Modifier.size(148.dp),
                 enabled = true,
                 animationsEnabled = animationsEnabled
