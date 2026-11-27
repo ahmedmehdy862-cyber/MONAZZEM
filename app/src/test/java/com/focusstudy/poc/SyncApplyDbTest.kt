@@ -80,6 +80,7 @@ class SyncApplyDbTest {
         // the next test would see this test's rows through the same cached connection.
         runCatching { db.close() }
         runCatching { context.deleteDatabase(DB_FILE) }
+        StudyDb.resetForTest()
     }
 
     private fun localSnapshot(tracked: Map<String, SyncStamp>, now: Long): SyncBuilt =

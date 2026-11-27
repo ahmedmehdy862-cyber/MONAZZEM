@@ -46,6 +46,7 @@ class PhotoAvatarTest {
         // «Can't downgrade database from version 17 to 16».
         runCatching { StudyDb.get(context).close() }
         runCatching { context.deleteDatabase("focus_study.db") }
+        StudyDb.resetForTest()
     }
 
     @Test fun plainPhotoIsCopiedAsJpeg() = runBlocking {

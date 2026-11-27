@@ -69,20 +69,23 @@ class DbMigrationV16ToV17Test {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
-        // أغلق أي مساعد StudyDb مفتوح قبل الحذف: اتصال مفتوح يبقي ملف
-        // v17 حيًا بعد deleteDatabase فيفشل V16SeedHelper بـ
-        // «Can't downgrade database from version 17 to 16».
-        runCatching { StudyDb.get(context).close() }
-        context.deleteDatabase(DB_FILE)
-        // تحقق مباشر: إن بقي الملف (اتصال مفتوح من صنف اختبار آخر)،
-        // احذفه مع ملفات اليومية؛ وإلا فشل واضح بدل خطأ downgrade مربك.
+        cleanDbFiles()
+    }
+
+    /**
+     * يزيل كل أثر لملف قاعدة بيانات اختبار سابق: أسقط المساعد الوحيد
+     * أولًا (بلا ذلك يبقى مربوطًا بملف sandbox صنف سابق ويعيد إنشاء
+     * الملف المحذوف فارغًا بإصدار 17)، ثم احذف الملف وملفات اليومية
+     * بلا شرط (ملف يومية يتيم من صنف سابق قد يُستعاد في الملف الجديد).
+     */
+    private fun cleanDbFiles() {
+        StudyDb.resetForTest()
+        runCatching { context.deleteDatabase(DB_FILE) }
         val dbFile = context.getDatabasePath(DB_FILE)
-        if (dbFile.exists()) {
-            dbFile.delete()
-            File(dbFile.path + "-journal").delete()
-            File(dbFile.path + "-wal").delete()
-            File(dbFile.path + "-shm").delete()
-        }
+        dbFile.delete()
+        File(dbFile.path + "-journal").delete()
+        File(dbFile.path + "-wal").delete()
+        File(dbFile.path + "-shm").delete()
         check(!dbFile.exists()) { "تعذر حذف ملف قاعدة بيانات اختبار سابق ($DB_FILE)" }
     }
 
@@ -96,13 +99,22 @@ class DbMigrationV16ToV17Test {
         // in SyncApplyDbTest).
         runCatching { StudyDb.get(context).close() }
         runCatching { context.deleteDatabase(DB_FILE) }
+        StudyDb.resetForTest()
     }
 
     @Test
     fun v16DatabaseUpgradesToV17WithDataPreserved() {
         // 1) Seed a version-16 database with marker rows, then close it.
         val seed = V16SeedHelper(context)
-        val writable = seed.writableDatabase
+        val writable = try {
+            seed.writableDatabase
+        } catch (e: android.database.sqlite.SQLiteException) {
+            // عابر: اتصال متبقٍ من صنف اختبار سابق قد يحبس الملف لحظة
+            // الفتح؛ نظّف مرة أخرى وأعد المحاولة مرة واحدة — فإن فشل
+            // ثانيةً فهو خطأ حقيقي لا سباق.
+            cleanDbFiles()
+            seed.writableDatabase
+        }
         writable.execSQL(
             "INSERT INTO tasks(title, planned_minutes, done_minutes, is_done, blocked_packages, created_at) " +
                 "VALUES('مهمة محفوظة', 30, 0, 0, '', 1)"

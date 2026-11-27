@@ -57,6 +57,7 @@ jobs:
           name: android-test-reports
           path: |
             app/build/reports/tests/testDebugUnitTest
+            app/build/test-results/testDebugUnitTest
             app/build/reports/lint-results-debug.xml
           if-no-files-found: ignore
 
