@@ -21,6 +21,15 @@
 # --- (0.35.0: ML Kit removed entirely with the photo→style conversion;
 # its keep rules were deleted with it.) ---
 
+# --- P-04: security-crypto (EncryptedSharedPreferences) brings Tink, and
+# Tink's classes reference @Immutable from error_prone_annotations — which
+# Tink declares as provided, so it never reaches the consumer classpath and
+# R8 fails the release build on the missing class (debug builds never run
+# R8, so CI stays green while assembleRelease fails). The package holds
+# compile-time-only annotations, so silencing the warning is safe — this is
+# exactly what R8's own generated missing_rules.txt prescribes.
+-dontwarn com.google.errorprone.annotations.**
+
 # --- SceneView 3D companion (0.34.0) + Filament ---
 # Lesson of 0.33.0: any library that reaches classes by name must have an
 # explicit keep — a stripped registrar/init class crashes the app at launch
