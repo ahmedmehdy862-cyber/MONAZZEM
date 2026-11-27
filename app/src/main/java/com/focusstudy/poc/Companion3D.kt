@@ -45,7 +45,7 @@ import com.google.android.filament.Engine
 import io.github.sceneview.SceneView
 import io.github.sceneview.SurfaceType
 import io.github.sceneview.model.ModelInstance
-import io.github.sceneview.model.ModelLoader
+import io.github.sceneview.loaders.ModelLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
