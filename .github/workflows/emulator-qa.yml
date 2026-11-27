@@ -1,34 +1,53 @@
-# Emulator QA — Quran reader zoom screenshots (branch quran-zoom, base 8817225).
+## Emulator QA — FINAL GATE re-run for 0.35.0 (branch fix-035-feedback: fix fdca19e + gate tests).
 #
-# يعمل يدويًا (workflow_dispatch) وعند أي push على فرع quran-zoom.
-# بلا نشر وبلا وسم: مهمته لقطات قارئ المصحف + تقرير فقط. اللقطات تُرفع
-# كـ artifact وتُقرأ يدويًا؛ لا يوجد أي ادعاء آلي بجودة الواجهة.
+# يعمل يدويًا (workflow_dispatch) وعند أي push على فرع fix-035-feedback.
+# بلا نشر وبلا وسم: مهمته لقطات + تقرير QA فقط. اللقطات تُرفع كـ artifact
+# وتُقرأ يدويًا؛ لا يوجد أي ادعاء آلي بجودة الواجهة. لا نشر قبل PASS.
 #
 # يعيد استخدام بنية فرع emulator-qa (التشغيل 11 الناجح 45765011998 على
-# 0.33.1): KVM على ubuntu-latest، وTCG كشبكة أمان إن غاب KVM، وسحب
-# اللقطات بـ adb pull من التنزيلات المشتركة (انظر QaExport).
+# 0.33.1) مع إصلاح قيد التغطية: تمرير ورقة «كل الأقسام» قبل النقر على
+# كل صف حتى تُفتح الشاشات الثماني التي لم تُفتح في التشغيل 11.
 #
-# API 34 فقط: الهدف لقطات تخطيط نص (لا توافق إصدارات)، فلا داعي لمصفوفة.
+# ملاحظات:
+# - التطبيق offline-first وML Kit مضمّن، فصورة google_apis تكفي (بلا Play).
+# - API 34 هو الأساس؛ API 30 حد أدنى ثانٍ (minSdk 26 لكن المحاكي 30 أسرع
+#   وأكثر استقرارًا في CI من 26/27).
+# - اللقطات تُسحب بـ adb pull داخل الـ script لأن المحاكي يُطفأ بعده.
+# - سجل محاولات التشغيل (موثق كاملًا في تقرير QA):
+#   1) ubuntu-latest بلا خطوة KVM (45751255406): الأكشن رأى /dev/kvm غير
+#      متاح فأوقف التسريع، والمحاكي 37+ يرفض -accel off («Software CPU
+#      emulation is not supported»).
+#   2) macos-latest + arm64-v8a (45752742594): عدّاءات macOS المستضافة
+#      آلات افتراضية بلا nested virtualization، ففشل HVF («HVF error:
+#      HV_UNSUPPORTED») — وهذا قيد عام موثق، لا خاص بنا.
+#   3) ubuntu-latest + خطوة Enable KVM من README الأكشن نفسه (النمط
+#      الموثق): ubuntu هو المسار الموصى به. وكشبكة أمان،
+#      ANDROID_I_WANT_MY_TCG=yes يسمح بالمحاكاة البرمجية TCG إن غاب KVM
+#      فعلًا بدل الفشل الفوري (أبطأ بكثير، لكنه يعمل).
 name: Emulator QA
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - quran-zoom
+      - fix-035-feedback
 
 permissions:
   contents: read
 
 concurrency:
-  group: quran-zoom-${{ github.ref }}
+  group: fix-035-feedback-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   emulator-qa:
-    name: Emulator QA (API 34)
+    name: Emulator QA (API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [34, 30]
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -75,7 +94,7 @@ jobs:
           # بدل رفض -accel off الفوري. مع KVM يعمل التسريع العادي.
           ANDROID_I_WANT_MY_TCG: "yes"
         with:
-          api-level: 34
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -83,23 +102,32 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace
+            ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace; echo $? > ./test-exit-code.txt
             # سحب اللقطات من التنزيلات المشتركة: الاختبار يصدّرها إليها عبر
             # MediaStore (انظر QaExport) لأن مجلد التطبيق الخارجي يُحذف
             # عند إلغاء تثبيت التطبيق بعد الاختبارات. سحب عادي بلا run-as.
-            adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api34" || echo "screenshot pull failed (app may have crashed before first shot)"
-            ls "./qa-screenshots-api34"
-            adb logcat -d > ./logcat-api34.txt || true
-            exit $TEST_EXIT
+            # مرونة سير العمل (التشغيل الثالث): المشغّل ينفّذ كل سطر
+            # سكربت في عملية sh مستقلة (مثبَت من سجلات التشغيل الثاني:
+            # `[command]/usr/bin/sh -c <سطر>`) فالمتغيرات لا تنتقل بين
+            # الأسطر — نمط `TEST_EXIT=... || ... exit $TEST_EXIT` ميت:
+            # يتحول إلى `exit` عارٍ = نجاح كاذب. لذلك كود الخروج يُحفظ
+            # في ملف ويُعاد في النهاية. فشل gradle لا يوقف السحب: السطر
+            # الأول ينتهي بكود 0 دائمًا (echo)، فتُسحب الأدلة ثم يُعاد
+            # كود gradle الحقيقي.
+            adb pull /sdcard/Download/qa-screenshots "./qa-screenshots-api${{ matrix.api-level }}" || echo "screenshot pull failed (app may have crashed before first shot)"
+            ls "./qa-screenshots-api${{ matrix.api-level }}" || true
+            adb logcat -d > ./logcat-api${{ matrix.api-level }}.txt || true
+            SHOT_COUNT=$(find "./qa-screenshots-api${{ matrix.api-level }}" -name "*.png" 2>/dev/null | wc -l | tr -d ' '); echo "screenshots pulled: $SHOT_COUNT"; if [ "$SHOT_COUNT" -eq 0 ]; then echo "WARNING: zero screenshots pulled (empty evidence)"; echo 1 > ./test-exit-code.txt; fi
+            exit $(cat ./test-exit-code.txt 2>/dev/null || echo 1)
 
       - name: Upload screenshots and logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: emulator-qa-api34
+          name: emulator-qa-api${{ matrix.api-level }}
           path: |
-            qa-screenshots-api34
-            logcat-api34.txt
+            qa-screenshots-api${{ matrix.api-level }}
+            logcat-api${{ matrix.api-level }}.txt
             app/build/outputs/androidTest-results/connected
             app/build/reports/androidTests/connected
           if-no-files-found: warn
