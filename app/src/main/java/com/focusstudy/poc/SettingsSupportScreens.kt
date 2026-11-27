@@ -310,8 +310,12 @@ internal fun PersonalizationScreen(
                         shape = RoundedCornerShape(16.dp)
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text("هدفك اليومي: ${goal.toInt()} دقيقة", color = FocusColors.TextSecondary)
-                    Slider(value = goal, onValueChange = { goal = it }, valueRange = 30f..360f, steps = 10)
+                    Text(
+                        if (goal.toInt() == 0) "هدفك اليومي: بلا هدف — ركّز كما تشاء"
+                        else "هدفك اليومي: ${goal.toInt()} دقيقة",
+                        color = FocusColors.TextSecondary
+                    )
+                    Slider(value = goal, onValueChange = { goal = it }, valueRange = 0f..360f, steps = 11)
                     Spacer(Modifier.height(8.dp))
                     PhotoAvatarPicker(
                         avatar = AvatarImage(avatarPath),

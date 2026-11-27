@@ -123,9 +123,17 @@ internal fun FirstLaunchSetupScreen(
                 }
                 1 -> {
                     item {
-                        SetupCard("وقت التركيز اليومي", "نبدأ بهدف بسيط، ثم تنمو تدريجيًا.") {
-                            Text("${goal.toInt()} دقيقة تركيز يوميًا", color = FocusColors.TextSecondary)
-                            Slider(value = goal, onValueChange = { goal = it }, valueRange = 30f..360f, steps = 10)
+                        SetupCard("وقت التركيز اليومي", "هدف اختياري — يمكنك تخطيه تمامًا.") {
+                            Text(
+                                if (goal.toInt() == 0) "بلا هدف يومي — ركّز كما تشاء"
+                                else "${goal.toInt()} دقيقة تركيز يوميًا",
+                                color = FocusColors.TextSecondary
+                            )
+                            Slider(value = goal, onValueChange = { goal = it }, valueRange = 0f..360f, steps = 11)
+                            // تخطي الهدف: صفر = بلا هدف يومي، ثم الانتقال للخطوة التالية.
+                            TextButton(onClick = { goal = 0f; page += 1 }) {
+                                Text("تخطي الهدف اليومي")
+                            }
                         }
                     }
                     item {

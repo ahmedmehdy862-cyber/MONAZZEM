@@ -2045,7 +2045,10 @@ private fun HeroCard(
 
                     Text(
 
-                        text = "هدف اليوم: ${preferences.dailyGoalMinutes} دقيقة · التركيز الكلي: $totalMinutes دقيقة",
+                        text = if (preferences.dailyGoalMinutes == 0)
+                            "بلا هدف يومي · التركيز الكلي: $totalMinutes دقيقة"
+                        else
+                            "هدف اليوم: ${preferences.dailyGoalMinutes} دقيقة · التركيز الكلي: $totalMinutes دقيقة",
 
                         style = MaterialTheme.typography.bodySmall,
 

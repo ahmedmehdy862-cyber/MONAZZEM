@@ -131,7 +131,7 @@ data class FocusPreferences(
             val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             return FocusPreferences(
                 studentName = loadStudentName(context, prefs),
-                dailyGoalMinutes = prefs.getInt("daily_goal_minutes", 120).coerceIn(30, 720),
+                dailyGoalMinutes = prefs.getInt("daily_goal_minutes", 120).coerceIn(0, 720),
                 defaultSessionMinutes = prefs.getInt("session_minutes", 25).coerceIn(5, 120),
                 accentIndex = prefs.getInt("accent_index", 0).coerceIn(0, FocusColors.accents.lastIndex),
                 textScale = prefs.getFloat("text_scale", 1f).coerceIn(0.9f, 1.2f),
@@ -191,7 +191,7 @@ data class FocusPreferences(
         fun save(context: Context, value: FocusPreferences) {
             context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
                 .putString("student_name", value.studentName.trim())
-                .putInt("daily_goal_minutes", value.dailyGoalMinutes.coerceIn(30, 720))
+                .putInt("daily_goal_minutes", value.dailyGoalMinutes.coerceIn(0, 720))
                 .putInt("session_minutes", value.defaultSessionMinutes.coerceIn(5, 120))
                 .putInt("accent_index", value.accentIndex.coerceIn(0, FocusColors.accents.lastIndex))
                 .putFloat("text_scale", value.textScale.coerceIn(0.9f, 1.2f))
