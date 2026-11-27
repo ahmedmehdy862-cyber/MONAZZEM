@@ -71,9 +71,8 @@ internal val AppDrawerGroups: List<DrawerGroup> = listOf(
 /**
  * Drawer sheet content, hosted by a [androidx.compose.material3.ModalDrawerSheet] in MainActivity.
  *
- * The header is the person's profile card: name, profile and their avatar — the
- * cartoon / 3D character (or their photo as-is) chosen in «التخصيص», drawn
- * on-device from [CartoonAvatar]. When no avatar is chosen, a neutral person
+ * The header is the person's profile card: name, profile and their photo
+ * as-is chosen in «التخصيص». When no photo is chosen, a neutral person
  * mark is shown instead.
  */
 @Composable
@@ -84,8 +83,6 @@ internal fun AppDrawerContent(
     onSelect: (String) -> Unit,
     assistantName: String = "منظم",
     avatarPath: String = "",
-    avatarSourcePath: String = "",
-    avatarMode: AvatarMode = AvatarMode.CARTOON,
     companionStyle: Int = 0,
     /** Titles of the groups the person collapsed; persisted in preferences. */
     collapsedGroups: Set<String> = emptySet(),
@@ -95,14 +92,12 @@ internal fun AppDrawerContent(
     Column(modifier.verticalScroll(rememberScrollState())) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (avatarPath.isNotBlank() || (avatarMode == AvatarMode.PHOTO && avatarSourcePath.isNotBlank())) {
+                if (avatarPath.isNotBlank()) {
                     AvatarPortrait(
                         avatarPath = avatarPath,
                         name = userName,
                         styleIndex = companionStyle,
-                        size = 56.dp,
-                        mode = avatarMode,
-                        sourcePath = avatarSourcePath
+                        size = 56.dp
                     )
                 } else {
                     Box(
@@ -136,12 +131,8 @@ internal fun AppDrawerContent(
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                text = when (avatarMode) {
-                    AvatarMode.DEPTH_3D -> "شخصيتك ثلاثية الأبعاد — بدّلها من «التخصيص»."
-                    AvatarMode.PHOTO -> "صورتك الشخصية — بدّلها من «التخصيص»."
-                    AvatarMode.CARTOON -> if (avatarPath.isBlank()) "أضف صورتك الكرتونية من «التخصيص»."
-                    else "شخصيتك الكرتونية — بدّلها من «التخصيص»."
-                },
+                text = if (avatarPath.isBlank()) "أضف صورتك من «التخصيص»."
+                else "صورتك الشخصية — بدّلها من «التخصيص».",
                 style = MaterialTheme.typography.labelSmall,
                 color = FocusColors.TextMuted
             )

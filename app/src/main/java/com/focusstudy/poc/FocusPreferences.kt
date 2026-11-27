@@ -27,17 +27,6 @@ enum class UserProfile(val key: String, val label: String, val hint: String) {
     }
 }
 
-/** كيف تُعرض الصورة الشخصية: كرتوني مسطّح، أو «ثلاثي الأبعاد»، أو الصورة كما هي. */
-enum class AvatarMode(val key: String, val label: String) {
-    CARTOON("cartoon", "كرتوني"),
-    DEPTH_3D("depth3d", "ثلاثي الأبعاد"),
-    PHOTO("photo", "صورتي كما هي");
-
-    companion object {
-        fun from(key: String?): AvatarMode = entries.firstOrNull { it.key == key } ?: CARTOON
-    }
-}
-
 data class FocusPreferences(
     val studentName: String = "",
     val dailyGoalMinutes: Int = 120,
@@ -50,16 +39,14 @@ data class FocusPreferences(
     val remindersPerDay: Int = 1,
     val permanentBlockedPackages: Set<String> = emptySet(),
     val onboardingCompleted: Boolean = false,
-    /** Generated cartoon shown in the profile, Today companion and achievements. */
+    /**
+     * الصورة الشخصية كما رفعها المستخدم، تُعرض كما هي في كل مكان (0.35.0:
+     * التحويل إلى كرتوني أُزيل نهائيًا بأمر أحمد). ترحيل من الإصدارات القديمة:
+     * من كان له نسخة أصلية محفوظة (`avatar_source_path`) تُستخدم هي؛ ومن
+     * كانت صورته المحفوظة ملف JPG مباشرة (تثبيتات قديمة) تُستخدم كما هي؛
+     * أما الكرتون المولَّد والشخصيات الجاهزة (PNG) فتُسقَط ويُعرض الحرف الأول.
+     */
     val avatarPath: String = "",
-    /** Original photo copy, kept only in app-private files so the cartoon can be regenerated. */
-    val avatarSourcePath: String = "",
-    /** Selected on-device cartoon style (0–3). */
-    val avatarStyle: Int = 0,
-    /** Face likeness profile (ML Kit, bundled model) as JSON; empty means no face was detected. */
-    val avatarFaceProfileJson: String = "",
-    /** كيف تُعرض الصورة الشخصية: كرتوني / ثلاثي الأبعاد / الصورة كما هي. */
-    val avatarMode: AvatarMode = AvatarMode.CARTOON,
     val companionStyle: Int = 0,
     /** الرفيق ثلاثي الأبعاد «منظم» (0.34.0): إظهاره على الرئيسية. */
     val companion3dEnabled: Boolean = true,
@@ -131,11 +118,16 @@ data class FocusPreferences(
                     "onboarding_completed",
                     prefs.getString("student_name", "").orEmpty().isNotBlank()
                 ),
-                avatarPath = prefs.getString("avatar_path", "").orEmpty(),
-                avatarSourcePath = prefs.getString("avatar_source_path", "").orEmpty(),
-                avatarStyle = prefs.getInt("avatar_style", 0).coerceIn(0, CartoonAvatar.STYLES.lastIndex),
-                avatarFaceProfileJson = prefs.getString("avatar_face_profile_json", "").orEmpty(),
-                avatarMode = AvatarMode.from(prefs.getString("avatar_mode", "cartoon")),
+                avatarPath = run {
+                    val stored = prefs.getString("avatar_path", "").orEmpty()
+                    val source = prefs.getString("avatar_source_path", "").orEmpty()
+                    when {
+                        source.isNotBlank() -> source
+                        stored.endsWith(".jpg", ignoreCase = true) ||
+                            stored.endsWith(".jpeg", ignoreCase = true) -> stored
+                        else -> ""
+                    }
+                },
                 companionStyle = prefs.getInt("companion_style", 0).coerceIn(0, 3),
                 companion3dEnabled = prefs.getBoolean("companion_3d_enabled", true),
                 companion3dAnimationsEnabled = prefs.getBoolean("companion_3d_animations_enabled", true),
@@ -184,10 +176,6 @@ data class FocusPreferences(
                 .putStringSet("permanent_blocked_packages", value.permanentBlockedPackages.toSet())
                 .putBoolean("onboarding_completed", value.onboardingCompleted)
                 .putString("avatar_path", value.avatarPath)
-                .putString("avatar_source_path", value.avatarSourcePath)
-                .putInt("avatar_style", value.avatarStyle.coerceIn(0, CartoonAvatar.STYLES.lastIndex))
-                .putString("avatar_face_profile_json", value.avatarFaceProfileJson)
-                .putString("avatar_mode", value.avatarMode.key)
                 .putInt("companion_style", value.companionStyle.coerceIn(0, 3))
                 .putBoolean("companion_3d_enabled", value.companion3dEnabled)
                 .putBoolean("companion_3d_animations_enabled", value.companion3dAnimationsEnabled)

@@ -48,15 +48,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FocusStudy">
 
-        <!-- Hotfix 0.33.1: ML Kit's auto-init provider (MlKitInitProvider) runs
-             before Application.onCreate and crashed the app at startup on some
-             devices (instant exit, no UI at all). It is removed here; ML Kit is
-             initialized lazily in FaceAnalyzer before the first face detection
-             instead, so no ML Kit code runs at app startup. -->
-        <provider
-            android:name="com.google.mlkit.common.internal.MlKitInitProvider"
-            android:authorities="${applicationId}.mlkitinitprovider"
-            tools:node="remove" />
+        <!-- (0.35.0: ML Kit removed entirely with the photo→style conversion;
+             its auto-init provider block was deleted with it.) -->
 
         <activity
             android:name=".MainActivity"

@@ -7,13 +7,6 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -26,8 +19,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,9 +64,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -105,6 +95,9 @@ enum class AssistantAvatarState { IDLE, TALKING, LISTENING }
 internal fun AssistantScreen(
     onBack: () -> Unit,
     userName: String,
+    /** مسار صورة المستخدم المرفوعة — تُعرض في رأس المحادثة بدل الوجه الكرتوني الثابت (0.35.0). */
+    avatarPath: String = "",
+    companionStyle: Int = 0,
     assistantName: String,
     onAssistantNameChanged: (String) -> Unit,
     onOpenTasks: () -> Unit = {},
@@ -314,8 +307,17 @@ internal fun AssistantScreen(
             addMessage("assistant", AssistantEngine.greeting(settings, userName))
         }
     }
+    // التمرير التلقائي لآخر رسالة يبدأ بعد التحميل الأولي فقط: عند التحميل
+    // الأولي (سجل سابق أو رسالة الترحيب) يبقى أول عنصر ظاهرًا كاملًا ولا
+    // يُقصّ نصفه تحت التبويبات (لقطة أحمد 19:03 — فقاعة الترحيب مقصوصة).
+    var autoScrollReady by remember { mutableStateOf(false) }
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+        if (messages.isEmpty()) return@LaunchedEffect
+        if (!autoScrollReady) {
+            autoScrollReady = true
+            return@LaunchedEffect
+        }
+        listState.animateScrollToItem(messages.lastIndex)
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = FocusSpacing.screen)) {
@@ -336,7 +338,25 @@ internal fun AssistantScreen(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AssistantAvatar(state = avatarState, size = 72.dp)
+            // صورة المستخدم المرفوعة في رأس المحادثة (0.35.0) — بدل الوجه
+            // الكرتوني الثابت الذي كان يُرسم من بكسلات فارغة ولا يقرأ الصورة.
+            Box(
+                modifier = Modifier.size(72.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                AvatarPortrait(
+                    avatarPath = avatarPath,
+                    name = userName,
+                    styleIndex = companionStyle,
+                    size = 72.dp
+                )
+                if (avatarState == AssistantAvatarState.LISTENING) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .border(2.dp, FocusColors.Blue, CircleShape)
+                    )
+                }
+            }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -378,6 +398,7 @@ internal fun AssistantScreen(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(top = 4.dp, bottom = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages) { message -> AssistantMessageBubble(message) }
@@ -540,105 +561,6 @@ private fun AssistantMessageBubble(message: AssistantChatMessage) {
                 color = if (isUser) FocusColors.onAccentFill(FocusColors.Blue) else FocusColors.TextPrimary,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
             )
-        }
-    }
-}
-
-/**
- * شخصية المساعد المرئية: رفيق مرسوم على الجهاز بحالات تعبيرية متحركة بسيطة
- * (ساكن / يتكلم / يستمع) عبر Compose animation، مبني على نهج [CartoonAvatar]:
- * لوحة الألوان مأخوذة من [CartoonAvatar.paletteFrom] بلا صورة وبلا رفع وبلا
- * نموذج وبلا أصول خارجية.
- *
- * ملاحظة صريحة: النموذج الثلاثي الأبعاد الحقيقي غير وارد دون أصل نموذج خارجي
- * (ملف glTF أو مشهد Filament/SceneView)؛ ما نُفّذ هنا رسم ثنائي الأبعاد متحرك
- * يفي بالغرض كرفيق مرئي، ويمكن استبداله لاحقًا بنموذج ثلاثي الأبعاد إن توفر
- * أصله دون تغيير واجهة الشاشة.
- */
-@Composable
-internal fun AssistantAvatar(
-    state: AssistantAvatarState,
-    modifier: Modifier = Modifier,
-    size: Dp = 96.dp
-) {
-    val palette = remember { CartoonAvatar.paletteFrom(intArrayOf(), 0) }
-    val skin = Color(palette.skin)
-    val hair = Color(palette.hair)
-    val accent = Color(palette.accent)
-    val background = Color(palette.background)
-    val bob = rememberInfiniteTransition(label = "assistant-bob")
-        .animateFloat(
-            initialValue = 0f, targetValue = 6f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1800, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "bob"
-        )
-    val mouthOpen = rememberInfiniteTransition(label = "assistant-mouth")
-        .animateFloat(
-            initialValue = 0.35f, targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(320),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "mouth"
-        )
-    val pulse = rememberInfiniteTransition(label = "assistant-pulse")
-        .animateFloat(
-            initialValue = 0.45f, targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(900),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "pulse"
-        )
-    Box(modifier.size(size), contentAlignment = Alignment.Center) {
-        if (state == AssistantAvatarState.LISTENING) {
-            Box(
-                Modifier.fillMaxSize()
-                    .border(2.dp, FocusColors.Blue.copy(alpha = pulse.value), CircleShape)
-            )
-        }
-        Canvas(Modifier.fillMaxSize().offset(y = (-bob.value).dp)) {
-            val center = Offset(this.size.width / 2f, this.size.height / 2f)
-            val radius = this.size.minDimension / 2f
-            drawCircle(color = background, radius = radius, center = center)
-            drawCircle(color = skin, radius = radius * 0.72f, center = center)
-            // الشعر: قوس علوي بنفس لوحة الكرتون.
-            drawArc(
-                color = hair,
-                startAngle = 180f,
-                sweepAngle = 180f,
-                useCenter = true,
-                topLeft = Offset(center.x - radius * 0.72f, center.y - radius * 0.72f),
-                size = Size(radius * 1.44f, radius * 1.1f)
-            )
-            val eyeY = center.y - radius * 0.08f
-            val eyeR = radius * 0.065f
-            drawCircle(color = hair, radius = eyeR, center = Offset(center.x - radius * 0.28f, eyeY))
-            drawCircle(color = hair, radius = eyeR, center = Offset(center.x + radius * 0.28f, eyeY))
-            // الخدود تضيف دفئًا كما في الكرتون.
-            drawCircle(color = accent.copy(alpha = 0.45f), radius = radius * 0.09f, center = Offset(center.x - radius * 0.48f, center.y + radius * 0.22f))
-            drawCircle(color = accent.copy(alpha = 0.45f), radius = radius * 0.09f, center = Offset(center.x + radius * 0.48f, center.y + radius * 0.22f))
-            if (state == AssistantAvatarState.TALKING) {
-                val mouthH = radius * 0.24f * mouthOpen.value
-                drawOval(
-                    color = hair,
-                    topLeft = Offset(center.x - radius * 0.14f, center.y + radius * 0.22f),
-                    size = Size(radius * 0.28f, mouthH)
-                )
-            } else {
-                drawArc(
-                    color = hair,
-                    startAngle = 0f,
-                    sweepAngle = 180f,
-                    useCenter = false,
-                    topLeft = Offset(center.x - radius * 0.22f, center.y + radius * 0.18f),
-                    size = Size(radius * 0.44f, radius * 0.3f),
-                    style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-                )
-            }
         }
     }
 }
@@ -909,9 +831,7 @@ internal fun AssistantHomeCard(
                 avatarPath = preferences.avatarPath,
                 name = preferences.studentName,
                 styleIndex = preferences.companionStyle,
-                size = 52.dp,
-                mode = preferences.avatarMode,
-                sourcePath = preferences.avatarSourcePath
+                size = 52.dp
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {

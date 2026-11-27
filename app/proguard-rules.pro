@@ -18,16 +18,8 @@
 -dontwarn java.awt.**
 -dontwarn javax.**
 
-# --- ML Kit face detection (bundled model, avatar likeness) ---
-# The library ships its own consumer rules; these are explicit insurance for
-# the detector factory and the vision-face internals R8 might otherwise strip.
--keep class com.google.mlkit.vision.face.** { *; }
--keep class com.google.mlkit.vision.common.** { *; }
-# Hotfix 0.33.1: the ML Kit init path discovers components by reflection
-# (ComponentDiscovery loads the registrars by class name), so the common
-# internals must keep their names too — not just vision.*.
--keep class com.google.mlkit.common.** { *; }
--dontwarn com.google.mlkit.**
+# --- (0.35.0: ML Kit removed entirely with the photo→style conversion;
+# its keep rules were deleted with it.) ---
 
 # --- SceneView 3D companion (0.34.0) + Filament ---
 # Lesson of 0.33.0: any library that reaches classes by name must have an

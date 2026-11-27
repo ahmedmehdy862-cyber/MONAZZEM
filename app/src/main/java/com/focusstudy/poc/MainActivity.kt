@@ -898,8 +898,6 @@ private fun AppRoot(
                     profileLabel = preferences.profile.label,
                     assistantName = assistantName,
                     avatarPath = preferences.avatarPath,
-                    avatarSourcePath = preferences.avatarSourcePath,
-                    avatarMode = preferences.avatarMode,
                     companionStyle = preferences.companionStyle,
                     collapsedGroups = preferences.drawerCollapsedGroups,
                     onToggleDrawerGroup = { title ->
@@ -1015,6 +1013,8 @@ private fun AppRoot(
                 "assistant" -> AssistantScreen(
                     onBack = { returnToPreviousTab() },
                     userName = preferences.studentName,
+                    avatarPath = preferences.avatarPath,
+                    companionStyle = preferences.companionStyle,
                     assistantName = assistantName,
                     onAssistantNameChanged = { assistantName = it },
                     onOpenTasks = { openRoot("tasks") },

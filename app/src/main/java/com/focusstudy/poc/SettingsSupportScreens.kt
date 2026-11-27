@@ -276,10 +276,6 @@ internal fun PersonalizationScreen(
     var accent by rememberSaveable(current.accentIndex) { mutableStateOf(current.accentIndex) }
     var textScale by rememberSaveable(current.textScale) { mutableStateOf(current.textScale) }
     var avatarPath by rememberSaveable(current.avatarPath) { mutableStateOf(current.avatarPath) }
-    var avatarSourcePath by rememberSaveable(current.avatarSourcePath) { mutableStateOf(current.avatarSourcePath) }
-    var avatarStyle by rememberSaveable(current.avatarStyle) { mutableIntStateOf(current.avatarStyle) }
-    var avatarFaceProfileJson by rememberSaveable(current.avatarFaceProfileJson) { mutableStateOf(current.avatarFaceProfileJson) }
-    var avatarMode by rememberSaveable(current.avatarMode) { mutableStateOf(current.avatarMode) }
     var companionStyle by rememberSaveable(current.companionStyle) { mutableStateOf(current.companionStyle) }
     var companion3dEnabled by rememberSaveable(current.companion3dEnabled) { mutableStateOf(current.companion3dEnabled) }
     var companion3dAnimationsEnabled by rememberSaveable(current.companion3dAnimationsEnabled) { mutableStateOf(current.companion3dAnimationsEnabled) }
@@ -317,26 +313,11 @@ internal fun PersonalizationScreen(
                     Text("هدفك اليومي: ${goal.toInt()} دقيقة", color = FocusColors.TextSecondary)
                     Slider(value = goal, onValueChange = { goal = it }, valueRange = 30f..360f, steps = 10)
                     Spacer(Modifier.height(8.dp))
-                    AvatarChooser(
-                        avatar = AvatarImage(avatarPath, avatarSourcePath, avatarStyle),
+                    PhotoAvatarPicker(
+                        avatar = AvatarImage(avatarPath),
                         name = name,
                         companionStyle = companionStyle,
-                        onAvatarChanged = { image ->
-                            avatarPath = image.path
-                            avatarSourcePath = image.sourcePath
-                            avatarStyle = image.style
-                        },
-                        faceProfile = FaceProfile.fromJson(avatarFaceProfileJson),
-                        onFaceProfileChanged = { avatarFaceProfileJson = it?.toJson().orEmpty() },
-                        mode = avatarMode,
-                        // وضع العرض يُحفظ فور الضغطة (إصلاح 0.34.0): كان
-                        // يتغير محليًا فقط ويضيع إن غادر الشخص الشاشة بزر
-                        // «رجوع» دون الضغط على «حفظ التخصيص»، فيبدو الزر
-                        // كأنه لا يعمل. باقي الحقول تحفظ مع زر الحفظ كما هي.
-                        onModeChanged = {
-                            avatarMode = it
-                            onSave(current.copy(avatarMode = it))
-                        }
+                        onAvatarChanged = { image -> avatarPath = image.path }
                     )
                     Spacer(Modifier.height(10.dp))
                     CompanionStylePicker(companionStyle, onSelect = { companionStyle = it })
@@ -492,10 +473,6 @@ internal fun PersonalizationScreen(
                     textScale = textScale,
                     remindersPerDay = 1,
                     avatarPath = avatarPath,
-                    avatarSourcePath = avatarSourcePath,
-                    avatarStyle = avatarStyle,
-                    avatarFaceProfileJson = avatarFaceProfileJson,
-                    avatarMode = avatarMode,
                     companionStyle = companionStyle,
                     companion3dEnabled = companion3dEnabled,
                     companion3dAnimationsEnabled = companion3dAnimationsEnabled,

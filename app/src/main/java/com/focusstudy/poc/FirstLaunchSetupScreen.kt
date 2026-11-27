@@ -56,13 +56,6 @@ internal fun FirstLaunchSetupScreen(
     var name by rememberSaveable { mutableStateOf(current.studentName) }
     var goal by rememberSaveable { mutableStateOf(current.dailyGoalMinutes.toFloat()) }
     var avatar by rememberSaveable { mutableStateOf(current.avatarPath) }
-    var avatarSource by rememberSaveable { mutableStateOf(current.avatarSourcePath) }
-    var avatarStyle by rememberSaveable { mutableIntStateOf(current.avatarStyle) }
-    var faceProfileJson by rememberSaveable { mutableStateOf(current.avatarFaceProfileJson) }
-    // وضع عرض الصورة (إصلاح 0.34.0): كان الـ AvatarChooser يُستدعى هنا
-    // دون mode/onModeChanged، فبقيت شرائح الوضع على الافتراضي (كرتوني)
-    // وضغطة «صورتي كما هي» بلا أي أثر — لا تحديد ولا معاينة ولا حفظ.
-    var avatarMode by rememberSaveable { mutableStateOf(current.avatarMode) }
     var style by rememberSaveable { mutableStateOf(current.companionStyle) }
     var profile by rememberSaveable { mutableStateOf(current.profile) }
     var timezoneId by rememberSaveable { mutableStateOf(current.timezoneId.ifBlank { AppTimeZone.deviceId() }) }
@@ -117,19 +110,11 @@ internal fun FirstLaunchSetupScreen(
                     }
                     item {
                         SetupCard("صورتك (اختياري)", "صورتك تبقى على الجهاز ولا تُرفع لأي خدمة.") {
-                            AvatarChooser(
-                                avatar = AvatarImage(avatar, avatarSource, avatarStyle),
+                            PhotoAvatarPicker(
+                                avatar = AvatarImage(avatar),
                                 name = name,
                                 companionStyle = style,
-                                onAvatarChanged = { image ->
-                                    avatar = image.path
-                                    avatarSource = image.sourcePath
-                                    avatarStyle = image.style
-                                },
-                                faceProfile = FaceProfile.fromJson(faceProfileJson),
-                                onFaceProfileChanged = { faceProfileJson = it?.toJson().orEmpty() },
-                                mode = avatarMode,
-                                onModeChanged = { avatarMode = it }
+                                onAvatarChanged = { image -> avatar = image.path }
                             )
                             Spacer(Modifier.height(10.dp))
                             CompanionStylePicker(style, onSelect = { style = it })
@@ -189,10 +174,6 @@ internal fun FirstLaunchSetupScreen(
                                 studentName = name.trim(),
                                 dailyGoalMinutes = goal.toInt(),
                                 avatarPath = avatar,
-                                avatarSourcePath = avatarSource,
-                                avatarStyle = avatarStyle,
-                                avatarFaceProfileJson = faceProfileJson,
-                                avatarMode = avatarMode,
                                 companionStyle = style,
                                 profile = profile,
                                 timezoneId = AppTimeZone.sanitize(timezoneId),
