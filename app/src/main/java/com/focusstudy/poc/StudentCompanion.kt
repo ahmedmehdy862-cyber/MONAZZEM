@@ -78,7 +78,7 @@ internal data class AvatarImage(val path: String) {
     companion object { val EMPTY = AvatarImage("") }
 }
 
-private const val AVATAR_FILE_NAME = "student_avatar.jpg"
+internal const val AVATAR_FILE_NAME = "student_avatar.jpg"
 
 /** يصحح اتجاه الصورة من EXIF؛ يعيد نفس الـ Bitmap إن لم يلزم تدوير. */
 private fun orientedBitmap(decoded: Bitmap, orientation: Int): Bitmap {

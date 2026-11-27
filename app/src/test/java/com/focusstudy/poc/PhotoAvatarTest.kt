@@ -4,7 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import androidx.test.core.app.ApplicationProvider
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -35,7 +36,7 @@ import java.io.FileOutputStream
 class PhotoAvatarTest {
 
     private val context: Context
-        get() = ApplicationProvider.getApplicationContext()
+        get() = RuntimeEnvironment.getApplication()
 
     @Test fun plainPhotoIsCopiedAsJpeg() = runBlocking {
         val source = File(context.cacheDir, "source.png")
