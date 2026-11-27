@@ -197,8 +197,10 @@ class QuranZoomScreenshotTest {
         composeRule.waitForIdle()
     }
 
-    private fun assertZoomLabel(percentArabic: String) {
-        val label = "حجم الخط $percentArabic٪"
+    // التطبيق يعرض النسبة بأرقام غربية («حجم الخط 100٪») اتساقًا مع ترويسة
+    // القارئ («صفحة 4 من 604») — لا بأرقام مشرقية؛ توقّع الأرقام الغربية.
+    private fun assertZoomLabel(percentDigits: String) {
+        val label = "حجم الخط $percentDigits٪"
         val found = device.wait(Until.hasObject(By.text(label)), 5000)
         log("ZOOM LABEL [$label]: found=$found")
         assertTrue("zoom label [$label] must be visible", found)
@@ -230,15 +232,15 @@ class QuranZoomScreenshotTest {
     /** لقطات الزوم الثلاثة لصفحة واحدة: افتراضي، أدنى، أقصى — ثم عودة للافتراضي. */
     private fun shootPageZooms(page: Int, prefix: String) {
         shot("${prefix}-default")
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
         zoomTap("−", 2)
         shot("${prefix}-min")
-        assertZoomLabel("٧٥")
+        assertZoomLabel("75")
         zoomTap("+", 4)
         shot("${prefix}-max")
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         zoomTap("−", 2)
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
     }
 
     @Test
@@ -255,7 +257,7 @@ class QuranZoomScreenshotTest {
         // الحفظ: آخر مستوى مضبوط بالأزرار كان الأقصى قبل العودة للافتراضي
         // في shootPageZooms؛ نضبط الأقصى صراحةً ثم نتحقق من التفضيلة.
         zoomTap("+", 2)
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         val saved = QuranZoom.loadZoomLevel(appContext())
         log("ZOOM PREF after +2: $saved")
         assertEquals(QuranZoom.MAX_LEVEL, saved)
@@ -265,11 +267,11 @@ class QuranZoomScreenshotTest {
         goBack()
         relaunchKeepPrefs()
         openSection("المصحف")
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         shot("quran-p2-zoom-max-relaunch")
         // إعادة للافتراضي عبر الضغط على النسبة نفسها.
-        clickText("حجم الخط ١٣٠٪")
-        assertZoomLabel("١٠٠")
+        clickText("حجم الخط 130٪")
+        assertZoomLabel("100")
         assertEquals(QuranZoom.DEFAULT_LEVEL, QuranZoom.loadZoomLevel(appContext()))
     }
 
@@ -278,13 +280,13 @@ class QuranZoomScreenshotTest {
         launch("dark")
         openSection("المصحف")
         shot("quran-p2-zoom-default-dark")
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
         zoomTap("+", 2)
         shot("quran-p2-zoom-max-dark")
-        assertZoomLabel("١٣٠")
+        assertZoomLabel("130")
         zoomTap("−", 2)
         jumpToPage(597)
         shot("quran-p597-zoom-default-dark")
-        assertZoomLabel("١٠٠")
+        assertZoomLabel("100")
     }
 }

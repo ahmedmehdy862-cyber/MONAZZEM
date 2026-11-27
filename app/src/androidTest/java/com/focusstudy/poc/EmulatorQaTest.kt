@@ -193,21 +193,50 @@ class EmulatorQaTest {
      * ينتظر ظهور الرئيسية («اليوم») بعد الإقلاع، مع إغلاق أي حوار ANR
      * وتخطّي الترحيب إن ما زال معروضًا. يفشل بصوت عالٍ إن لم تظهر —
      * فبدون الرئيسية لا يمكن اختبار أي شيء، والنجاح الصامت هنا أدلة فارغة.
+     *
+     * الكشف عبر دلالات Compose أولًا: عقد شريط «اليوم» (أيقونة + نص داخل
+     * clickable مدمج) لا يراها UiAutomator دائمًا في شجرة الوصول رغم ظهورها
+     * على الشاشة — مثبت بتشغيلي البوابة 45942925142 و45945442894: الرئيسية
+     * ظاهرة في اللقطات لكن By.text("اليوم") لا يجدها أبدًا في 30 ثانية،
+     * بينما onAllNodesWithText يراها (وبه وصلت اختبارات المصحف للقارئ).
+     * وتخطّي الترحيب بالنقر عبر الدلالات أيضًا لنفس السبب؛ نقر
+     * UiAutomator في المنتصف بديل فقط.
      */
+    private fun homeVisible(): Boolean {
+        if (runCatching {
+                composeRule.onAllNodesWithText("اليوم").fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false)) return true
+        return runCatching {
+            device.wait(Until.hasObject(By.text("اليوم")), 2000)
+        }.getOrDefault(false)
+    }
+
+    private fun dismissWelcome(): Boolean {
+        val viaCompose = runCatching {
+            composeRule.onAllNodesWithText("نرتّب يومك معًا").onLast().performClick()
+            true
+        }.getOrDefault(false)
+        if (viaCompose) return true
+        return runCatching {
+            device.click(device.displayWidth / 2, device.displayHeight / 2)
+            true
+        }.getOrDefault(false)
+    }
+
     private fun waitForHome(timeoutMs: Long = 30000) {
         val deadline = System.currentTimeMillis() + timeoutMs
         var home = false
         while (System.currentTimeMillis() < deadline) {
             dismissSystemAnr()
-            home = runCatching {
-                device.wait(Until.hasObject(By.text("اليوم")), 2000)
-            }.getOrDefault(false)
+            home = homeVisible()
             if (home) break
             val welcome = runCatching {
-                device.findObject(By.text("نرتّب يومك معًا"))
-            }.getOrNull()
-            if (welcome != null) {
-                runCatching { device.click(device.displayWidth / 2, device.displayHeight / 2) }
+                composeRule.onAllNodesWithText("نرتّب يومك معًا").fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false) || runCatching {
+                device.findObject(By.text("نرتّب يومك معًا")) != null
+            }.getOrDefault(false)
+            if (welcome) {
+                dismissWelcome()
                 Thread.sleep(800)
             } else {
                 Thread.sleep(1000)
