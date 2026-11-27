@@ -277,7 +277,11 @@ internal object SyncCrypto {
 
     private fun pbkdf2(password: ByteArray, salt: ByteArray, iterations: Int, dkLen: Int): ByteArray {
         val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(password, "HmacSHA256"))
+        // HMAC يبطّن مفتاحًا أقصر من كتلة التجزئة (64 بايت) بالأصفار؛ فكلمة
+        // مرور فارغة تعادل مفتاحًا من 64 صفرًا، بينما SecretKeySpec يرفض
+        // المفتاح الفارغ (متجه RFC 7914 الأول كلمة مروره فارغة).
+        val keyBytes = if (password.isEmpty()) ByteArray(64) else password
+        mac.init(SecretKeySpec(keyBytes, "HmacSHA256"))
         val out = ByteArray(dkLen)
         var done = 0
         var blockIndex = 1
