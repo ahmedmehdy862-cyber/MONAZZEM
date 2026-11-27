@@ -733,18 +733,22 @@ class EmulatorQaTest {
 
     @Test
     fun companion3dSwiftShader() {
-        // رسم الـ 3D معروف فشله على محاكي SwiftShader (شيدر التسكين يتجاوز
-        // حد الـ uniforms) — عيب محاكي، وليس دليلًا. هذا الاختبار يثبت أن
-        // تعطّل الإقلاع الأصلي اختفى (الترحيب والرئيسية تظهران مع الرفيق
-        // مفعّلًا) ويسجّل نتيجة أول رسم للرفيق دون إفشال البوابة.
+        // رسم الـ 3D ممنوع على محاكي SwiftShader ببوابة القدرات (0.35.0):
+        // شيدر التسكين يتجاوز حد الـ uniforms فيفجر Filament العملية بـ
+        // SIGABRT — لذلك يُعرض البديل الثابت دون محاولة تحميل. هذا الاختبار
+        // يثبت أن تعطّل الإقلاع الأصلي اختفى (الترحيب والرئيسية تظهران مع
+        // الرفيق مفعّلًا) وأن التطبيق يبقى حيًا بعد أول رسم للبديل الثابت.
         launch("light", companionEnabled = true)
         log("COMPANION 3D: home reached with companion enabled (launch crash gone)")
         step("companion-3d-first-render") {
             shot("70-companion-3d-home")
             // أعطِ العارض وقتًا لأول إطار، ثم تحقق أن التطبيق ما زال حيًا.
             Thread.sleep(4000)
-            val homeStillThere = runCatching { device.wait(Until.hasObject(By.text("اليوم")), 5000) }.getOrDefault(false)
-            log("COMPANION 3D first-render: homeStillVisible=$homeStillThere (false = SwiftShader render crash, expected on emulator)")
+            val homeStillThere = runCatching {
+                composeRule.onAllNodesWithText("اليوم").fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false) ||
+                runCatching { device.wait(Until.hasObject(By.text("اليوم")), 5000) }.getOrDefault(false)
+            log("COMPANION 3D first-render: homeStillVisible=$homeStillThere (يجب أن يكون true مع البديل الثابت؛ false = تعطّل العملية)")
             shot("71-companion-3d-after-render")
         }
         log("companion 3D SwiftShader probe done")

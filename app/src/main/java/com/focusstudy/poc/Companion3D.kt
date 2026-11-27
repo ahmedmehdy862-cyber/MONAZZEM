@@ -200,6 +200,16 @@ internal class Companion3DHost(
     val engine: Engine,
     val modelLoader: ModelLoader
 ) {
+    /**
+     * بوابة القدرات (0.35.0): false على جهاز لا يستطيع ربط شيدر التسكين
+     * (SwiftShader في المحاكي، أو حد uniforms أقل من 256) — يُعرض البديل
+     * الثابت ولا يُحمَّل النموذج أصلًا، لأن محاولة عرضه تفجر العملية
+     * بـ SIGABRT من خيط FEngine::loop (لا يلتقطه أي try/catch). تُفحص
+     * مرة واحدة وتُحفظ. إنشاء المحرك نفسه آمن (مثبت بسجلات المحاكي) —
+     * التعطّل عند أول رسم للنموذج فقط، وهو ما يمنعه هذا الحارس.
+     */
+    val supported: Boolean = CompanionCapability.is3DSupported()
+
     /** النموذج المحمَّل، أو null أثناء التحميل/بعد الفشل. */
     var modelInstance by mutableStateOf<ModelInstance?>(null)
         private set
@@ -221,6 +231,15 @@ internal class Companion3DHost(
      * الجذر). الإلغاء المنظم يُمرَّر كما هو (لا يُبتلع داخل `runCatching`).
      */
     suspend fun loadModel() {
+        if (!supported) {
+            modelInstance = null
+            loadFailed = true
+            Log.w(
+                CompanionAssets.TAG,
+                "الرفيق ثلاثي الأبعاد غير مدعوم على هذا الجهاز — يُعرض البديل الثابت دون محاولة تحميل"
+            )
+            return
+        }
         modelInstance = null
         loadFailed = false
         val started = SystemClock.uptimeMillis()
