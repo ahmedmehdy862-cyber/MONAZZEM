@@ -2,6 +2,10 @@ package com.focusstudy.poc
 
 import android.content.Context
 import android.content.SharedPreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** How the app picks its palette: follow the phone, or force one mode. */
 enum class ThemeMode(val key: String, val label: String) {
@@ -86,6 +90,23 @@ data class FocusPreferences(
         internal const val FILE = "focus_study_preferences"
 
         /**
+         * كتابة اسم المستخدم في قاعدة البيانات تتم خارج الخيط الرئيسي
+         * (0.35.0): كانت save() تكتب SQLite متزامنًا على الخيط الرئيسي عند
+         * كل تغيير تفضيلات — بما فيه تبديل الثيم — فيحجب التبديل. النطاق
+         * يعيش مع العملية؛ والفشل لا يحجب الحفظ (المحاولة التالية تعيده).
+         */
+        private val nameWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        /**
+         * ذاكرة لاسم قاعدة البيانات: كان loadStudentName() يقرأ SQLite
+         * متزامنًا على الخيط الرئيسي عند كل load() — بما فيه فتح شاشات لا
+         * تحتاج الاسم أصلًا. بعد أول قراءة يُستخدم المخزن ولا يُلمس القرص؛
+         * وsave() يحدّثه فورًا. القراءة الأولى وحدها قد تلمس القرص.
+         */
+        @Volatile
+        private var cachedDbName: String? = null
+
+        /**
          * Display name, phase 7b: the database (user_profile, v17) is the source of truth
          * and the preference is a synchronous mirror/fallback. First run after the update,
          * a name that only exists in preferences is copied into the database once, so
@@ -93,9 +114,14 @@ data class FocusPreferences(
          */
         private fun loadStudentName(context: Context, prefs: SharedPreferences): String {
             val prefsName = prefs.getString("student_name", "").orEmpty()
-            val dbName = runCatching { StudyDb.get(context).userName() }.getOrNull()
+            val cached = cachedDbName
+            val dbName = cached ?: runCatching { StudyDb.get(context).userName() }.getOrNull()
+                ?.also { cachedDbName = it }
             if (dbName == null && prefsName.isNotBlank()) {
-                runCatching { StudyDb.get(context).saveUserName(prefsName) }
+                cachedDbName = prefsName
+                // ترحيل لمرة واحدة (v17): اسم موجود في التفضيلات فقط يُنسخ
+                // إلى قاعدة البيانات خارج الخيط الرئيسي.
+                nameWriteScope.launch { runCatching { StudyDb.get(context).saveUserName(prefsName) } }
                 return prefsName
             }
             return dbName ?: prefsName
@@ -201,9 +227,12 @@ data class FocusPreferences(
                 .putStringSet("drawer_collapsed_groups", value.drawerCollapsedGroups.toSet())
                 .apply()
             // The database is the source of truth for the name (user_profile, v17); the
-            // preference above stays as a synchronous mirror and a fallback. A failure
-            // here never blocks saving preferences, and the next save retries it.
-            runCatching { StudyDb.get(context).saveUserName(value.studentName) }
+            // preference above stays as a synchronous mirror and a fallback. The write
+            // goes to IO (0.35.0): it used to block the main thread on every save,
+            // including the theme toggle. A failure here never blocks saving
+            // preferences, and the next save retries it.
+            cachedDbName = value.studentName.trim()
+            nameWriteScope.launch { runCatching { StudyDb.get(context).saveUserName(value.studentName) } }
         }
     }
 }

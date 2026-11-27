@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Brush
@@ -264,9 +265,13 @@ fun FocusTheme(
     val density = LocalDensity.current
     // Applied before the content composes, so the very first frame already uses the right palette.
     if (FocusColors.lightMode == dark) FocusColors.lightMode = !dark
+    // (0.35.0) الـ ColorScheme يُبنى مرة واحدة لكل (فاتح/داكن، لون تمييز):
+    // كان يُعاد إنشاؤه عند كل إعادة تركيب لـ FocusTheme — بما فيها تغييرات
+    // تفضيلات لا علاقة لها بالثيم — فيعيد MaterialTheme تركيب الشجرة كلها.
+    val colorScheme = remember(dark, accent) { if (dark) darkScheme(accent) else lightScheme(accent) }
     CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * textScale)) {
         MaterialTheme(
-            colorScheme = if (dark) darkScheme(accent) else lightScheme(accent),
+            colorScheme = colorScheme,
             typography = FocusTypography,
             shapes = FocusShapes,
         ) {
