@@ -1,0 +1,80 @@
+name: Size check (0.35.0 diagnostics)
+
+# Branch-only diagnostic for the 0.35.0 size work (Ahmed: release APK grew
+# 31MB -> 66MB with ML Kit; debug 118MB). Manual trigger only; it never
+# publishes, tags or releases anything.
+#
+# What it answers:
+#  1. Release APK size after the ML Kit removal (compare with the published
+#     0.33.1 release APK: 69,364,431 bytes).
+#  2. Whether BouncyCastle (bcprov) is still on the release runtime
+#     classpath after the ML Kit removal, and via which path — R8 already
+#     strips unreferenced Java classes (bcprov is NOT in the ProGuard keep
+#     list), so presence in the tree does not by itself mean presence in
+#     the APK; the APK size is the deciding number.
+#  3. PDFBox stays by design: it is the on-device PDF text extractor for
+#     the assistant-profile import Ahmed asked for, and its whole library
+#     is deliberately kept in proguard-rules.pro (reflective loading).
+#     On-demand loading without Google Play dynamic delivery is not
+#     practical for a sideloaded APK.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  size-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Locate Android SDK tools
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name sdkmanager | sort | tail -n 1)"
+          test -n "$SDKMANAGER" || { echo "sdkmanager not found under $SDK_ROOT" >&2; exit 1; }
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+
+      - name: Install SDK packages used by the build
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Dependency tree (release runtime classpath)
+        run: |
+          ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --no-daemon > dependency-tree.txt 2>&1
+          echo "--- bouncycastle / pdfbox lines ---"
+          grep -i "bouncycastle\|bcprov\|pdfbox" dependency-tree.txt || echo "(no matches)"
+
+      - name: Build unsigned release APK
+        run: ./gradlew :app:assembleRelease -PallowUnsignedRelease=true --no-daemon
+
+      - name: Report APK size
+        run: |
+          ls -la app/build/outputs/apk/release/
+          stat -c '%n %s bytes' app/build/outputs/apk/release/*.apk
+
+      - name: Upload APK and dependency tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: size-check
+          path: |
+            app/build/outputs/apk/release/*.apk
+            dependency-tree.txt
