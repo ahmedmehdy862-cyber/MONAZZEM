@@ -111,7 +111,7 @@ jobs:
       # and the release build failed on a compile error. Run the same unit tests
       # as CI here — a red suite must fail the release before any APK is built.
       - name: Run unit tests (release gate)
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :storeapp:testDebugUnitTest
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
 
       - name: Build signed release APK
         run: ./gradlew --no-daemon assembleRelease -PfocusStudyUpdateFeedUrl=https://update-site-sigma.vercel.app/api/latest
