@@ -1,8 +1,22 @@
 package com.focusstudy.poc.desktop
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -117,8 +131,10 @@ data class SyncRequest(
     val action: String,
     val profileId: String,
     val passphrase: String,
-    val data: SyncData? = null,
+    val data: JsonElement? = null,
     val currentPassphrase: String? = null,
+    /** H1: يعلن 2 عند push/pull فيستلم العميل المغلفات المشفرة. */
+    val syncVersion: Int? = null,
 )
 
 @Serializable
@@ -160,10 +176,13 @@ class SyncClient(
     }
 
     fun pull(profileId: String, passphrase: String): SyncOutcome {
-        val body = json.encodeToString(SyncRequest("pull", profileId, passphrase))
+        val key = SyncCrypto.deriveKey(passphrase, profileId)
+        val body = json.encodeToString(
+            SyncRequest("pull", profileId, passphrase, syncVersion = SyncCrypto.SYNC_VERSION)
+        )
         return when (val result = post(body)) {
             is PostResult.Ok -> runCatching {
-                SyncOutcome.Ok(json.decodeFromString<SyncSnapshot>(result.body))
+                SyncOutcome.Ok(decodeSnapshot(result.body, key))
             }.getOrElse { SyncOutcome.Error("رد غير مفهوم من الخادم") }
 
             is PostResult.Failed -> SyncOutcome.Error(result.message)
@@ -172,14 +191,81 @@ class SyncClient(
 
     /** نجاح الـ push يرجع اللقطة المدموجة (مع revision) لا علامة ok. */
     fun push(profileId: String, passphrase: String, data: SyncData): SyncOutcome {
-        val body = json.encodeToString(SyncRequest("push", profileId, passphrase, data = data))
+        val key = SyncCrypto.deriveKey(passphrase, profileId)
+        val body = json.encodeToString(
+            SyncRequest(
+                "push", profileId, passphrase,
+                data = SyncPayload.toEnvelopeJson(key, data),
+                syncVersion = SyncCrypto.SYNC_VERSION,
+            )
+        )
         return when (val result = post(body)) {
             is PostResult.Ok -> runCatching {
-                SyncOutcome.Ok(json.decodeFromString<SyncSnapshot>(result.body))
+                SyncOutcome.Ok(decodeSnapshot(result.body, key))
             }.getOrElse { SyncOutcome.Error("رد غير مفهوم من الخادم") }
 
             is PostResult.Failed -> SyncOutcome.Error(result.message)
         }
+    }
+
+    /**
+     * H1: يفك لقطة واردة؛ سجلات v2 تُفكّ هنا (المفتاح مشتق من كلمة
+     * المرور)، وسجل يتعذر فكه يُتخطى بهدوء ولا يكسر السحب كله؛ سجلات
+     * v1 (نص صريح من عميل 0.34.0) تمر كما هي.
+     */
+    private fun decodeSnapshot(body: String, key: ByteArray): SyncSnapshot {
+        val root = json.parseToJsonElement(body).jsonObject
+        val revision = root["revision"]?.jsonPrimitive?.longOrNull ?: 0L
+        val updatedAt = root["updatedAt"]?.jsonPrimitive?.longOrNull ?: 0L
+        val dataObj = root["data"]?.jsonObject ?: return SyncSnapshot(revision, updatedAt)
+        val lists = LinkedHashMap<String, List<SyncRecord>>()
+        for (kind in SyncProtocol.COLLECTIONS) {
+            val arr = dataObj[kind]?.jsonArray ?: continue
+            val records = ArrayList<SyncRecord>()
+            var skipped = 0
+            for (element in arr) {
+                val obj = element.jsonObject
+                if (obj["v"]?.jsonPrimitive?.intOrNull == SyncCrypto.VERSION) {
+                    val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val enc = obj["enc"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val fields = if (id.isBlank() || enc.isBlank()) null
+                        else SyncCrypto.decryptRecord(key, kind, id, enc)
+                    if (fields == null) {
+                        skipped++
+                        continue
+                    }
+                    val record = SyncPayload.toRecord(
+                        id, fields, obj["updatedAt"]?.jsonPrimitive?.longOrNull ?: 0L
+                    )
+                    records.add(
+                        if (obj["deleted"]?.jsonPrimitive?.booleanOrNull == true) {
+                            record.copy(deleted = true)
+                        } else {
+                            record
+                        }
+                    )
+                    continue
+                }
+                records.add(json.decodeFromJsonElement<SyncRecord>(element))
+            }
+            if (skipped > 0) println("SyncClient: skipped $skipped undecryptable v2 records in $kind")
+            lists[kind] = records
+        }
+        return SyncSnapshot(
+            revision, updatedAt,
+            SyncData(
+                tasks = lists["tasks"] ?: emptyList(),
+                subjects = lists["subjects"] ?: emptyList(),
+                taskTypes = lists["taskTypes"] ?: emptyList(),
+                habits = lists["habits"] ?: emptyList(),
+                habitLogs = lists["habitLogs"] ?: emptyList(),
+                wirdLogs = lists["wirdLogs"] ?: emptyList(),
+                healthLogs = lists["healthLogs"] ?: emptyList(),
+                transactions = lists["transactions"] ?: emptyList(),
+                moodLogs = lists["moodLogs"] ?: emptyList(),
+                calorieLogs = lists["calorieLogs"] ?: emptyList(),
+            )
+        )
     }
 
     private sealed interface PostResult {
@@ -281,7 +367,47 @@ object SyncPayload {
         return fields
     }
 
-    fun build(repo: DesktopRepository, tracked: Map<String, SyncStamp>, nowInput: Long): Built {
+    /**
+     * H1: يحوّل لقطة محلية إلى مغلفات v2 ({id, updatedAt, v:2, enc})؛
+     * المغلفات المحذوفة (tombstones) بلا محتوى فتُرسل عارية كما هي.
+     * عميل v1 يقرأ فقط السجلات غير المشفرة (الخادم يجرّد المغلفات عنه).
+     */
+    fun toEnvelopeJson(key: ByteArray, data: SyncData): JsonObject {
+        val out = LinkedHashMap<String, JsonElement>()
+        for (kind in SyncProtocol.COLLECTIONS) {
+            val arr = JsonArray(data.byKind(kind).map { record ->
+                if (record.deleted == true) {
+                    buildJsonObject {
+                        put("id", record.id)
+                        put("updatedAt", record.updatedAt)
+                        put("deleted", true)
+                    }
+                } else {
+                    val enc = SyncCrypto.encryptRecord(key, kind, record.id, recordFields(record))
+                    buildJsonObject {
+                        put("id", record.id)
+                        put("updatedAt", record.updatedAt)
+                        put("v", SyncCrypto.VERSION)
+                        put("enc", enc)
+                    }
+                }
+            })
+            out[kind] = arr
+        }
+        return JsonObject(out)
+    }
+
+    /**
+     * forceRefresh: يعيد ختم كل سجل بطابع `now` (يستخدم عند تغيير كلمة المرور:
+     * إعادة التشفير بمفتاح جديد يجب أن تفوز على الخادم، وLWW كان سيُبقي
+     * النسخة المشفرة بالمفتاح القديم عند تساوي الطابع الزمني).
+     */
+    fun build(
+        repo: DesktopRepository,
+        tracked: Map<String, SyncStamp>,
+        nowInput: Long,
+        forceRefresh: Boolean = false,
+    ): Built {
         val now = maxOf(nowInput, (tracked.values.maxOfOrNull { it.updatedAt } ?: 0L) + 1L)
         val stamps = LinkedHashMap<String, SyncStamp>()
         val lists = LinkedHashMap<String, MutableList<SyncRecord>>()
@@ -289,7 +415,7 @@ object SyncPayload {
 
         /** يبني سجلًا حيًا: id + حقول + ختم يُحفظ من tracked ما دام لم يتغير. */
         fun record(kind: String, id: String, fields: Map<String, Any>): SyncRecord {
-            val updatedAt = stamp(tracked, "$kind:$id", contentFingerprint(fields), now, stamps)
+            val updatedAt = stamp(tracked, "$kind:$id", contentFingerprint(fields), now, stamps, forceRefresh)
             return toRecord(id, fields, updatedAt)
         }
 
@@ -410,16 +536,20 @@ object SyncPayload {
 
     private fun stamp(
         tracked: Map<String, SyncStamp>, key: String, fingerprint: String, now: Long,
-        out: MutableMap<String, SyncStamp>,
+        out: MutableMap<String, SyncStamp>, forceRefresh: Boolean = false,
     ): Long {
         val previous = tracked[key]
-        val updatedAt = if (previous?.fingerprint == fingerprint && !previous.deleted) previous.updatedAt else now
+        val updatedAt = if (!forceRefresh && previous?.fingerprint == fingerprint && !previous.deleted) {
+            previous.updatedAt
+        } else {
+            now
+        }
         out[key] = SyncStamp(fingerprint, updatedAt)
         return updatedAt
     }
 
     /** يحوّل خريطة حقول إلى SyncRecord للسلك. */
-    private fun toRecord(id: String, fields: Map<String, Any>, updatedAt: Long): SyncRecord =
+    internal fun toRecord(id: String, fields: Map<String, Any>, updatedAt: Long): SyncRecord =
         SyncRecord(
             id = id,
             title = fields["title"] as? String,
@@ -780,6 +910,44 @@ class SyncService(
 
     private fun saveLastSync(value: LastSync) {
         repo.putSyncMeta("last_sync", json.encodeToString(value))
+    }
+
+    /**
+     * H1 — تغيير كلمة مرور المزامنة: النسخة المخزنة على الخادم مشفرة
+     * بالمفتاح القديم ولا يمكن فكها بالمفتاح الجديد (ولا استرجاعها من
+     * الخادم أبدًا). الترتيب: (1) سحب بالمفتاح القديم فتصل أحدث نسخة
+     * محليًا، (2) تسجيل كلمة المرور الجديدة، (3) رفع كل شيء معادًا
+     * تشفيره بالمفتاح الجديد وبطوابع زمنية جديدة فيفوز على الخادم.
+     * البيانات المحلية لا تُفقد في أي خطوة؛ وإن فشل التسجيل يبقى كل
+     * شيء كما هو.
+     */
+    fun changePassphrase(profileId: String, oldPassphrase: String, newPassphrase: String): SyncOutcome {
+        val pulled = client.pull(profileId, oldPassphrase)
+        val snapshot = when (pulled) {
+            is SyncOutcome.Error -> {
+                saveLastSync(LastSync(System.currentTimeMillis(), 0, false, pulled.message))
+                return pulled
+            }
+            is SyncOutcome.Ok -> pulled.snapshot ?: SyncSnapshot()
+        }
+        val plan = SyncApply.plan(repo, loadStamps(), snapshot.data)
+        SyncApply.execute(repo, plan)
+        val registered = client.register(profileId, newPassphrase, currentPassphrase = oldPassphrase)
+        if (registered is SyncOutcome.Error) return registered
+        val built = SyncPayload.build(repo, plan.stamps, System.currentTimeMillis(), forceRefresh = true)
+        val pushed = client.push(profileId, newPassphrase, built.data)
+        return when (pushed) {
+            is SyncOutcome.Error -> {
+                saveLastSync(LastSync(System.currentTimeMillis(), snapshot.revision, false, pushed.message))
+                pushed
+            }
+            is SyncOutcome.Ok -> {
+                repo.putSyncMeta("stamps", json.encodeToString(built.stamps))
+                val revision = pushed.snapshot?.revision ?: snapshot.revision
+                saveLastSync(LastSync(System.currentTimeMillis(), revision, true, "تم تغيير كلمة المرور وإعادة تشفير النسخة المزامَنة"))
+                SyncOutcome.Ok(pushed.snapshot)
+            }
+        }
     }
 
     fun syncNow(session: SyncSession): SyncOutcome {

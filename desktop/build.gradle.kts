@@ -68,6 +68,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     // SQLDelight على JVM: يضم Xerial sqlite-jdbc؛ لا اعتماديات تشغيل أخرى.
     implementation("app.cash.sqldelight:sqlite-driver:2.2.1")
+    testImplementation("junit:junit:4.13.2")
 }
 
 sqldelight {

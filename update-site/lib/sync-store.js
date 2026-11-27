@@ -15,6 +15,9 @@ const SALT_BYTES = 16;
 const KEY_BYTES = 64;
 const PASSWORD_MIN = 10;
 const PASSWORD_MAX = 200;
+// H1: a v2 encrypted envelope is base64(12-byte IV + ciphertext + 16-byte tag);
+// the largest synced record stays far below this cap.
+const MAX_ENC_CHARS = 8192;
 
 const TASK_CATEGORIES = new Set(["study", "university", "personal", "work", "habits", "other"]);
 const TASK_STATUSES = new Set(["todo", "doing", "done", "postponed", "cancelled"]);
@@ -49,6 +52,16 @@ function cleanRecord(item, kind) {
     return habitLogRecord(habitId, day, item, cleanTime(item.updatedAt));
   }
   if (!id) return null;
+  // H1 - v2 encrypted envelope: the content is opaque ciphertext. The server keeps
+  // only id/updatedAt/deleted for the last-write-wins merge and never inspects `enc`,
+  // so it cannot read tasks even with the Blob token or the Vercel dashboard.
+  if (item.v === 2) {
+    const enc = typeof item.enc === "string" ? item.enc : "";
+    if (!/^[A-Za-z0-9+/=]+$/.test(enc) || enc.length < 32 || enc.length > MAX_ENC_CHARS) return null;
+    const record = { id, updatedAt: cleanTime(item.updatedAt), v: 2, enc };
+    if (item.deleted === true) record.deleted = true;
+    return record;
+  }
   const record = { id, updatedAt: cleanTime(item.updatedAt) };
   // Stored subjects/types use `name` after their first normalization; accept both so re-reading
   // and merging an existing snapshot cannot silently drop the label. Only the three original
@@ -187,7 +200,10 @@ function sortedRecords(byId) {
 
 /**
  * Per-record last-write-wins. An equal timestamp keeps the stored row so two devices cannot
- * produce a different result depending on which one speaks last.
+ * produce a different result depending on which one speaks last - with one H1 exception:
+ * a v2 envelope replaces a v1 plaintext record at an equal timestamp, because the content
+ * is identical (only re-encrypted) and the first v2 push after an upgrade must actually
+ * migrate the stored copy instead of leaving plaintext on the server forever.
  */
 function mergeSync(existing, incoming, now) {
   const previous = existing && typeof existing === "object" ? existing : {};
@@ -198,7 +214,11 @@ function mergeSync(existing, incoming, now) {
     const byId = new Map(stored[kind].map((record) => [record.id, record]));
     for (const record of proposed[kind]) {
       const current = byId.get(record.id);
-      if (!current || record.updatedAt > current.updatedAt) byId.set(record.id, record);
+      const upgradesToEncrypted =
+        record.v === 2 && current && current.v !== 2 && record.updatedAt >= current.updatedAt;
+      if (!current || record.updatedAt > current.updatedAt || upgradesToEncrypted) {
+        byId.set(record.id, record);
+      }
     }
     data[kind] = sortedRecords(byId);
   }
@@ -315,13 +335,35 @@ async function authenticate(profileId, passphrase) {
 
 const syncPathFor = (profileId) => `${SYNC_PREFIX}${profileId}.json`;
 
-async function readSync(profileId) {
+/**
+ * H1: a v1 client (published 0.34.0) cannot decrypt v2 envelopes, so it must never
+ * receive them - otherwise its merge would treat an envelope as a plaintext record
+ * and wipe the local fields. includeEncrypted=false strips them; the revision is
+ * unchanged, so the client still sees the snapshot move forward.
+ */
+async function readSync(profileId, includeEncrypted = true) {
   const record = await readJson(syncPathFor(profileId), { revision: 0, updatedAt: 0, data: {} });
+  const data = normalizeSyncPayload(record.data || {});
+  if (!includeEncrypted) {
+    for (const kind of COLLECTIONS) data[kind] = data[kind].filter((r) => r.v !== 2);
+  }
   return {
     revision: cleanTime(record.revision),
     updatedAt: cleanTime(record.updatedAt),
-    data: normalizeSyncPayload(record.data || {}),
+    data,
   };
+}
+
+/** Same stripping for a merged snapshot returned by push. */
+function stripEncrypted(snapshot) {
+  const data = {};
+  for (const kind of COLLECTIONS) {
+    const list = snapshot && snapshot.data && Array.isArray(snapshot.data[kind])
+      ? snapshot.data[kind]
+      : [];
+    data[kind] = list.filter((r) => r.v !== 2);
+  }
+  return { revision: snapshot.revision, updatedAt: snapshot.updatedAt, data };
 }
 
 async function writeSync(profileId, record) {
@@ -329,7 +371,7 @@ async function writeSync(profileId, record) {
 }
 
 module.exports = {
-  COLLECTIONS, PASSWORD_MIN, PASSWORD_MAX, MAX_RECORDS,
+  COLLECTIONS, PASSWORD_MIN, PASSWORD_MAX, MAX_RECORDS, MAX_ENC_CHARS, stripEncrypted,
   normalizeProfileId, validatePassphrase, hashPassphrase, verifyPassphrase,
   normalizeSyncPayload, mergeSync, readAccounts, hasAccount, setAccount,
   authenticate, readSync, writeSync,

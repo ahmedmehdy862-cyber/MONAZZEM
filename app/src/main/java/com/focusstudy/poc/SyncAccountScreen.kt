@@ -152,6 +152,11 @@ internal fun SyncAccountScreen(onBack: () -> Unit) {
                     color = FocusColors.TextSecondary,
                     style = MaterialTheme.typography.bodySmall
                 )
+                Text(
+                    "تنبيه: بياناتك المزامَنة مشفرة بكلمة المرور هذه ولا يستطيع أحد قراءتها — بمن فيهم الخادم. إن فقدتَ كلمة المرور فلن تستطيع استعادة النسخة المزامَنة أبدًا (بيانات جهازك نفسه لا تتأثر). احفظها في مكان آمن.",
+                    color = FocusColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
         Card(

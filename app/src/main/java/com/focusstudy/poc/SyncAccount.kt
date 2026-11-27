@@ -12,6 +12,13 @@ import org.json.JSONObject
  * The key is the server-issued [UserIdentity.profileId]; a display name, install id, device id or
  * push token is never used or sent as an account key. The passphrase is sent only in the request
  * body and is not persisted on the device. Pairing, push and pull are all opt-in.
+ *
+ * H1 - end-to-end encryption (audit 11.1): since 0.35.0 every pushed record travels as a
+ * versioned v2 envelope ({id, updatedAt, v:2, enc}) encrypted with AES-256-GCM under a key
+ * derived from the sync passphrase ([SyncCrypto]); the server stores ciphertext only and
+ * merges on the plaintext id/updatedAt. Old plaintext (v1) records are still read, so
+ * published 0.34.0 clients keep working, and losing the passphrase means the synced copy
+ * can never be recovered - there is no server recovery.
  */
 internal object SyncAccount {
 
@@ -63,11 +70,13 @@ internal object SyncAccount {
             life = lifeSnapshot(db)
         )
 
+        val key = SyncCrypto.deriveKey(passphrase, profileId)
         val payload = JSONObject()
             .put("action", "push")
             .put("profileId", profileId)
             .put("passphrase", passphrase)
-            .put("data", payloadData(built.data))
+            .put("syncVersion", SyncCrypto.SYNC_VERSION)
+            .put("data", payloadData(encryptSnapshot(key, built.data)))
         val response = try {
             TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
         } catch (error: Exception) {
@@ -113,10 +122,12 @@ internal object SyncAccount {
             life = lifeSnapshot(db)
         )
 
+        val key = SyncCrypto.deriveKey(passphrase, profileId)
         val payload = JSONObject()
             .put("action", "pull")
             .put("profileId", profileId)
             .put("passphrase", passphrase)
+            .put("syncVersion", SyncCrypto.SYNC_VERSION)
         val response = try {
             TeamMessages.request("${TeamMessages.BASE}/api/sync", "POST", payload.toString())
         } catch (error: Exception) {
@@ -126,7 +137,7 @@ internal object SyncAccount {
         val incoming = runCatching {
             val json = JSONObject(response)
             require(json.has("revision")) { "pull response has no revision" }
-            jsonToData(json.optJSONObject("data"))
+            jsonToData(json.optJSONObject("data"), key)
         }.getOrElse { return@withContext Result.REJECTED }
         try {
             val plan = SyncApply.plan(built.data, tracked, incoming)
@@ -152,6 +163,38 @@ internal object SyncAccount {
         calorieLogs = db.allCalorieLogs()
     )
 
+    /**
+     * H1: يشفّر كل سجل غير محذوف في مغلف v2 ({id, updatedAt, v:2, enc})؛
+     * المغلفات المحذوفة (tombstones) بلا محتوى فتُرسل كما هي. عميل v1
+     * يقرأ فقط السجلات غير المشفرة (الخادم يجرّد المغلفات عنه).
+     */
+    private fun encryptSnapshot(
+        key: ByteArray,
+        data: Map<String, List<Map<String, Any>>>
+    ): Map<String, List<Map<String, Any>>> {
+        val out = LinkedHashMap<String, List<Map<String, Any>>>()
+        for ((kind, records) in data) {
+            val encrypted = ArrayList<Map<String, Any>>()
+            for (record in records) {
+                val id = record["id"]?.toString() ?: continue
+                val updatedAt = record["updatedAt"] ?: continue
+                if (record["deleted"] == true) {
+                    encrypted.add(record)
+                    continue
+                }
+                val fields = record.filterKeys { it != "id" && it != "updatedAt" && it != "deleted" }
+                val envelope = LinkedHashMap<String, Any>()
+                envelope["id"] = id
+                envelope["updatedAt"] = updatedAt
+                envelope["v"] = SyncCrypto.VERSION
+                envelope["enc"] = SyncCrypto.encryptRecord(key, kind, id, fields)
+                encrypted.add(envelope)
+            }
+            out[kind] = encrypted
+        }
+        return out
+    }
+
     private fun payloadData(data: Map<String, List<Map<String, Any>>>): JSONObject {
         val out = JSONObject()
         for ((kind, records) in data) {
@@ -166,15 +209,42 @@ internal object SyncAccount {
         return out
     }
 
-    /** Converts a pulled `data` object into record maps; integral JSON numbers become Long. */
-    private fun jsonToData(data: JSONObject?): Map<String, List<Map<String, Any>>> {
+    /**
+     * Converts a pulled `data` object into record maps; integral JSON numbers become Long.
+     * H1: سجلات v2 تُفكّ هنا (المفتاح مشتق من كلمة المرور)؛ سجل يتعذر فكه
+     * يُتخطى بهدوء ويُسجَّل ولا يكسر السحب كله.
+     */
+    private fun jsonToData(
+        data: JSONObject?,
+        key: ByteArray
+    ): Map<String, List<Map<String, Any>>> {
         val out = LinkedHashMap<String, List<Map<String, Any>>>()
         if (data == null) return out
         for (kind in SyncPayload.collections) {
             val array = data.optJSONArray(kind) ?: continue
             val records = ArrayList<Map<String, Any>>()
+            var skipped = 0
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
+                if (obj.optInt("v", 1) == SyncCrypto.VERSION) {
+                    val id = obj.optString("id")
+                    val enc = obj.optString("enc")
+                    if (id.isBlank() || enc.isBlank()) {
+                        skipped++
+                        continue
+                    }
+                    val fields = SyncCrypto.decryptRecord(key, kind, id, enc)
+                    if (fields == null) {
+                        skipped++
+                        continue
+                    }
+                    val record = LinkedHashMap<String, Any>(fields)
+                    record["id"] = id
+                    record["updatedAt"] = obj.optLong("updatedAt")
+                    if (obj.optBoolean("deleted", false)) record["deleted"] = true
+                    records.add(record)
+                    continue
+                }
                 val record = LinkedHashMap<String, Any>()
                 val keys = obj.keys()
                 while (keys.hasNext()) {
@@ -189,6 +259,12 @@ internal object SyncAccount {
                     }
                 }
                 records.add(record)
+            }
+            if (skipped > 0) {
+                android.util.Log.w(
+                    "SyncAccount",
+                    "skipped $skipped undecryptable v2 records in $kind"
+                )
             }
             out[kind] = records
         }

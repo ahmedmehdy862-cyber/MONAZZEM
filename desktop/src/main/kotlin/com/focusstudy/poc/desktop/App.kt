@@ -107,11 +107,22 @@ class DesktopAppState(val repo: DesktopRepository) {
         loginBusy = true
         loginError = null
         scope.launch(Dispatchers.IO) {
-            val outcome = syncClient.register(profileId.trim(), passphrase, currentPassphrase)
+            // تغيير كلمة المرور (لا ربط أول مرة): يسحب بالمفتاح القديم ثم
+            // يعيد تشفير النسخة المزامَنة بالمفتاح الجديد — وإلا بقيت نسخة
+            // الخادم غير قابلة للفك إلى الأبد.
+            val outcome = if (currentPassphrase != null) {
+                syncService.changePassphrase(profileId.trim(), currentPassphrase, passphrase)
+            } else {
+                syncClient.register(profileId.trim(), passphrase, currentPassphrase)
+            }
             if (outcome is SyncOutcome.Ok) {
                 session.link(profileId.trim(), passphrase)
                 linked = true
-                syncMessage = "تم ربط الحساب"
+                syncMessage = if (currentPassphrase != null) {
+                    "تم تغيير كلمة المرور وإعادة تشفير النسخة المزامَنة"
+                } else {
+                    "تم ربط الحساب"
+                }
                 refresh()
             } else {
                 loginError = (outcome as? SyncOutcome.Error)?.message ?: "تعذّر ربط الحساب"

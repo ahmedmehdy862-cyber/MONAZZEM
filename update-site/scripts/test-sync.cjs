@@ -58,8 +58,12 @@ function makeMockStore() {
     hasAccount: async (pid) => accounts.has(pid),
     authenticate: async (pid, pass) => accounts.get(pid) === pass,
     setAccount: async (pid, pass) => { accounts.set(pid, pass); },
-    readSync: async (pid) => syncs.get(pid) || {
-      revision: 0, updatedAt: 0, data: real.normalizeSyncPayload({}),
+    stripEncrypted: real.stripEncrypted,
+    readSync: async (pid, includeEncrypted = true) => {
+      const record = syncs.get(pid) || {
+        revision: 0, updatedAt: 0, data: real.normalizeSyncPayload({}),
+      };
+      return includeEncrypted ? record : real.stripEncrypted(record);
     },
     writeSync: async (pid, record) => { syncs.set(pid, record); },
     mergeSync: real.mergeSync,
@@ -345,6 +349,121 @@ async function main() {
     assert.equal(res.statusCode, 405);
     const posted = await post(handler, { action: "pull", profileId: PID_A, passphrase: PASS_A });
     assert.equal(posted.headers["Cache-Control"], "no-store");
+  });
+
+  // ---- H1: end-to-end encryption (v2 envelopes) ----
+  // A real AES-256-GCM envelope produced by Node crypto for the same key
+  // derivation the Android/desktop clients use (see SyncCryptoTest).
+  const V2_ENC = "AQIDBAUGBwgJCgsMvq1lqXvIeq45UsatXGawI04oXnKqMKRRcCvsUmKhWcJEGYJUy8Nc4iZqKGf3k5x4mTzAMppSrN18EQqCnXB3a6Xc8jTE28cd/zoO3Pcm6vwFfXJ0whGrl7+gpKJFV6Diq1nAiQ==";
+
+  await test("v2 envelope passes cleanRecord opaquely and drops smuggled plaintext", async () => {
+    const clean = real.normalizeSyncPayload({
+      tasks: [{
+        id: "42", updatedAt: 1000, v: 2, enc: V2_ENC,
+        title: "must not be stored", notes: "secret note",
+      }],
+    });
+    assert.equal(clean.tasks.length, 1);
+    assert.deepEqual(Object.keys(clean.tasks[0]).sort(), ["enc", "id", "updatedAt", "v"]);
+    assert.equal(clean.tasks[0].enc, V2_ENC);
+    assert.equal(clean.tasks[0].title, undefined);
+  });
+
+  await test("v2 envelope with bad enc is dropped", async () => {
+    const clean = real.normalizeSyncPayload({
+      tasks: [
+        { id: "a", updatedAt: 1000, v: 2, enc: "short" },
+        { id: "b", updatedAt: 1000, v: 2, enc: "!!!not-base64!!!" },
+        { id: "c", updatedAt: 1000, v: 2, enc: "x".repeat(9000) },
+        { id: "d", updatedAt: 1000, v: 2 },
+      ],
+    });
+    assert.equal(clean.tasks.length, 0);
+  });
+
+  await test("mergeSync keeps v2 records and LWW still decides by updatedAt", async () => {
+    const stored = { revision: 1, updatedAt: 100, data: real.normalizeSyncPayload({
+      tasks: [{ id: "1", updatedAt: 100, title: "old plaintext" }],
+    }) };
+    const merged = real.mergeSync(stored, {
+      tasks: [{ id: "1", updatedAt: 200, v: 2, enc: V2_ENC }],
+    }, 300);
+    assert.equal(merged.data.tasks.length, 1);
+    assert.equal(merged.data.tasks[0].v, 2);
+    assert.equal(merged.data.tasks[0].enc, V2_ENC);
+    // An older v2 record does not beat a newer plaintext one.
+    const merged2 = real.mergeSync(merged, {
+      tasks: [{ id: "1", updatedAt: 150, title: "stale plaintext" }],
+    }, 400);
+    assert.equal(merged2.data.tasks[0].v, 2);
+  });
+
+  await test("v2 envelope replaces v1 plaintext at an equal timestamp (migration)", async () => {
+    const stored = { revision: 1, updatedAt: 100, data: real.normalizeSyncPayload({
+      tasks: [{ id: "1", updatedAt: 100, title: "old plaintext" }],
+    }) };
+    const merged = real.mergeSync(stored, {
+      tasks: [{ id: "1", updatedAt: 100, v: 2, enc: V2_ENC }],
+    }, 300);
+    assert.equal(merged.data.tasks.length, 1);
+    assert.equal(merged.data.tasks[0].v, 2);
+    // The reverse never happens: v1 at an equal timestamp does not downgrade v2.
+    const merged2 = real.mergeSync(merged, {
+      tasks: [{ id: "1", updatedAt: 100, title: "downgrade attempt" }],
+    }, 400);
+    assert.equal(merged2.data.tasks[0].v, 2);
+  });
+
+  await test("stripEncrypted removes v2 but keeps v1 and the revision", async () => {
+    const snap = {
+      revision: 5, updatedAt: 999,
+      data: real.normalizeSyncPayload({
+        tasks: [
+          { id: "1", updatedAt: 100, v: 2, enc: V2_ENC },
+          { id: "2", updatedAt: 100, title: "plain" },
+        ],
+      }),
+    };
+    const stripped = real.stripEncrypted(snap);
+    assert.equal(stripped.revision, 5);
+    assert.equal(stripped.data.tasks.length, 1);
+    assert.equal(stripped.data.tasks[0].id, "2");
+  });
+
+  await test("API: v2 client sees envelopes, v1 client does not (pull and push)", async () => {
+    const store = makeMockStore();
+    const handler = makeHandler(store);
+    const reg = await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    assert.equal(reg.statusCode, 200);
+    const pushed = await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A, syncVersion: 2,
+      data: { tasks: [{ id: "42", updatedAt: 1000, v: 2, enc: V2_ENC }] },
+    });
+    assert.equal(pushed.statusCode, 200);
+    assert.equal(pushed.body.data.tasks.length, 1);
+    assert.equal(pushed.body.data.tasks[0].enc, V2_ENC);
+    // v2 pull returns the envelope.
+    const pulled2 = await post(handler, {
+      action: "pull", profileId: PID_A, passphrase: PASS_A, syncVersion: 2,
+    });
+    assert.equal(pulled2.statusCode, 200);
+    assert.equal(pulled2.body.data.tasks.length, 1);
+    assert.equal(pulled2.body.data.tasks[0].v, 2);
+    // v1 pull (no syncVersion) strips it - the record must not come back as plaintext.
+    const pulled1 = await post(handler, {
+      action: "pull", profileId: PID_A, passphrase: PASS_A,
+    });
+    assert.equal(pulled1.statusCode, 200);
+    assert.equal(pulled1.body.data.tasks.length, 0);
+    assert.equal(pulled1.body.revision, pulled2.body.revision);
+    // v1 push response also strips the v2 record.
+    const pushed1 = await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A,
+      data: { tasks: [{ id: "9", updatedAt: 1001, title: "plain" }] },
+    });
+    assert.equal(pushed1.statusCode, 200);
+    assert.equal(pushed1.body.data.tasks.length, 1);
+    assert.equal(pushed1.body.data.tasks[0].id, "9");
   });
 
   console.log(`sync tests: ${passed} passed`);

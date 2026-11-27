@@ -1,6 +1,6 @@
 const {
   normalizeProfileId, validatePassphrase, hasAccount, setAccount, authenticate,
-  readSync, writeSync, mergeSync,
+  readSync, writeSync, mergeSync, stripEncrypted,
 } = require("../lib/sync-store");
 const { readUsers } = require("../lib/messaging-store");
 const { parseBody, json } = require("../lib/admin-auth");
@@ -72,7 +72,9 @@ async function pull(profileId, body) {
   if (!passphrase || !(await authenticate(profileId, passphrase))) {
     return { status: 401, body: { error: "invalid_credentials" } };
   }
-  return { status: 200, body: await readSync(profileId) };
+  // H1: only a client that declares syncVersion 2 receives v2 envelopes.
+  const wantsEncrypted = Number(body.syncVersion) === 2;
+  return { status: 200, body: await readSync(profileId, wantsEncrypted) };
 }
 
 async function push(profileId, body) {
@@ -83,5 +85,8 @@ async function push(profileId, body) {
   const current = await readSync(profileId);
   const merged = mergeSync(current, body.data, Date.now());
   await writeSync(profileId, merged);
-  return { status: 200, body: merged };
+  // H1: a v1 client pushing plaintext must not get v2 envelopes back in the
+  // merged snapshot, or its next pull would wipe the fields of those records.
+  const wantsEncrypted = Number(body.syncVersion) === 2;
+  return { status: 200, body: wantsEncrypted ? merged : stripEncrypted(merged) };
 }
