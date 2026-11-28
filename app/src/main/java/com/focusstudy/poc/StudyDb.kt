@@ -2,8 +2,6 @@ package com.focusstudy.poc
 
 import android.content.ContentValues
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
 
 data class SessionRow(
     val id: Long,
@@ -17,7 +15,12 @@ data class SessionRow(
 /**
  * Local persistence for tasks, subtasks and focus sessions.
  *
- * Implemented on SQLiteOpenHelper so the project builds without annotation processors.
+ * Implemented without annotation processors (no Room) so the project builds plain.
+ *
+ * P-04 (ADR_002 «تم الاعتماد»): القاعدة مشفرة بـ SQLCipher على الجهاز
+ * (انظر [DbHandle] و[DatabaseEncryption]). لا يعرف هذا الملف الفرق بين
+ * الواجهة المشفرة وواجهة المنصة: كل SQL يمر عبر [DbHandle]، والمخطط
+ * ([createSchema]/[upgradeSchema]) مشترك بين الواجهتين.
  * Schema history:
  *   v1 — tasks(id, title, planned_minutes, done_minutes, is_done, blocked_packages, created_at)
  *        sessions(id, task_id, started_at, ends_at, blocked_packages, state)
@@ -40,153 +43,26 @@ data class SessionRow(
  *
  * Every upgrade is additive: no column or table is dropped, so existing data survives.
  */
-class StudyDb private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
+class StudyDb private constructor(
+    context: Context,
+    private val backend: DbBackend
+) {
 
     private val appContext: Context = context.applicationContext
 
-    override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE tasks(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              title TEXT NOT NULL,
-              planned_minutes INTEGER NOT NULL,
-              done_minutes INTEGER NOT NULL DEFAULT 0,
-              is_done INTEGER NOT NULL DEFAULT 0,
-              blocked_packages TEXT NOT NULL DEFAULT '',
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE sessions(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              task_id INTEGER NOT NULL,
-              started_at INTEGER NOT NULL,
-              ends_at INTEGER NOT NULL,
-              blocked_packages TEXT NOT NULL DEFAULT '',
-              state TEXT NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX idx_sessions_state ON sessions(state)")
-        db.execSQL("CREATE INDEX idx_tasks_created ON tasks(created_at)")
-        migrateToV2(db)
-        migrateToV3(db)
-        migrateToV4(db)
-        migrateToV5(db)
-        migrateToV6(db)
-        migrateToV7(db)
-        migrateToV8(db)
-        migrateToV9(db)
-        migrateToV10(db)
-        migrateToV11(db)
-        migrateToV12(db)
-        migrateToV13(db)
-        migrateToV14(db)
-        migrateToV15(db)
-        migrateToV16(db)
-        migrateToV17(db)
-        migrateToV18(db)
-    }
+    /** الوصول للقاعدة عبر الواجهة الخلفية (مشفرة على الجهاز، منصة على JVM). */
+    val writableDatabase: DbHandle get() = backend.writable
+    val readableDatabase: DbHandle get() = backend.readable
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2) migrateToV2(db)
-        if (oldVersion < 3) migrateToV3(db)
-        if (oldVersion < 4) migrateToV4(db)
-        if (oldVersion < 5) migrateToV5(db)
-        if (oldVersion < 6) migrateToV6(db)
-        if (oldVersion < 7) migrateToV7(db)
-        if (oldVersion < 8) migrateToV8(db)
-        if (oldVersion < 9) migrateToV9(db)
-        if (oldVersion < 10) migrateToV10(db)
-        if (oldVersion < 11) migrateToV11(db)
-        if (oldVersion < 12) migrateToV12(db)
-        if (oldVersion < 13) migrateToV13(db)
-        if (oldVersion < 14) migrateToV14(db)
-        if (oldVersion < 15) migrateToV15(db)
-        if (oldVersion < 16) migrateToV16(db)
-        if (oldVersion < 17) migrateToV17(db)
-        if (oldVersion < 18) migrateToV18(db)
-    }
+    fun close() = backend.close()
 
-    private fun migrateToV4(db: SQLiteDatabase) {
-        addColumnIfMissing(db, "tasks", "original_due_at", "INTEGER")
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_at, status)")
-    }
 
-    private fun migrateToV5(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS events(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              title TEXT NOT NULL,
-              kind TEXT NOT NULL DEFAULT 'study',
-              subject_id INTEGER,
-              task_id INTEGER,
-              starts_at INTEGER NOT NULL,
-              ends_at INTEGER NOT NULL,
-              notes TEXT NOT NULL DEFAULT ''
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_events_range ON events(starts_at, ends_at)")
-    }
 
-    private fun migrateToV6(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            UPDATE tasks
-            SET status = CASE WHEN is_done = 1 OR status = 'done' THEN 'done' ELSE status END,
-                is_done = CASE WHEN is_done = 1 OR status = 'done' THEN 1 ELSE 0 END
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_subject ON tasks(subject_id)")
-    }
+
+
 
     /** v7 - user-editable task types, additive: existing tasks keep working unchanged. */
-    private fun migrateToV7(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS task_types(
-              id TEXT PRIMARY KEY,
-              name TEXT NOT NULL,
-              sort_order INTEGER NOT NULL DEFAULT 0,
-              archived INTEGER NOT NULL DEFAULT 0,
-              built_in INTEGER NOT NULL DEFAULT 0
-            )
-            """.trimIndent()
-        )
-        addColumnIfMissing(db, "tasks", "type_id", "TEXT")
-        seedTaskTypes(db)
-        db.execSQL(
-            """
-            UPDATE tasks SET type_id = CASE category
-                WHEN 'study' THEN 'study'
-                WHEN 'university' THEN 'study'
-                ELSE 'life' END
-            WHERE type_id IS NULL
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type_id)")
-    }
 
-    private fun seedTaskTypes(db: SQLiteDatabase) {
-        val builtIns = listOf(
-            "religious" to "ديني",
-            "study" to "دراسة",
-            "life" to "حياة",
-            "volunteering" to "تطوّع"
-        )
-        builtIns.forEachIndexed { index, (id, name) ->
-            db.execSQL(
-                "INSERT OR IGNORE INTO task_types(id, name, sort_order, archived, built_in) VALUES(?, ?, ?, 0, 1)",
-                arrayOf<Any?>(id, name, index)
-            )
-        }
-    }
 
     // -------------------------------------------------------------- task types
 
@@ -289,7 +165,7 @@ class StudyDb private constructor(context: Context) :
                 put("awarded", 0)
                 put("created_at", System.currentTimeMillis())
             },
-            SQLiteDatabase.CONFLICT_IGNORE
+            DbHandle.CONFLICT_IGNORE
         )
         if (done) awardGoalLinksForTask(refId)
     }
@@ -562,212 +438,16 @@ class StudyDb private constructor(context: Context) :
      * `notification_log` records delivery and the user's action for the adaptive policy.
      */
     /** v12 — long-term goals with a numeric measure and a deadline. */
-    private fun migrateToV12(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS goals(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              title TEXT NOT NULL,
-              target INTEGER NOT NULL,
-              current INTEGER NOT NULL DEFAULT 0,
-              unit TEXT NOT NULL DEFAULT 'خطوة',
-              category TEXT NOT NULL DEFAULT '',
-              due_at INTEGER,
-              status TEXT NOT NULL DEFAULT 'active',
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-    }
 
-    /**
-     * v13 — the goal path: which tasks and which skills serve a goal.
-     *
-     * `awarded` makes the link advance the goal exactly once, so reopening and completing a task
-     * again never double-counts. Links cascade away with the goal, the task or the skill.
-     */
-    private fun migrateToV13(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS goal_links(
-              goal_id INTEGER NOT NULL,
-              kind TEXT NOT NULL,
-              ref_id INTEGER NOT NULL,
-              awarded INTEGER NOT NULL DEFAULT 0,
-              created_at INTEGER NOT NULL,
-              PRIMARY KEY(goal_id, kind, ref_id)
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_goal_links_goal ON goal_links(goal_id, kind)")
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_goal_links_ref ON goal_links(kind, ref_id)")
-    }
 
     /** v14 — the private notebook «نوتة». Additive: every existing table is left untouched. */
-    private fun migrateToV14(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS notes(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              title TEXT NOT NULL DEFAULT '',
-              body TEXT NOT NULL DEFAULT '',
-              category TEXT NOT NULL DEFAULT '',
-              pinned INTEGER NOT NULL DEFAULT 0,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_notes_order ON notes(pinned DESC, updated_at DESC)")
-    }
 
     /** v11 — skills the person is developing, independent of tasks and sessions. */
-    private fun migrateToV11(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS skills(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT NOT NULL,
-              category TEXT NOT NULL DEFAULT '',
-              level INTEGER NOT NULL DEFAULT 1,
-              target_level INTEGER NOT NULL DEFAULT 3,
-              minutes INTEGER NOT NULL DEFAULT 0,
-              last_practiced_at INTEGER NOT NULL DEFAULT 0,
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-    }
 
-    private fun migrateToV8(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS reminders(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              task_id INTEGER NOT NULL,
-              kind TEXT NOT NULL,
-              fire_at INTEGER NOT NULL,
-              state TEXT NOT NULL DEFAULT 'pending',
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS notification_log(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              kind TEXT NOT NULL,
-              task_id INTEGER,
-              scheduled_at INTEGER NOT NULL,
-              delivered_at INTEGER,
-              action TEXT NOT NULL DEFAULT ''
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_reminders_fire ON reminders(state, fire_at)")
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_notification_log_time ON notification_log(delivered_at)")
-    }
 
-    private fun migrateToV3(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS semesters(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT NOT NULL,
-              university TEXT NOT NULL DEFAULT '',
-              year_label TEXT NOT NULL DEFAULT '',
-              starts_on INTEGER,
-              ends_on INTEGER
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS subjects(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              semester_id INTEGER,
-              name TEXT NOT NULL,
-              color INTEGER NOT NULL DEFAULT 4281558682,
-              icon TEXT NOT NULL DEFAULT 'book',
-              instructor TEXT NOT NULL DEFAULT '',
-              goal_minutes INTEGER NOT NULL DEFAULT 0,
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS exams(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              subject_id INTEGER NOT NULL,
-              title TEXT NOT NULL,
-              at INTEGER NOT NULL,
-              kind TEXT NOT NULL DEFAULT 'exam'
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_subjects_semester ON subjects(semester_id)")
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_exams_subject_at ON exams(subject_id, at)")
-    }
 
-    private fun migrateToV2(db: SQLiteDatabase) {
-        addColumnIfMissing(db, "tasks", "description", "TEXT NOT NULL DEFAULT ''")
-        addColumnIfMissing(db, "tasks", "category", "TEXT NOT NULL DEFAULT 'study'")
-        addColumnIfMissing(db, "tasks", "priority", "INTEGER NOT NULL DEFAULT 1")
-        addColumnIfMissing(db, "tasks", "status", "TEXT NOT NULL DEFAULT 'todo'")
-        addColumnIfMissing(db, "tasks", "start_at", "INTEGER")
-        addColumnIfMissing(db, "tasks", "due_at", "INTEGER")
-        addColumnIfMissing(db, "tasks", "subject_id", "INTEGER")
-        addColumnIfMissing(db, "tasks", "notes", "TEXT NOT NULL DEFAULT ''")
-        addColumnIfMissing(db, "tasks", "recurrence", "TEXT NOT NULL DEFAULT 'none'")
-        addColumnIfMissing(db, "tasks", "completed_at", "INTEGER")
-        addColumnIfMissing(db, "tasks", "sort_order", "INTEGER NOT NULL DEFAULT 0")
 
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS subtasks(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              task_id INTEGER NOT NULL,
-              title TEXT NOT NULL,
-              is_done INTEGER NOT NULL DEFAULT 0,
-              sort_order INTEGER NOT NULL DEFAULT 0
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id)")
-    }
 
-    /**
-     * v9 - local consent ledger, additive.
-     *
-     * Android keeps its own permission grants across updates, but the app cannot tell
-     * "لم يُمنح قط" from "كان ممنوحًا وأوقفه النظام" without remembering it. This table
-     * lives only on this phone; nothing here is uploaded.
-     */
-    private fun migrateToV9(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS consents(
-              key TEXT PRIMARY KEY,
-              granted INTEGER NOT NULL,
-              version INTEGER NOT NULL,
-              at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        // Kept after revocation: without it the app cannot tell "لم يُمنح قط" from "أوقفه النظام".
-        addColumnIfMissing(db, "consents", "last_granted_at", "INTEGER NOT NULL DEFAULT 0")
-    }
-
-    /**
-     * v10 - the consents table learned to remember that a permission was granted once.
-     *
-     * 0.16.3 shipped v9 without `last_granted_at`, so installs already on v9 need this
-     * separate step; folding the column into migrateToV9 alone would never run for them.
-     */
-    private fun migrateToV10(db: SQLiteDatabase) {
-        addColumnIfMissing(db, "consents", "last_granted_at", "INTEGER NOT NULL DEFAULT 0")
-    }
 
     data class StoredConsent(
         val key: String,
@@ -806,23 +486,6 @@ class StudyDb private constructor(context: Context) :
         return out
     }
 
-    private fun addColumnIfMissing(
-        db: SQLiteDatabase,
-        table: String,
-        column: String,
-        definition: String
-    ) {
-        var exists = false
-        db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
-            while (cursor.moveToNext()) {
-                if (cursor.getString(1) == column) {
-                    exists = true
-                    break
-                }
-            }
-        }
-        if (!exists) db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
-    }
 
     // ---------------------------------------------------------------- tasks
 
@@ -1305,7 +968,7 @@ class StudyDb private constructor(context: Context) :
         }
     }
 
-    private fun creditFocusMinutes(db: SQLiteDatabase, taskId: Long, minutes: Int) {
+    private fun creditFocusMinutes(db: DbHandle, taskId: Long, minutes: Int) {
         if (minutes <= 0) return
         val previous = task(taskId)
         db.execSQL(
@@ -1352,7 +1015,7 @@ class StudyDb private constructor(context: Context) :
         }
     }
 
-    private fun createNextRecurringTask(db: SQLiteDatabase, original: StudyTask) {
+    private fun createNextRecurringTask(db: DbHandle, original: StudyTask) {
         if (original.recurrence == Recurrence.NONE) return
         val zone = AppTimeZone.zone(appContext)
         // The engine keeps the original clock time and skips occurrences already past.
@@ -1537,240 +1200,9 @@ class StudyDb private constructor(context: Context) :
         return raw.split(SEPARATOR).filter { it.isNotBlank() }.toSet()
     }
 
-    /**
-     * v15 — تتبع الحياة «حياتي»: عادات، ورد قرآني، صحة، مال، مزاج.
-     *
-     * جداول جديدة فقط؛ لا يتغير أي جدول قائم، فبيانات المستخدمين الحاليين تبقى كما هي.
-     * مفاتيح الأيام نصوص ISO (yyyy-MM-dd) في منطقة الجهاز، فيطابق مفتاح اليوم ما تعرضه
-     * الواجهة دون حسابات مناطق زمنية داخل قاعدة البيانات.
-     */
-    private fun migrateToV15(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS habits(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT NOT NULL,
-              created_at INTEGER NOT NULL,
-              archived INTEGER NOT NULL DEFAULT 0
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS habit_logs(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              habit_id INTEGER NOT NULL,
-              day TEXT NOT NULL,
-              done INTEGER NOT NULL DEFAULT 1,
-              UNIQUE(habit_id, day)
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_habit_logs_habit_day ON habit_logs(habit_id, day)")
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS wird_settings(
-              id INTEGER PRIMARY KEY,
-              surah TEXT NOT NULL DEFAULT 'البقرة',
-              start_page INTEGER NOT NULL DEFAULT 2,
-              pages_per_day INTEGER NOT NULL DEFAULT 2
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS wird_logs(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              day TEXT NOT NULL,
-              pages INTEGER NOT NULL,
-              surah TEXT NOT NULL DEFAULT 'البقرة',
-              logged_at INTEGER NOT NULL,
-              UNIQUE(day)
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS health_logs(
-              day TEXT PRIMARY KEY,
-              weight REAL,
-              sleep_hours REAL,
-              water_cups INTEGER NOT NULL DEFAULT 0,
-              exercise_minutes INTEGER NOT NULL DEFAULT 0
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS transactions(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              kind TEXT NOT NULL,
-              amount REAL NOT NULL,
-              category TEXT NOT NULL DEFAULT '',
-              note TEXT NOT NULL DEFAULT '',
-              day TEXT NOT NULL,
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_transactions_day ON transactions(day)")
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS mood_logs(
-              day TEXT PRIMARY KEY,
-              mood INTEGER NOT NULL,
-              logged_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-    }
 
-    /**
-     * v16 — اللياقة: ملف الجسم، سجل السعرات، سجل إتمام التمارين.
-     *
-     * جداول جديدة فقط؛ لا يتغير أي جدول قائم، فبيانات المستخدمين الحاليين تبقى كما هي.
-     */
-    private fun migrateToV16(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS fitness_profile(
-              id INTEGER PRIMARY KEY,
-              gender TEXT NOT NULL DEFAULT 'male',
-              age INTEGER NOT NULL DEFAULT 30,
-              height_cm REAL NOT NULL DEFAULT 170,
-              weight_kg REAL NOT NULL DEFAULT 70,
-              activity TEXT NOT NULL DEFAULT 'moderate',
-              goal TEXT NOT NULL DEFAULT 'maintain'
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS calorie_logs(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              day TEXT NOT NULL,
-              name TEXT NOT NULL DEFAULT '',
-              calories INTEGER NOT NULL,
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_calorie_logs_day ON calorie_logs(day)")
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS exercise_logs(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              day TEXT NOT NULL,
-              exercise_id TEXT NOT NULL,
-              done INTEGER NOT NULL DEFAULT 1,
-              UNIQUE(day, exercise_id)
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_exercise_logs_day ON exercise_logs(day)")
-    }
 
-    /**
-     * v17 — additive only: two new tables, no DROP and no ALTER of any existing table.
-     * user_profile keeps the display name as a single row (id = 1); support_messages
-     * keeps a local copy of every support/suggestion message so none is lost when the
-     * network is down — it is saved as «sending» before the POST and its status is
-     * updated to «sent»/«failed» from the result. Attached images are copied to
-     * filesDir/support_images and only their paths are stored here, never BLOBs.
-     */
-    private fun migrateToV17(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS user_profile(
-              id INTEGER PRIMARY KEY,
-              name TEXT NOT NULL DEFAULT '',
-              updated_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS support_messages(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              kind TEXT NOT NULL,
-              user_name TEXT NOT NULL DEFAULT '',
-              sender_name TEXT NOT NULL DEFAULT '',
-              contact TEXT NOT NULL DEFAULT '',
-              body TEXT NOT NULL DEFAULT '',
-              image_paths TEXT NOT NULL DEFAULT '',
-              status TEXT NOT NULL DEFAULT 'sending',
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_support_messages_created ON support_messages(created_at)")
-    }
 
-    /**
-     * v18 — assistant learning + persistent follow-ups. All four tables are
-     * local-only: none of them is in the sync contract (see SyncPayload), so
-     * the Windows desktop needs no schema change for v18.
-     */
-    private fun migrateToV18(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS assistant_memories(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              text TEXT NOT NULL,
-              category TEXT NOT NULL DEFAULT 'عام',
-              source TEXT NOT NULL DEFAULT 'chat',
-              confidence REAL NOT NULL DEFAULT 0.8,
-              use_count INTEGER NOT NULL DEFAULT 0,
-              created_at INTEGER NOT NULL,
-              last_used_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS assistant_interactions(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              kind TEXT NOT NULL,
-              detail TEXT NOT NULL DEFAULT '',
-              accepted INTEGER NOT NULL DEFAULT 0,
-              created_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_assistant_interactions_kind ON assistant_interactions(kind)")
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS assistant_profile(
-              key TEXT PRIMARY KEY,
-              text_value TEXT NOT NULL DEFAULT '',
-              real_value REAL,
-              confidence REAL NOT NULL DEFAULT 0.0,
-              samples INTEGER NOT NULL DEFAULT 0,
-              updated_at INTEGER NOT NULL
-            )
-            """.trimIndent()
-        )
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS assistant_followups(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              kind TEXT NOT NULL,
-              slot TEXT NOT NULL DEFAULT '',
-              day TEXT NOT NULL,
-              attempts INTEGER NOT NULL DEFAULT 1,
-              max_attempts INTEGER NOT NULL DEFAULT 5,
-              next_at INTEGER NOT NULL DEFAULT 0,
-              state TEXT NOT NULL DEFAULT 'active',
-              snooze_until INTEGER,
-              detail TEXT NOT NULL DEFAULT '',
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL,
-              UNIQUE(kind, slot, day)
-            )
-            """.trimIndent()
-        )
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_assistant_followups_state ON assistant_followups(state, next_at)")
-    }
 
     // ------------------------------------------------------- life tracking
 
@@ -1879,7 +1311,7 @@ class StudyDb private constructor(context: Context) :
             put("logged_at", System.currentTimeMillis())
         }
         return writableDatabase.insertWithOnConflict(
-            "wird_logs", null, values, SQLiteDatabase.CONFLICT_IGNORE
+            "wird_logs", null, values, DbHandle.CONFLICT_IGNORE
         ) != -1L
     }
 
@@ -1917,7 +1349,7 @@ class StudyDb private constructor(context: Context) :
             put("exercise_minutes", log.exerciseMinutes.coerceAtLeast(0))
         }
         writableDatabase.insertWithOnConflict(
-            "health_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE
+            "health_logs", null, values, DbHandle.CONFLICT_REPLACE
         )
     }
 
@@ -1969,7 +1401,7 @@ class StudyDb private constructor(context: Context) :
             put("logged_at", System.currentTimeMillis())
         }
         writableDatabase.insertWithOnConflict(
-            "mood_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE
+            "mood_logs", null, values, DbHandle.CONFLICT_REPLACE
         )
     }
 
@@ -2025,7 +1457,7 @@ class StudyDb private constructor(context: Context) :
             put("goal", profile.goal.key)
         }
         writableDatabase.insertWithOnConflict(
-            "fitness_profile", null, values, SQLiteDatabase.CONFLICT_REPLACE
+            "fitness_profile", null, values, DbHandle.CONFLICT_REPLACE
         )
     }
 
@@ -2244,7 +1676,7 @@ class StudyDb private constructor(context: Context) :
         }
     }
 
-    private fun applySyncDelete(db: SQLiteDatabase, kind: String, id: String) {
+    private fun applySyncDelete(db: DbHandle, kind: String, id: String) {
         when (kind) {
             "tasks" -> id.toLongOrNull()?.let { deleteTask(it) }
             "subjects" -> id.toLongOrNull()?.let { subjectId ->
@@ -2273,7 +1705,7 @@ class StudyDb private constructor(context: Context) :
         }
     }
 
-    private fun applySyncUpsert(db: SQLiteDatabase, kind: String, record: Map<String, Any>) {
+    private fun applySyncUpsert(db: DbHandle, kind: String, record: Map<String, Any>) {
         val id = record["id"]?.toString().orEmpty()
         if (id.isEmpty()) return
         val updatedAt = (record["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
@@ -2374,7 +1806,7 @@ class StudyDb private constructor(context: Context) :
                     put("created_at", long("createdAt") ?: updatedAt)
                     put("archived", if (record["archived"] == true) 1 else 0)
                 }
-                db.insertWithOnConflict("habits", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("habits", null, values, DbHandle.CONFLICT_REPLACE)
             }
             "habitLogs" -> {
                 val habitId = long("habitId") ?: text("habitId").toLongOrNull() ?: return
@@ -2393,7 +1825,7 @@ class StudyDb private constructor(context: Context) :
                     put("surah", text("surah").ifBlank { "البقرة" })
                     put("logged_at", updatedAt)
                 }
-                db.insertWithOnConflict("wird_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("wird_logs", null, values, DbHandle.CONFLICT_REPLACE)
             }
             "healthLogs" -> {
                 val day = text("day").ifBlank { return }
@@ -2404,7 +1836,7 @@ class StudyDb private constructor(context: Context) :
                     put("water_cups", int("waterCups")?.coerceAtLeast(0) ?: 0)
                     put("exercise_minutes", int("exerciseMinutes")?.coerceAtLeast(0) ?: 0)
                 }
-                db.insertWithOnConflict("health_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("health_logs", null, values, DbHandle.CONFLICT_REPLACE)
             }
             "transactions" -> {
                 val transactionId = id.toLongOrNull() ?: return
@@ -2419,7 +1851,7 @@ class StudyDb private constructor(context: Context) :
                     put("day", day)
                     put("created_at", long("createdAt") ?: updatedAt)
                 }
-                db.insertWithOnConflict("transactions", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("transactions", null, values, DbHandle.CONFLICT_REPLACE)
             }
             "moodLogs" -> {
                 val day = text("day").ifBlank { return }
@@ -2429,7 +1861,7 @@ class StudyDb private constructor(context: Context) :
                     put("mood", mood)
                     put("logged_at", updatedAt)
                 }
-                db.insertWithOnConflict("mood_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("mood_logs", null, values, DbHandle.CONFLICT_REPLACE)
             }
             "calorieLogs" -> {
                 val entryId = id.toLongOrNull() ?: return
@@ -2441,7 +1873,7 @@ class StudyDb private constructor(context: Context) :
                     put("calories", calories)
                     put("created_at", long("createdAt") ?: updatedAt)
                 }
-                db.insertWithOnConflict("calorie_logs", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("calorie_logs", null, values, DbHandle.CONFLICT_REPLACE)
             }
         }
     }
@@ -2461,7 +1893,7 @@ class StudyDb private constructor(context: Context) :
             put("updated_at", System.currentTimeMillis())
         }
         writableDatabase.insertWithOnConflict(
-            "user_profile", null, values, SQLiteDatabase.CONFLICT_REPLACE
+            "user_profile", null, values, DbHandle.CONFLICT_REPLACE
         )
     }
 
@@ -2661,7 +2093,7 @@ class StudyDb private constructor(context: Context) :
                     put("samples", entry.samples)
                     put("updated_at", entry.updatedAt)
                 }
-                db.insertWithOnConflict("assistant_profile", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                db.insertWithOnConflict("assistant_profile", null, values, DbHandle.CONFLICT_REPLACE)
             }
             db.setTransactionSuccessful()
         } finally {
@@ -2720,7 +2152,7 @@ class StudyDb private constructor(context: Context) :
             put("updated_at", now)
         }
         writableDatabase.insertWithOnConflict(
-            "assistant_followups", null, values, SQLiteDatabase.CONFLICT_IGNORE
+            "assistant_followups", null, values, DbHandle.CONFLICT_IGNORE
         )
     }
 
@@ -2805,8 +2237,8 @@ class StudyDb private constructor(context: Context) :
     }
 
     companion object {
-        private const val DB_NAME = "focus_study.db"
-        private const val DB_VERSION = 18
+        internal const val DB_NAME = "focus_study.db"
+        internal const val DB_VERSION = 18
         private const val STATE_ACTIVE = "active"
         private const val SEPARATOR = "\n"
 
@@ -2815,8 +2247,55 @@ class StudyDb private constructor(context: Context) :
 
         fun get(context: Context): StudyDb =
             instance ?: synchronized(this) {
-                instance ?: StudyDb(context).also { instance = it }
+                instance ?: run {
+                    val app = context.applicationContext
+                    val backend: DbBackend = when (val outcome = DatabaseEncryption.ensureEncrypted(app)) {
+                        is DatabaseEncryption.Outcome.Encrypted -> SqlCipherDbBackend(app, outcome.keyHex)
+                        is DatabaseEncryption.Outcome.Plaintext -> {
+                            android.util.Log.w(
+                                "StudyDb",
+                                "Running on a PLAINTEXT database: ${outcome.reason}"
+                            )
+                            PlatformDbBackend(app)
+                        }
+                        DatabaseEncryption.Outcome.KeyLost -> {
+                            android.util.Log.e(
+                                "StudyDb",
+                                "Encrypted database present but its key is unavailable " +
+                                    "(Keystore) — refusing to open or delete anything"
+                            )
+                            throw IllegalStateException(
+                                "قاعدة البيانات مشفّرة ومفتاحها غير متاح (Keystore). " +
+                                    "لا يمكن فتح البيانات أو حذفها."
+                            )
+                        }
+                    }
+                    StudyDb(app, backend).also { instance = it }
+                }
             }
+
+        /**
+         * P-02: يحذف قاعدة البيانات المحلية بالكامل (بعد إغلاق المساعد).
+         * لا يمس الخادم؛ يعيد التشغيل بعدها التطبيق على حالة جديدة.
+         * يحذف أيضًا النسخة الاحتياطية من النص الصريح وملف الترحيل المؤقت
+         * وبقايا -wal/-shm/-journal ومفتاح التشفير — فالإقلاع التالي يبدأ
+         * من تثبيت جديد بمفتاح جديد.
+         */
+        fun deleteDatabaseFile(context: Context): Boolean {
+            synchronized(this) {
+                runCatching { instance?.close() }
+                instance = null
+            }
+            val app = context.applicationContext
+            DatabaseKeyManager.clearKey(app)
+            val base = app.getDatabasePath(DB_NAME)
+            for (suffix in listOf("", "-wal", "-shm", "-journal")) {
+                runCatching { java.io.File(base.path + suffix).takeIf { it.exists() }?.delete() }
+            }
+            runCatching { java.io.File(base.path + DatabaseEncryption.TEMP_SUFFIX).delete() }
+            runCatching { java.io.File(base.path + DatabaseEncryption.BACKUP_SUFFIX).delete() }
+            return app.deleteDatabase(DB_NAME)
+        }
 
         /**
          * Test-only: drop the cached helper so the next [get] binds to the
@@ -2825,23 +2304,622 @@ class StudyDb private constructor(context: Context) :
          * file, so a seeded file in a later test's sandbox is never opened
          * (the helper recreates the deleted first file empty instead).
          */
-        /**
-         * P-02: يحذف قاعدة البيانات المحلية بالكامل (بعد إغلاق المساعد).
-         * لا يمس الخادم؛ يعيد التشغيل بعدها التطبيق على حالة جديدة.
-         */
-        fun deleteDatabaseFile(context: Context): Boolean {
-            synchronized(this) {
-                runCatching { instance?.close() }
-                instance = null
-            }
-            return context.deleteDatabase(DB_NAME)
-        }
-
         fun resetForTest() {
             synchronized(this) {
                 runCatching { instance?.close() }
                 instance = null
             }
         }
+
+        /**
+         * Test-only (instrumented): creates the full v18 schema as a PLAINTEXT
+         * database, so the SQLCipher migration test can seed real rows and
+         * then watch [get] migrate them. Never used by production code.
+         */
+        internal fun createPlaintextDatabaseForTest(context: Context) {
+            PlatformDbHelper(context.applicationContext).apply {
+                writableDatabase.close()
+            }
+        }
+
+    internal fun createSchema(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE tasks(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              planned_minutes INTEGER NOT NULL,
+              done_minutes INTEGER NOT NULL DEFAULT 0,
+              is_done INTEGER NOT NULL DEFAULT 0,
+              blocked_packages TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE sessions(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              started_at INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              blocked_packages TEXT NOT NULL DEFAULT '',
+              state TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX idx_sessions_state ON sessions(state)")
+        db.execSQL("CREATE INDEX idx_tasks_created ON tasks(created_at)")
+        migrateToV2(db)
+        migrateToV3(db)
+        migrateToV4(db)
+        migrateToV5(db)
+        migrateToV6(db)
+        migrateToV7(db)
+        migrateToV8(db)
+        migrateToV9(db)
+        migrateToV10(db)
+        migrateToV11(db)
+        migrateToV12(db)
+        migrateToV13(db)
+        migrateToV14(db)
+        migrateToV15(db)
+        migrateToV16(db)
+        migrateToV17(db)
+        migrateToV18(db)
+    }
+
+    internal fun upgradeSchema(db: DbHandle, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) migrateToV2(db)
+        if (oldVersion < 3) migrateToV3(db)
+        if (oldVersion < 4) migrateToV4(db)
+        if (oldVersion < 5) migrateToV5(db)
+        if (oldVersion < 6) migrateToV6(db)
+        if (oldVersion < 7) migrateToV7(db)
+        if (oldVersion < 8) migrateToV8(db)
+        if (oldVersion < 9) migrateToV9(db)
+        if (oldVersion < 10) migrateToV10(db)
+        if (oldVersion < 11) migrateToV11(db)
+        if (oldVersion < 12) migrateToV12(db)
+        if (oldVersion < 13) migrateToV13(db)
+        if (oldVersion < 14) migrateToV14(db)
+        if (oldVersion < 15) migrateToV15(db)
+        if (oldVersion < 16) migrateToV16(db)
+        if (oldVersion < 17) migrateToV17(db)
+        if (oldVersion < 18) migrateToV18(db)
+    }
+
+    private fun migrateToV4(db: DbHandle) {
+        addColumnIfMissing(db, "tasks", "original_due_at", "INTEGER")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(due_at, status)")
+    }
+
+    private fun migrateToV5(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS events(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              kind TEXT NOT NULL DEFAULT 'study',
+              subject_id INTEGER,
+              task_id INTEGER,
+              starts_at INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              notes TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_events_range ON events(starts_at, ends_at)")
+    }
+
+    private fun migrateToV6(db: DbHandle) {
+        db.execSQL(
+            """
+            UPDATE tasks
+            SET status = CASE WHEN is_done = 1 OR status = 'done' THEN 'done' ELSE status END,
+                is_done = CASE WHEN is_done = 1 OR status = 'done' THEN 1 ELSE 0 END
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_subject ON tasks(subject_id)")
+    }
+
+    private fun migrateToV7(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS task_types(
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              archived INTEGER NOT NULL DEFAULT 0,
+              built_in INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        addColumnIfMissing(db, "tasks", "type_id", "TEXT")
+        seedTaskTypes(db)
+        db.execSQL(
+            """
+            UPDATE tasks SET type_id = CASE category
+                WHEN 'study' THEN 'study'
+                WHEN 'university' THEN 'study'
+                ELSE 'life' END
+            WHERE type_id IS NULL
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type_id)")
+    }
+
+    private fun seedTaskTypes(db: DbHandle) {
+        val builtIns = listOf(
+            "religious" to "ديني",
+            "study" to "دراسة",
+            "life" to "حياة",
+            "volunteering" to "تطوّع"
+        )
+        builtIns.forEachIndexed { index, (id, name) ->
+            db.execSQL(
+                "INSERT OR IGNORE INTO task_types(id, name, sort_order, archived, built_in) VALUES(?, ?, ?, 0, 1)",
+                arrayOf<Any?>(id, name, index)
+            )
+        }
+    }
+
+    private fun migrateToV12(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS goals(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              target INTEGER NOT NULL,
+              current INTEGER NOT NULL DEFAULT 0,
+              unit TEXT NOT NULL DEFAULT 'خطوة',
+              category TEXT NOT NULL DEFAULT '',
+              due_at INTEGER,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
+    /**
+     * v13 — the goal path: which tasks and which skills serve a goal.
+     *
+     * `awarded` makes the link advance the goal exactly once, so reopening and completing a task
+     * again never double-counts. Links cascade away with the goal, the task or the skill.
+     */
+    private fun migrateToV13(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS goal_links(
+              goal_id INTEGER NOT NULL,
+              kind TEXT NOT NULL,
+              ref_id INTEGER NOT NULL,
+              awarded INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY(goal_id, kind, ref_id)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_goal_links_goal ON goal_links(goal_id, kind)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_goal_links_ref ON goal_links(kind, ref_id)")
+    }
+
+    private fun migrateToV14(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS notes(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL DEFAULT '',
+              body TEXT NOT NULL DEFAULT '',
+              category TEXT NOT NULL DEFAULT '',
+              pinned INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_notes_order ON notes(pinned DESC, updated_at DESC)")
+    }
+
+    private fun migrateToV11(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS skills(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              category TEXT NOT NULL DEFAULT '',
+              level INTEGER NOT NULL DEFAULT 1,
+              target_level INTEGER NOT NULL DEFAULT 3,
+              minutes INTEGER NOT NULL DEFAULT 0,
+              last_practiced_at INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
+    private fun migrateToV8(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS reminders(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              kind TEXT NOT NULL,
+              fire_at INTEGER NOT NULL,
+              state TEXT NOT NULL DEFAULT 'pending',
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS notification_log(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              task_id INTEGER,
+              scheduled_at INTEGER NOT NULL,
+              delivered_at INTEGER,
+              action TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_reminders_fire ON reminders(state, fire_at)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_notification_log_time ON notification_log(delivered_at)")
+    }
+
+    private fun migrateToV3(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS semesters(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              university TEXT NOT NULL DEFAULT '',
+              year_label TEXT NOT NULL DEFAULT '',
+              starts_on INTEGER,
+              ends_on INTEGER
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS subjects(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              semester_id INTEGER,
+              name TEXT NOT NULL,
+              color INTEGER NOT NULL DEFAULT 4281558682,
+              icon TEXT NOT NULL DEFAULT 'book',
+              instructor TEXT NOT NULL DEFAULT '',
+              goal_minutes INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS exams(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              subject_id INTEGER NOT NULL,
+              title TEXT NOT NULL,
+              at INTEGER NOT NULL,
+              kind TEXT NOT NULL DEFAULT 'exam'
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_subjects_semester ON subjects(semester_id)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_exams_subject_at ON exams(subject_id, at)")
+    }
+
+    private fun migrateToV2(db: DbHandle) {
+        addColumnIfMissing(db, "tasks", "description", "TEXT NOT NULL DEFAULT ''")
+        addColumnIfMissing(db, "tasks", "category", "TEXT NOT NULL DEFAULT 'study'")
+        addColumnIfMissing(db, "tasks", "priority", "INTEGER NOT NULL DEFAULT 1")
+        addColumnIfMissing(db, "tasks", "status", "TEXT NOT NULL DEFAULT 'todo'")
+        addColumnIfMissing(db, "tasks", "start_at", "INTEGER")
+        addColumnIfMissing(db, "tasks", "due_at", "INTEGER")
+        addColumnIfMissing(db, "tasks", "subject_id", "INTEGER")
+        addColumnIfMissing(db, "tasks", "notes", "TEXT NOT NULL DEFAULT ''")
+        addColumnIfMissing(db, "tasks", "recurrence", "TEXT NOT NULL DEFAULT 'none'")
+        addColumnIfMissing(db, "tasks", "completed_at", "INTEGER")
+        addColumnIfMissing(db, "tasks", "sort_order", "INTEGER NOT NULL DEFAULT 0")
+
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS subtasks(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              task_id INTEGER NOT NULL,
+              title TEXT NOT NULL,
+              is_done INTEGER NOT NULL DEFAULT 0,
+              sort_order INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id)")
+    }
+
+    /**
+     * v9 - local consent ledger, additive.
+     *
+     * Android keeps its own permission grants across updates, but the app cannot tell
+     * "لم يُمنح قط" from "كان ممنوحًا وأوقفه النظام" without remembering it. This table
+     * lives only on this phone; nothing here is uploaded.
+     */
+    private fun migrateToV9(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS consents(
+              key TEXT PRIMARY KEY,
+              granted INTEGER NOT NULL,
+              version INTEGER NOT NULL,
+              at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        // Kept after revocation: without it the app cannot tell "لم يُمنح قط" from "أوقفه النظام".
+        addColumnIfMissing(db, "consents", "last_granted_at", "INTEGER NOT NULL DEFAULT 0")
+    }
+
+    /**
+     * v10 - the consents table learned to remember that a permission was granted once.
+     *
+     * 0.16.3 shipped v9 without `last_granted_at`, so installs already on v9 need this
+     * separate step; folding the column into migrateToV9 alone would never run for them.
+     */
+    private fun migrateToV10(db: DbHandle) {
+        addColumnIfMissing(db, "consents", "last_granted_at", "INTEGER NOT NULL DEFAULT 0")
+    }
+
+    /**
+     * v15 — تتبع الحياة «حياتي»: عادات، ورد قرآني، صحة، مال، مزاج.
+     *
+     * جداول جديدة فقط؛ لا يتغير أي جدول قائم، فبيانات المستخدمين الحاليين تبقى كما هي.
+     * مفاتيح الأيام نصوص ISO (yyyy-MM-dd) في منطقة الجهاز، فيطابق مفتاح اليوم ما تعرضه
+     * الواجهة دون حسابات مناطق زمنية داخل قاعدة البيانات.
+     */
+    private fun migrateToV15(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS habits(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              archived INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS habit_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              habit_id INTEGER NOT NULL,
+              day TEXT NOT NULL,
+              done INTEGER NOT NULL DEFAULT 1,
+              UNIQUE(habit_id, day)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_habit_logs_habit_day ON habit_logs(habit_id, day)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS wird_settings(
+              id INTEGER PRIMARY KEY,
+              surah TEXT NOT NULL DEFAULT 'البقرة',
+              start_page INTEGER NOT NULL DEFAULT 2,
+              pages_per_day INTEGER NOT NULL DEFAULT 2
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS wird_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              day TEXT NOT NULL,
+              pages INTEGER NOT NULL,
+              surah TEXT NOT NULL DEFAULT 'البقرة',
+              logged_at INTEGER NOT NULL,
+              UNIQUE(day)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS health_logs(
+              day TEXT PRIMARY KEY,
+              weight REAL,
+              sleep_hours REAL,
+              water_cups INTEGER NOT NULL DEFAULT 0,
+              exercise_minutes INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS transactions(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              amount REAL NOT NULL,
+              category TEXT NOT NULL DEFAULT '',
+              note TEXT NOT NULL DEFAULT '',
+              day TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_transactions_day ON transactions(day)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS mood_logs(
+              day TEXT PRIMARY KEY,
+              mood INTEGER NOT NULL,
+              logged_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
+    /**
+     * v16 — اللياقة: ملف الجسم، سجل السعرات، سجل إتمام التمارين.
+     *
+     * جداول جديدة فقط؛ لا يتغير أي جدول قائم، فبيانات المستخدمين الحاليين تبقى كما هي.
+     */
+    private fun migrateToV16(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS fitness_profile(
+              id INTEGER PRIMARY KEY,
+              gender TEXT NOT NULL DEFAULT 'male',
+              age INTEGER NOT NULL DEFAULT 30,
+              height_cm REAL NOT NULL DEFAULT 170,
+              weight_kg REAL NOT NULL DEFAULT 70,
+              activity TEXT NOT NULL DEFAULT 'moderate',
+              goal TEXT NOT NULL DEFAULT 'maintain'
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS calorie_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              day TEXT NOT NULL,
+              name TEXT NOT NULL DEFAULT '',
+              calories INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_calorie_logs_day ON calorie_logs(day)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS exercise_logs(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              day TEXT NOT NULL,
+              exercise_id TEXT NOT NULL,
+              done INTEGER NOT NULL DEFAULT 1,
+              UNIQUE(day, exercise_id)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_exercise_logs_day ON exercise_logs(day)")
+    }
+
+    /**
+     * v17 — additive only: two new tables, no DROP and no ALTER of any existing table.
+     * user_profile keeps the display name as a single row (id = 1); support_messages
+     * keeps a local copy of every support/suggestion message so none is lost when the
+     * network is down — it is saved as «sending» before the POST and its status is
+     * updated to «sent»/«failed» from the result. Attached images are copied to
+     * filesDir/support_images and only their paths are stored here, never BLOBs.
+     */
+    private fun migrateToV17(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS user_profile(
+              id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL DEFAULT '',
+              updated_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS support_messages(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              user_name TEXT NOT NULL DEFAULT '',
+              sender_name TEXT NOT NULL DEFAULT '',
+              contact TEXT NOT NULL DEFAULT '',
+              body TEXT NOT NULL DEFAULT '',
+              image_paths TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'sending',
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_support_messages_created ON support_messages(created_at)")
+    }
+
+    /**
+     * v18 — assistant learning + persistent follow-ups. All four tables are
+     * local-only: none of them is in the sync contract (see SyncPayload), so
+     * the Windows desktop needs no schema change for v18.
+     */
+    private fun migrateToV18(db: DbHandle) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_memories(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              text TEXT NOT NULL,
+              category TEXT NOT NULL DEFAULT 'عام',
+              source TEXT NOT NULL DEFAULT 'chat',
+              confidence REAL NOT NULL DEFAULT 0.8,
+              use_count INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              last_used_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_interactions(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              detail TEXT NOT NULL DEFAULT '',
+              accepted INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_assistant_interactions_kind ON assistant_interactions(kind)")
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_profile(
+              key TEXT PRIMARY KEY,
+              text_value TEXT NOT NULL DEFAULT '',
+              real_value REAL,
+              confidence REAL NOT NULL DEFAULT 0.0,
+              samples INTEGER NOT NULL DEFAULT 0,
+              updated_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_followups(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              kind TEXT NOT NULL,
+              slot TEXT NOT NULL DEFAULT '',
+              day TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 1,
+              max_attempts INTEGER NOT NULL DEFAULT 5,
+              next_at INTEGER NOT NULL DEFAULT 0,
+              state TEXT NOT NULL DEFAULT 'active',
+              snooze_until INTEGER,
+              detail TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              UNIQUE(kind, slot, day)
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_assistant_followups_state ON assistant_followups(state, next_at)")
+    }
+
+    private fun addColumnIfMissing(
+        db: DbHandle,
+        table: String,
+        column: String,
+        definition: String
+    ) {
+        var exists = false
+        db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1) == column) {
+                    exists = true
+                    break
+                }
+            }
+        }
+        if (!exists) db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+    }
     }
 }

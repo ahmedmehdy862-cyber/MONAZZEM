@@ -134,6 +134,14 @@ dependencies {
     // (معرّفات الهوية أولًا) — AES256-SIV للمفاتيح + AES256-GCM للقيم،
     // والمفتاح الرئيسي في Android Keystore. مجاني، بلا خدمة، بلا إذن جديد.
     implementation("androidx.security:security-crypto:1.0.0")
+    // P-04 — SQLCipher لقاعدة البيانات أثناء السكون (ADR_002 «تم الاعتماد»،
+    // فرع sqlcipher-at-rest): تشفير AES-256 كامل لملف focus_study.db.
+    // 4.5.4 هو أحدث إصدار من هذه الحزمة على Maven Central (تحقق 2026-11-28)؛
+    // لا يوجد 4.6.x لهذه الحزمة (4.6.x أرقام نواة SQLCipher فقط)، والحزمة
+    // نفسها مهملة رسميًا لصالح sqlcipher-android — ترحيل مستقبلي موثق في
+    // ADR_002، لا في هذا الإصدار. المفتاح عشوائي في Keystore عبر
+    // DatabaseKeyManager؛ لا PIN ولا مفتاح في الكود.
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
     // 3D companion «منظم» (0.34.0): SceneView فوق Filament — العارض التصريحي
     // لـ Compose، خليفة Sceneform المدعوم. الاختيار مقابل Filament الخام:
     // Filament وحده يحتاج ModelViewer يدويًا بلا تكامل Compose ولا إدارة
