@@ -34,6 +34,15 @@ class AutoSyncStateTest {
         assertEquals(0L, state.lastAutoPullAt)
         assertEquals(0L, state.lastAutoPushAt)
         assertEquals(0L, state.lastLocalChangeAt)
+        assertEquals(0L, state.authFailedAt)
+    }
+
+    @Test fun authFailureTimestampIsDurable() {
+        val state = AutoSyncState.get(context)
+        state.authFailedAt = 123_456L
+        assertEquals(123_456L, AutoSyncState.get(context).authFailedAt)
+        state.authFailedAt = 0L
+        assertEquals(0L, AutoSyncState.get(context).authFailedAt)
     }
 
     @Test fun recordLocalChangeMarksPendingWithTimestamp() {

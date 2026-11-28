@@ -61,7 +61,7 @@ class SyncClientRegisterTest {
     fun linksExistingAccountWithSamePassphrase() {
         scripted.add(401 to """{"error":"invalid_credentials"}""")
         scripted.add(200 to """{"ok":true}""")
-        val outcome = client().register(profileId, passphrase)
+        val outcome = client().register(profileId, passphrase).outcome
         assertTrue(outcome is SyncOutcome.Ok)
         assertEquals(2, requests.size)
         // المحاولة الأولى بلا currentPassphrase أصلًا (kotlinx-serialization
@@ -74,17 +74,27 @@ class SyncClientRegisterTest {
 
     @Test
     fun newAccountRegistersOnFirstAttempt() {
-        scripted.add(200 to """{"ok":true}""")
-        val outcome = client().register(profileId, passphrase)
-        assertTrue(outcome is SyncOutcome.Ok)
+        scripted.add(200 to """{"ok":true,"created":true}""")
+        val result = client().register(profileId, passphrase)
+        assertTrue(result.outcome is SyncOutcome.Ok)
+        assertTrue(result.created)
         assertEquals(1, requests.size)
+    }
+
+    @Test
+    fun existingAccountLinkReportsNotCreated() {
+        scripted.add(401 to """{"error":"invalid_credentials"}""")
+        scripted.add(200 to """{"ok":true,"created":false}""")
+        val result = client().register(profileId, passphrase)
+        assertTrue(result.outcome is SyncOutcome.Ok)
+        assertFalse(result.created)
     }
 
     @Test
     fun wrongPassphraseFailsBothAttempts() {
         scripted.add(401 to """{"error":"invalid_credentials"}""")
         scripted.add(401 to """{"error":"invalid_credentials"}""")
-        val outcome = client().register(profileId, "كلمة-مرور-خاطئة-123")
+        val outcome = client().register(profileId, "كلمة-مرور-خاطئة-123").outcome
         assertTrue(outcome is SyncOutcome.Error)
         assertEquals("بيانات الدخول غير صحيحة", (outcome as SyncOutcome.Error).message)
         assertEquals(2, requests.size)
@@ -93,18 +103,71 @@ class SyncClientRegisterTest {
     @Test
     fun unknownProfileDoesNotRetry() {
         scripted.add(403 to """{"error":"profile_unknown"}""")
-        val outcome = client().register(profileId, passphrase)
+        val outcome = client().register(profileId, passphrase).outcome
         assertTrue(outcome is SyncOutcome.Error)
         assertEquals("هذا الحساب غير معروف على الخادم", (outcome as SyncOutcome.Error).message)
         assertEquals(1, requests.size)
     }
 
     @Test
-    fun explicitCurrentPassphraseIsNotRetried() {
-        scripted.add(401 to """{"error":"invalid_credentials"}""")
-        val outcome = client().register(profileId, passphrase, currentPassphrase = "كلمة-قديمة-123456")
-        assertTrue(outcome is SyncOutcome.Error)
+    fun changePassphraseSendsCurrentAndNew() {
+        scripted.add(200 to """{"ok":true}""")
+        val outcome = client().changePassphrase(profileId, "كلمة-قديمة-123456", passphrase)
+        assertTrue(outcome is SyncOutcome.Ok)
         assertEquals(1, requests.size)
+        assertTrue(requests[0].contains("\"action\":\"changePassphrase\""))
         assertTrue(requests[0].contains("\"currentPassphrase\":\"كلمة-قديمة-123456\""))
+        assertTrue(requests[0].contains("\"passphrase\":\"$passphrase\""))
+    }
+
+    @Test
+    fun changePassphraseRejectsWrongCurrent() {
+        scripted.add(401 to """{"error":"invalid_credentials"}""")
+        val outcome = client().changePassphrase(profileId, "كلمة-خاطئة-123456", passphrase)
+        assertTrue(outcome is SyncOutcome.Error)
+        assertEquals(401, (outcome as SyncOutcome.Error).status)
+    }
+
+    @Test
+    fun setRecoveryCodeSendsNormalizedCode() {
+        scripted.add(200 to """{"ok":true}""")
+        val code = "abcd-efgh-jkmn-pqrs-tuvw-xyz2-3456-789a"
+        val outcome = client().setRecoveryCode(profileId, passphrase, code)
+        assertTrue(outcome is SyncOutcome.Ok)
+        assertTrue(requests[0].contains("\"action\":\"setRecoveryCode\""))
+        assertTrue(requests[0].contains("\"recoveryCode\":\"ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456-789A\""))
+    }
+
+    @Test
+    fun resetWithRecoveryCodeSendsCodeWithoutPassphrase() {
+        scripted.add(200 to """{"ok":true}""")
+        val outcome = client().resetWithRecoveryCode(profileId, "ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456-789A")
+        assertTrue(outcome is SyncOutcome.Ok)
+        assertTrue(requests[0].contains("\"action\":\"reset\""))
+        assertTrue(requests[0].contains("\"recoveryCode\":\"ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456-789A\""))
+    }
+
+    @Test
+    fun resetWithBadCodeFormatFailsLocally() {
+        val outcome = client().resetWithRecoveryCode(profileId, "short")
+        assertTrue(outcome is SyncOutcome.Error)
+        assertEquals(0, requests.size)
+    }
+
+    @Test
+    fun pushSendsBaseRevisionAndSurfacesStaleRevision() {
+        scripted.add(409 to """{"error":"stale_revision","revision":7}""")
+        val outcome = client().push(profileId, passphrase, SyncData(), baseRevision = 3L)
+        assertTrue(outcome is SyncOutcome.Error)
+        assertEquals(409, (outcome as SyncOutcome.Error).status)
+        assertTrue(requests[0].contains("\"baseRevision\":3"))
+    }
+
+    @Test
+    fun pushWithoutBaseRevisionOmitsTheField() {
+        scripted.add(200 to """{"revision":1,"updatedAt":0,"data":{}}""")
+        val outcome = client().push(profileId, passphrase, SyncData())
+        assertTrue(outcome is SyncOutcome.Ok)
+        assertFalse(requests[0].contains("baseRevision"))
     }
 }

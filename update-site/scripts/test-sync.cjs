@@ -50,14 +50,40 @@ function makeRes() {
 }
 
 function makeMockStore() {
-  const accounts = new Map();
+  const accounts = new Map(); // pid -> { pass, recoverySalt, recoveryHash }
   const syncs = new Map();
   return {
     normalizeProfileId: real.normalizeProfileId,
     validatePassphrase: real.validatePassphrase,
+    normalizeRecoveryCode: real.normalizeRecoveryCode,
     hasAccount: async (pid) => accounts.has(pid),
-    authenticate: async (pid, pass) => accounts.get(pid) === pass,
-    setAccount: async (pid, pass) => { accounts.set(pid, pass); },
+    authenticate: async (pid, pass) => accounts.get(pid)?.pass === pass,
+    setAccount: async (pid, pass) => {
+      const prev = accounts.get(pid) || {};
+      accounts.set(pid, { ...prev, pass });
+    },
+    setRecoveryCode: async (pid, code) => {
+      const rec = accounts.get(pid);
+      if (!rec) return false;
+      const { salt, hash } = real.hashPassphrase(real.normalizeRecoveryCode(code));
+      accounts.set(pid, { ...rec, recoverySalt: salt, recoveryHash: hash });
+      return true;
+    },
+    verifyRecoveryCode: async (pid, code) => {
+      const rec = accounts.get(pid);
+      if (!rec || !rec.recoverySalt || !rec.recoveryHash) {
+        real.hashPassphrase("dummy-recovery-code-00000000000000");
+        return false;
+      }
+      return real.verifyPassphrase(real.normalizeRecoveryCode(code), rec.recoverySalt, rec.recoveryHash);
+    },
+    clearRecoveryHash: async (pid) => {
+      const rec = accounts.get(pid);
+      if (rec) accounts.set(pid, { pass: rec.pass });
+    },
+    removeAccount: async (pid) => { accounts.delete(pid); },
+    removeSync: async (pid) => { syncs.delete(pid); },
+    maybePruneOrphanedSnapshots: async () => 0,
     readSync: async (pid) => syncs.get(pid) || {
       revision: 0, updatedAt: 0, data: real.normalizeSyncPayload({}),
     },
@@ -72,9 +98,17 @@ function makeHandler(store, limiter = realRate.createLimiter()) {
   return loadMocked("api/sync.js", {
     "../lib/sync-store": store,
     "../lib/messaging-store": { readUsers: async () => [{ profileId: PID_A }, { profileId: PID_B }] },
-    "../lib/sync-rate-limit": { limiter },
+    "../lib/sync-rate-limit": {
+      limiter,
+      createLimiter: realRate.createLimiter,
+      RESET_DAILY_WINDOW_MS: realRate.RESET_DAILY_WINDOW_MS,
+      RESET_DAILY_LIMIT: realRate.RESET_DAILY_LIMIT,
+    },
   });
 }
+
+// 32 unambiguous characters (no 0/O/1/I/L), shown grouped in eights of four.
+const CODE_A = "ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456-789A";
 
 function post(handler, body, headers = {}) {
   const res = makeRes();
@@ -271,12 +305,12 @@ async function main() {
     const store = makeMockStore();
     const handler = makeHandler(store);
     assert.equal((await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A })).statusCode, 200);
-    assert.equal(store._accounts.get(PID_A), PASS_A);
+    assert.equal(store._accounts.get(PID_A).pass, PASS_A);
     assert.equal((await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_B })).statusCode, 401);
     assert.equal((await post(handler, {
       action: "register", profileId: PID_A, passphrase: PASS_B, currentPassphrase: PASS_A,
     })).statusCode, 200);
-    assert.equal(store._accounts.get(PID_A), PASS_B);
+    assert.equal(store._accounts.get(PID_A).pass, PASS_B);
   });
 
   await test("push and pull require credentials and keep accounts isolated", async () => {
@@ -362,6 +396,171 @@ async function main() {
       action: "register", profileId: PID_A, passphrase: PASS_A,
     }, { "x-forwarded-for": "203.0.113.8" });
     assert.equal(other.statusCode, 200);
+  });
+
+  await test("register reports created only on first activation", async () => {
+    const handler = makeHandler(makeMockStore());
+    const first = await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.body.created, true);
+    const second = await post(handler, {
+      action: "register", profileId: PID_A, passphrase: PASS_A, currentPassphrase: PASS_A,
+    });
+    assert.equal(second.statusCode, 200);
+    assert.equal(second.body.created, false);
+  });
+
+  await test("changePassphrase swaps the secret only with the current one", async () => {
+    const audit = require("../lib/sync-audit");
+    audit.clear();
+    const handler = makeHandler(makeMockStore());
+    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    assert.equal((await post(handler, {
+      action: "changePassphrase", profileId: PID_A, passphrase: PASS_B,
+    })).statusCode, 401);
+    assert.equal((await post(handler, {
+      action: "changePassphrase", profileId: PID_A, passphrase: PASS_B, currentPassphrase: "wrong passphrase",
+    })).statusCode, 401);
+    assert.equal((await post(handler, {
+      action: "changePassphrase", profileId: PID_A, passphrase: PASS_A, currentPassphrase: PASS_A,
+    })).statusCode, 400);
+    assert.equal((await post(handler, {
+      action: "changePassphrase", profileId: PID_A, passphrase: PASS_B, currentPassphrase: PASS_A,
+    })).statusCode, 200);
+    assert.equal((await post(handler, { action: "pull", profileId: PID_A, passphrase: PASS_A })).statusCode, 401);
+    assert.equal((await post(handler, { action: "pull", profileId: PID_A, passphrase: PASS_B })).statusCode, 200);
+    assert.equal((await post(handler, {
+      action: "changePassphrase", profileId: UNKNOWN, passphrase: PASS_B, currentPassphrase: PASS_A,
+    })).statusCode, 401);
+    assert.ok(audit.list().some((item) => item.event === "change_passphrase" && item.ok === true));
+  });
+
+  await test("push honours baseRevision and refuses a stale base", async () => {
+    const handler = makeHandler(makeMockStore());
+    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    const first = await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A, baseRevision: 0,
+      data: { tasks: [{ id: "1", title: "مهمة", updatedAt: 1000 }] },
+    });
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.body.revision, 1);
+    const stale = await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A, baseRevision: 0,
+      data: { tasks: [{ id: "2", title: "أخرى", updatedAt: 1000 }] },
+    });
+    assert.equal(stale.statusCode, 409);
+    assert.equal(stale.body.error, "stale_revision");
+    assert.equal(stale.body.revision, 1);
+    const mine = await post(handler, { action: "pull", profileId: PID_A, passphrase: PASS_A });
+    assert.equal(mine.body.data.tasks.length, 1);
+    assert.equal((await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A, baseRevision: 1,
+      data: { tasks: [{ id: "2", title: "أخرى", updatedAt: 1000 }] },
+    })).statusCode, 200);
+    assert.equal((await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A, baseRevision: "x", data: {},
+    })).statusCode, 400);
+    // No baseRevision at all stays accepted (older clients).
+    assert.equal((await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A, data: {},
+    })).statusCode, 200);
+  });
+
+  await test("recovery code unlocks a reset exactly once", async () => {
+    const handler = makeHandler(makeMockStore());
+    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    assert.equal((await post(handler, {
+      action: "setRecoveryCode", profileId: PID_A, passphrase: "wrong passphrase", recoveryCode: CODE_A,
+    })).statusCode, 401);
+    assert.equal((await post(handler, {
+      action: "setRecoveryCode", profileId: PID_A, passphrase: PASS_A, recoveryCode: "short",
+    })).statusCode, 400);
+    assert.equal((await post(handler, {
+      action: "setRecoveryCode", profileId: PID_A, passphrase: PASS_A, recoveryCode: CODE_A,
+    })).statusCode, 200);
+    await post(handler, {
+      action: "push", profileId: PID_A, passphrase: PASS_A,
+      data: { tasks: [{ id: "1", title: "مهمة", updatedAt: 1000 }] },
+    });
+    const wrong = await post(handler, {
+      action: "reset", profileId: PID_A, recoveryCode: "ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456-789B",
+    });
+    assert.equal(wrong.statusCode, 401);
+    assert.equal(wrong.body.error, "invalid_recovery_code");
+    assert.equal((await post(handler, { action: "pull", profileId: PID_A, passphrase: PASS_A })).statusCode, 200);
+    assert.equal((await post(handler, {
+      action: "reset", profileId: PID_A, recoveryCode: CODE_A,
+    })).statusCode, 200);
+    assert.equal((await post(handler, { action: "pull", profileId: PID_A, passphrase: PASS_A })).statusCode, 401);
+    // Single-use: the same code no longer works, and an unknown profile gets the
+    // identical answer, so a wrong code never reveals whether the account exists.
+    const reuse = await post(handler, { action: "reset", profileId: PID_A, recoveryCode: CODE_A });
+    assert.equal(reuse.statusCode, 401);
+    assert.equal(reuse.body.error, "invalid_recovery_code");
+    const unknown = await post(handler, { action: "reset", profileId: UNKNOWN, recoveryCode: CODE_A });
+    assert.equal(unknown.statusCode, 401);
+    assert.deepEqual(unknown.body, reuse.body);
+  });
+
+  await test("reset is capped per account per day and per IP", async () => {
+    const handler = makeHandler(makeMockStore());
+    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    await post(handler, {
+      action: "setRecoveryCode", profileId: PID_A, passphrase: PASS_A, recoveryCode: CODE_A,
+    });
+    for (let i = 0; i < realRate.RESET_DAILY_LIMIT; i += 1) {
+      assert.equal((await post(handler, {
+        action: "reset", profileId: PID_A, recoveryCode: "ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456-789B",
+      })).statusCode, 401);
+    }
+    assert.equal((await post(handler, {
+      action: "reset", profileId: PID_A, recoveryCode: "ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456-789B",
+    })).statusCode, 429);
+    const headers = { "x-forwarded-for": "203.0.113.9" };
+    for (let i = 0; i < realRate.LIMITS.reset; i += 1) {
+      const pid = `40000000-0000-4000-8000-0000000000${String(i).padStart(2, "0")}`;
+      assert.equal((await post(handler, { action: "reset", profileId: pid, recoveryCode: CODE_A }, headers)).statusCode, 401);
+    }
+    assert.equal((await post(handler, {
+      action: "reset", profileId: UNKNOWN, recoveryCode: CODE_A,
+    }, headers)).statusCode, 429);
+  });
+
+  await test("orphaned snapshots are pruned only after two years", async () => {
+    const now = Date.now();
+    const oldOrphan = "focus-study/web-sync-50000000-0000-4000-8000-000000000001.json";
+    const selected = real.selectOrphanSnapshots([
+      { path: oldOrphan, uploadedAt: now - real.ORPHAN_RETENTION_MS - 1000 },
+      { path: `focus-study/web-sync-${PID_A}.json`, uploadedAt: now - real.ORPHAN_RETENTION_MS - 1000 },
+      { path: "focus-study/web-sync-60000000-0000-4000-8000-000000000002.json", uploadedAt: now - 1000 },
+      { path: "focus-study/other.json", uploadedAt: 0 },
+      { path: "focus-study/web-sync-70000000-0000-4000-8000-000000000003.json" },
+    ], [PID_A], now);
+    assert.deepEqual(selected, [oldOrphan]);
+    const deleted = [];
+    const pruned = await real.pruneOrphanedSnapshots(now, {
+      listBlobs: async () => [{ path: oldOrphan, uploadedAt: now - real.ORPHAN_RETENTION_MS - 1000 }],
+      deleteBlob: async (blobPath) => { deleted.push(blobPath); },
+    });
+    assert.equal(pruned, 1);
+    assert.deepEqual(deleted, [oldOrphan]);
+  });
+
+  await test("audit log records security actions without secrets", async () => {
+    const audit = require("../lib/sync-audit");
+    audit.clear();
+    const handler = makeHandler(makeMockStore());
+    await post(handler, { action: "register", profileId: PID_A, passphrase: PASS_A });
+    await post(handler, {
+      action: "setRecoveryCode", profileId: PID_A, passphrase: PASS_A, recoveryCode: CODE_A,
+    });
+    await post(handler, { action: "reset", profileId: PID_A, recoveryCode: "short" });
+    const events = audit.list();
+    assert.ok(events.some((item) => item.event === "recovery_code_set" && item.ok === true));
+    assert.ok(events.some((item) => item.event === "reset_failed" && item.ok === false));
+    assert.equal(JSON.stringify(events).includes(PID_A), false);
+    assert.equal(JSON.stringify(events).includes(CODE_A), false);
+    assert.ok(events.every((item) => Object.keys(item).sort().join(",") === "at,event,ok"));
   });
 
   await test("only POST is accepted and every answer is no-store", async () => {

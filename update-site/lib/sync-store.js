@@ -15,6 +15,15 @@ const SALT_BYTES = 16;
 const KEY_BYTES = 64;
 const PASSWORD_MIN = 10;
 const PASSWORD_MAX = 200;
+// Recovery codes (design §3.3): 32 characters from an unambiguous alphabet (no 0/O,
+// 1/I/L), shown grouped in eights of four. A code is single-use: its scrypt hash is
+// cleared the moment it is accepted, and a new code must be set afterwards.
+const RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const RECOVERY_CODE_PATTERN = /^[A-HJ-KM-NP-Z2-9]{32}$/;
+// Orphaned sealed snapshots (design §6 decision 4): a snapshot whose account no longer
+// exists is deleted after two years of inactivity, checked at most once a day.
+const ORPHAN_RETENTION_MS = 2 * 365 * 24 * 60 * 60 * 1000;
+const ORPHAN_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const TASK_CATEGORIES = new Set(["study", "university", "personal", "work", "habits", "other"]);
 const TASK_STATUSES = new Set(["todo", "doing", "done", "postponed", "cancelled"]);
@@ -231,6 +240,12 @@ function validatePassphrase(value) {
   return text.trim().length >= PASSWORD_MIN && text.length <= PASSWORD_MAX ? text : "";
 }
 
+/** Strips grouping dashes/spaces and upper-cases; "" when the code cannot be valid. */
+function normalizeRecoveryCode(value) {
+  const text = String(value ?? "").replace(/[-\s]/g, "").toUpperCase();
+  return RECOVERY_CODE_PATTERN.test(text) ? text : "";
+}
+
 function hashPassphrase(passphrase) {
   const salt = crypto.randomBytes(SALT_BYTES).toString("base64");
   const hash = crypto.scryptSync(passphrase, Buffer.from(salt, "base64"), KEY_BYTES).toString("base64");
@@ -330,6 +345,55 @@ async function authenticate(profileId, passphrase) {
   return verifyPassphrase(passphrase, account.salt, account.hash);
 }
 
+/** Stores the scrypt hash of a recovery code (never the code itself). False when invalid or unknown. */
+async function setRecoveryCode(profileId, code) {
+  const normalized = normalizeRecoveryCode(code);
+  if (!normalized) return false;
+  const accounts = await readAccounts();
+  if (!accounts.some((item) => item.profileId === profileId)) return false;
+  const { salt, hash } = hashPassphrase(normalized);
+  const next = accounts.map((item) => (item.profileId === profileId
+    ? { ...item, recoverySalt: salt, recoveryHash: hash, updatedAt: Date.now() }
+    : item));
+  await writeJson(ACCOUNTS_PATH, { accounts: next.slice(0, MAX_ACCOUNTS) });
+  return true;
+}
+
+/** Single-use check: true only for the current code of an existing account. */
+async function verifyRecoveryCode(profileId, code) {
+  const normalized = normalizeRecoveryCode(code);
+  const accounts = await readAccounts();
+  const account = accounts.find((item) => item.profileId === profileId);
+  // Same dummy work as authenticate() on a missing account/code so the response cannot
+  // be timed apart from a wrong code.
+  if (!account || !account.recoverySalt || !account.recoveryHash || !normalized) {
+    hashPassphrase("dummy-recovery-code-00000000000000");
+    return false;
+  }
+  return verifyPassphrase(normalized, account.recoverySalt, account.recoveryHash);
+}
+
+/** Clears a recovery-code hash (after use, or when the code is replaced). */
+async function clearRecoveryHash(profileId) {
+  const accounts = await readAccounts();
+  const next = accounts.map((item) => {
+    if (item.profileId !== profileId) return item;
+    const copy = { ...item };
+    delete copy.recoverySalt;
+    delete copy.recoveryHash;
+    return copy;
+  });
+  await writeJson(ACCOUNTS_PATH, { accounts: next.slice(0, MAX_ACCOUNTS) });
+}
+
+/** Deletes the account record (and, via removeSync, its snapshot) for a reset. */
+async function removeAccount(profileId) {
+  const accounts = await readAccounts();
+  await writeJson(ACCOUNTS_PATH, {
+    accounts: accounts.filter((item) => item.profileId !== profileId).slice(0, MAX_ACCOUNTS),
+  });
+}
+
 const syncPathFor = (profileId) => `${SYNC_PREFIX}${profileId}.json`;
 
 async function readSync(profileId) {
@@ -345,9 +409,105 @@ async function writeSync(profileId, record) {
   await writeJson(syncPathFor(profileId), record);
 }
 
+async function deleteSyncBlob(blobPath) {
+  const token = storageToken(ACCESS);
+  if (token) {
+    const { del } = await import("@vercel/blob");
+    await del(blobPath, { token });
+    return;
+  }
+  try {
+    fs.unlinkSync(path.join(LOCAL_DIR, path.basename(blobPath)));
+  } catch {
+    // Already gone in local mode.
+  }
+}
+
+/** Deletes one account's snapshot (reset path, or orphan pruning below). */
+async function removeSync(profileId) {
+  await deleteSyncBlob(syncPathFor(profileId));
+}
+
+/**
+ * Pure orphan decision: a snapshot is orphaned when its account is gone and its last
+ * upload predates the two-year retention cutoff. Paths outside the sync prefix, and
+ * snapshots without a usable upload time, are never selected.
+ */
+function selectOrphanSnapshots(blobs, accountIds, now) {
+  const active = new Set(accountIds);
+  const cutoff = (cleanTime(now) || Date.now()) - ORPHAN_RETENTION_MS;
+  const doomed = [];
+  for (const blob of blobs || []) {
+    if (!blob || typeof blob.path !== "string") continue;
+    if (!blob.path.startsWith(SYNC_PREFIX) || !blob.path.endsWith(".json")) continue;
+    const profileId = blob.path.slice(SYNC_PREFIX.length, -5);
+    if (!profileId || active.has(profileId)) continue;
+    const uploadedAt = cleanTime(blob.uploadedAt);
+    if (uploadedAt && uploadedAt < cutoff) doomed.push(blob.path);
+  }
+  return doomed;
+}
+
+async function listSyncBlobs() {
+  const token = storageToken(ACCESS);
+  if (token) {
+    const { list } = await import("@vercel/blob");
+    const result = await list({ prefix: SYNC_PREFIX, token });
+    return (result.blobs || []).map((item) => ({
+      path: item.pathname,
+      uploadedAt: new Date(item.uploadedAt).getTime(),
+    }));
+  }
+  try {
+    const localPrefix = path.basename(SYNC_PREFIX);
+    return fs.readdirSync(LOCAL_DIR)
+      .filter((name) => name.startsWith(localPrefix) && name.endsWith(".json"))
+      .map((name) => ({
+        path: SYNC_PREFIX + name.slice(localPrefix.length),
+        uploadedAt: fs.statSync(path.join(LOCAL_DIR, name)).mtimeMs,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** Deletes orphaned snapshots older than the retention cutoff; returns how many. */
+async function pruneOrphanedSnapshots(now = Date.now(), deps = {}) {
+  const listBlobs = deps.listBlobs || listSyncBlobs;
+  const deleteBlob = deps.deleteBlob || deleteSyncBlob;
+  const blobs = await listBlobs();
+  const accounts = await readAccounts();
+  const doomed = selectOrphanSnapshots(blobs, accounts.map((item) => item.profileId), now);
+  for (const blobPath of doomed) {
+    try {
+      await deleteBlob(blobPath);
+    } catch (error) {
+      console.error("sync orphan prune failed", blobPath, error?.message || "unknown");
+    }
+  }
+  return doomed.length;
+}
+
+let lastOrphanPruneAt = 0;
+
+/** Best-effort daily orphan sweep; never throws and never blocks a sync request. */
+async function maybePruneOrphanedSnapshots(now = Date.now()) {
+  if (now - lastOrphanPruneAt < ORPHAN_PRUNE_INTERVAL_MS) return 0;
+  lastOrphanPruneAt = now;
+  try {
+    return await pruneOrphanedSnapshots(now);
+  } catch (error) {
+    console.error("sync orphan prune failed", error?.message || "unknown");
+    return 0;
+  }
+}
+
 module.exports = {
   COLLECTIONS, PASSWORD_MIN, PASSWORD_MAX, MAX_RECORDS,
+  RECOVERY_ALPHABET, ORPHAN_RETENTION_MS,
   normalizeProfileId, validatePassphrase, hashPassphrase, verifyPassphrase,
+  normalizeRecoveryCode, setRecoveryCode, verifyRecoveryCode, clearRecoveryHash,
   normalizeSyncPayload, mergeSync, readAccounts, hasAccount, setAccount,
-  authenticate, readSync, writeSync,
+  authenticate, removeAccount, readSync, writeSync, removeSync,
+  selectOrphanSnapshots, pruneOrphanedSnapshots, maybePruneOrphanedSnapshots,
 };

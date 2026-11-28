@@ -121,10 +121,16 @@ data class SyncRequest(
     val passphrase: String,
     val data: SyncData? = null,
     val currentPassphrase: String? = null,
+    val recoveryCode: String? = null,
+    /** Re-seal guard (design §2.2, Option A): refuse unless the server revision still matches. */
+    val baseRevision: Long? = null,
 )
 
 @Serializable
-data class RegisterResponse(val ok: Boolean = false)
+data class RegisterResponse(val ok: Boolean = false, val created: Boolean = false)
+
+/** The outcome of a link/activation, plus whether the account was created by this call. */
+data class LinkResult(val outcome: SyncOutcome, val created: Boolean)
 
 @Serializable
 data class SyncStamp(val fingerprint: String, val updatedAt: Long, val deleted: Boolean = false)
@@ -146,36 +152,104 @@ class SyncClient(
         .build()
 
     /**
-     * التسجيل الأول ينشئ الحساب؛ وتغيير كلمة المرور يتطلب الحالية.
+     * الربط بحساب موجود — بكلمة مروره الحالية فقط، أبدًا بكلمة مختلفة.
      *
      * إصلاح جذري لمسار الربط: الخادم (`update-site/api/sync.js`) يرفض
      * `register` لحساب موجود بلا `currentPassphrase` صحيح (401) — وأندرويد
      * لا يقع فيه لأنه يسجّل مرة واحدة عند إنشاء الحساب، بينما ويندوز
      * يستدعي `register` عند كل ربط. فربط ويندوز الأول لحساب سُجّل من
-     * الهاتف كان يفشل بكلمة المرور الصحيحة نفسها إن تُرك حقل «الحالية»
-     * فارغًا. لذلك: عند 401 بلا current تُعاد المحاولة مرة واحدة
-     * بـ currentPassphrase = passphrase نفسها — أي «اربط بالحساب الموجود
-     * بكلمة مروره الحالية»؛ وتثبيت نفس القيمة عبر setAccount لا يغيّرها.
-     * كلمة مرور خاطئة تفشل في المحاولتين معًا، وحساب جديد ينجح من الأولى.
+     * الهاتف كان يفشل بكلمة المرور الصحيحة نفسها. لذلك: عند 401 تُعاد
+     * المحاولة مرة واحدة بـ currentPassphrase = passphrase نفسها — أي
+     * «اربط بالحساب الموجود بكلمة مروره الحالية»؛ وتثبيت نفس القيمة عبر
+     * setAccount لا يغيّرها. كلمة مرور خاطئة تفشل في المحاولتين معًا،
+     * وحساب جديد ينجح من الأولى.
+     *
+     * تغيير كلمة المرور له مسار مخصص ([changePassphrase] + إعادة ختم) —
+     * لا يمر من هنا أبدًا: إدخال كلمة جديدة في شاشة الدخول كان يغيّر
+     * تجزئة المصادقة بلا إعادة ختم، فيكسر قراءة النسخة متى صارت مشفّرة
+     * (v2، التصميم §2.3). لذلك لا يقبل `register` كلمة حالية مختلفة.
      */
-    fun register(profileId: String, passphrase: String, currentPassphrase: String? = null): SyncOutcome {
-        val first = registerAttempt(profileId, passphrase, currentPassphrase)
-        if (first is SyncOutcome.Error && first.status == 401 && currentPassphrase == null) {
+    fun register(profileId: String, passphrase: String): LinkResult {
+        val first = registerAttempt(profileId, passphrase, null)
+        if (first is SyncOutcome.Error && first.status == 401) {
             return registerAttempt(profileId, passphrase, passphrase)
         }
         return first
     }
 
-    private fun registerAttempt(profileId: String, passphrase: String, currentPassphrase: String?): SyncOutcome {
+    private fun registerAttempt(profileId: String, passphrase: String, currentPassphrase: String?): LinkResult {
         val body = json.encodeToString(
             SyncRequest("register", profileId, passphrase, currentPassphrase = currentPassphrase)
+        )
+        return when (val result = post(body)) {
+            is PostResult.Ok -> {
+                val response = runCatching {
+                    json.decodeFromString<RegisterResponse>(result.body)
+                }.getOrDefault(RegisterResponse(false))
+                if (response.ok) LinkResult(SyncOutcome.Ok(null), response.created)
+                else LinkResult(SyncOutcome.Error("تعذّر ربط الحساب"), false)
+            }
+            is PostResult.Failed -> LinkResult(SyncOutcome.Error(result.message, result.status), false)
+        }
+    }
+
+    /**
+     * تغيير كلمة المرور (التصميم §2.2، الخيار أ): يبدّل تجزئة المصادقة على
+     * الخادم فقط. المتصل يحدّث الخزنة بعد النجاح — لا قبله أبدًا — ثم يعيد
+     * الختم عبر [SyncService.reseal]. كلمة جديدة بلا الحالية تُرفض بـ 401.
+     */
+    fun changePassphrase(profileId: String, currentPassphrase: String, newPassphrase: String): SyncOutcome {
+        val body = json.encodeToString(
+            SyncRequest(
+                "changePassphrase", profileId, newPassphrase,
+                currentPassphrase = currentPassphrase,
+            )
         )
         return when (val result = post(body)) {
             is PostResult.Ok -> {
                 val ok = runCatching {
                     json.decodeFromString<RegisterResponse>(result.body).ok
                 }.getOrDefault(false)
-                if (ok) SyncOutcome.Ok(null) else SyncOutcome.Error("تعذّر ربط الحساب")
+                if (ok) SyncOutcome.Ok(null) else SyncOutcome.Error("تعذّر تغيير كلمة المرور")
+            }
+            is PostResult.Failed -> SyncOutcome.Error(result.message, result.status)
+        }
+    }
+
+    /** يخزّن تجزئة scrypt لكود استرداد على الخادم؛ الكود نفسه لا يُخزَّن أبدًا. */
+    fun setRecoveryCode(profileId: String, passphrase: String, code: String): SyncOutcome {
+        val normalized = SyncRecoveryCode.normalize(code)
+        if (normalized.isEmpty()) return SyncOutcome.Error("كود الاسترداد غير صحيح الصيغة")
+        val body = json.encodeToString(
+            SyncRequest("setRecoveryCode", profileId, passphrase, recoveryCode = normalized)
+        )
+        return when (val result = post(body)) {
+            is PostResult.Ok -> {
+                val ok = runCatching {
+                    json.decodeFromString<RegisterResponse>(result.body).ok
+                }.getOrDefault(false)
+                if (ok) SyncOutcome.Ok(null) else SyncOutcome.Error("تعذّر حفظ كود الاسترداد")
+            }
+            is PostResult.Failed -> SyncOutcome.Error(result.message, result.status)
+        }
+    }
+
+    /**
+     * استرداد بكود لمرة واحدة (التصميم §3.2): عند النجاح حذف الخادم الحساب
+     * ونسخته، فيعيد المتصل التسجيل بكلمة جديدة ويرفع بيانات هذا الجهاز.
+     */
+    fun resetWithRecoveryCode(profileId: String, code: String): SyncOutcome {
+        val normalized = SyncRecoveryCode.normalize(code)
+        if (normalized.isEmpty()) return SyncOutcome.Error("كود الاسترداد غير صحيح الصيغة")
+        val body = json.encodeToString(
+            SyncRequest("reset", profileId, "", recoveryCode = normalized)
+        )
+        return when (val result = post(body)) {
+            is PostResult.Ok -> {
+                val ok = runCatching {
+                    json.decodeFromString<RegisterResponse>(result.body).ok
+                }.getOrDefault(false)
+                if (ok) SyncOutcome.Ok(null) else SyncOutcome.Error("تعذّر الاسترداد")
             }
             is PostResult.Failed -> SyncOutcome.Error(result.message, result.status)
         }
@@ -192,9 +266,15 @@ class SyncClient(
         }
     }
 
-    /** نجاح الـ push يرجع اللقطة المدموجة (مع revision) لا علامة ok. */
-    fun push(profileId: String, passphrase: String, data: SyncData): SyncOutcome {
-        val body = json.encodeToString(SyncRequest("push", profileId, passphrase, data = data))
+    /**
+     * نجاح الـ push يرجع اللقطة المدموجة (مع revision) لا علامة ok.
+     * `baseRevision` حارس إعادة الختم (التصميم §2.2): يرفض الخادم بـ 409
+     * إن تغيّرت المراجعة منذ أن قرأها العميل، فيعيد العميل السحب والمحاولة.
+     */
+    fun push(profileId: String, passphrase: String, data: SyncData, baseRevision: Long? = null): SyncOutcome {
+        val body = json.encodeToString(
+            SyncRequest("push", profileId, passphrase, data = data, baseRevision = baseRevision)
+        )
         return when (val result = post(body)) {
             is PostResult.Ok -> runCatching {
                 SyncOutcome.Ok(json.decodeFromString<SyncSnapshot>(result.body))
@@ -226,6 +306,7 @@ class SyncClient(
         return PostResult.Failed(
             when {
                 response.statusCode() == 401 -> "بيانات الدخول غير صحيحة"
+                response.statusCode() == 409 -> "تعارض في المراجعة — تغيّرت النسخة على الخادم؛ أعد المحاولة"
                 response.statusCode() == 429 -> "محاولات كثيرة — أعد المحاولة بعد قليل"
                 response.statusCode() == 503 -> "خدمة المزامنة غير متاحة الآن"
                 error.contains("profile_unknown") -> "هذا الحساب غير معروف على الخادم"
@@ -304,7 +385,18 @@ object SyncPayload {
         return fields
     }
 
-    fun build(repo: DesktopRepository, tracked: Map<String, SyncStamp>, nowInput: Long): Built {
+    /**
+     * مع `forceRefresh` يُعاد ختم كل سجل حي بـ `now` حتى لو لم يتغير محتواه — خطوة
+     * إعادة الختم عند تغيير كلمة المرور (التصميم §2.2، الخيار أ). على v1 السجلات
+     * نص صريح فالرفع يعيد تأكيدها فقط، لكن قاعدة الدمج في الخادم تُبقي الصف
+     * المخزَّن عند تساوي الطابع الزمني، فبلا الرفع يُسقَط إعادة الختم بصمت.
+     */
+    fun build(
+        repo: DesktopRepository,
+        tracked: Map<String, SyncStamp>,
+        nowInput: Long,
+        forceRefresh: Boolean = false,
+    ): Built {
         val now = maxOf(nowInput, (tracked.values.maxOfOrNull { it.updatedAt } ?: 0L) + 1L)
         val stamps = LinkedHashMap<String, SyncStamp>()
         val lists = LinkedHashMap<String, MutableList<SyncRecord>>()
@@ -312,7 +404,7 @@ object SyncPayload {
 
         /** يبني سجلًا حيًا: id + حقول + ختم يُحفظ من tracked ما دام لم يتغير. */
         fun record(kind: String, id: String, fields: Map<String, Any>): SyncRecord {
-            val updatedAt = stamp(tracked, "$kind:$id", contentFingerprint(fields), now, stamps)
+            val updatedAt = stamp(tracked, "$kind:$id", contentFingerprint(fields), now, stamps, forceRefresh)
             return toRecord(id, fields, updatedAt)
         }
 
@@ -433,10 +525,12 @@ object SyncPayload {
 
     private fun stamp(
         tracked: Map<String, SyncStamp>, key: String, fingerprint: String, now: Long,
-        out: MutableMap<String, SyncStamp>,
+        out: MutableMap<String, SyncStamp>, forceRefresh: Boolean = false,
     ): Long {
         val previous = tracked[key]
-        val updatedAt = if (previous?.fingerprint == fingerprint && !previous.deleted) previous.updatedAt else now
+        val updatedAt = if (forceRefresh) now
+            else if (previous?.fingerprint == fingerprint && !previous.deleted) previous.updatedAt
+            else now
         out[key] = SyncStamp(fingerprint, updatedAt)
         return updatedAt
     }
@@ -803,6 +897,46 @@ class SyncService(
 
     private fun saveLastSync(value: LastSync) {
         repo.putSyncMeta("last_sync", json.encodeToString(value))
+    }
+
+    /**
+     * إعادة الختم بعد تغيير كلمة المرور (التصميم §2.2، الخيار أ): سحب لقراءة أحدث
+     * مراجعة، ثم دفع كل السجلات المحلية بختم +1ms ومع `baseRevision`؛ عند 409
+     * يعيد السحب والمحاولة حتى ثلاث مرات. تُستدعى بعد أن حدّث المتصل الخزنة
+     * بكلمة المرور الجديدة — لا قبلها أبدًا.
+     */
+    fun reseal(session: SyncSession): SyncOutcome {
+        val profileId = session.profileId ?: return SyncOutcome.Error("الحساب غير مرتبط")
+        val passphrase = session.passphrase()
+        if (passphrase.isBlank()) return SyncOutcome.Error("أدخل كلمة مرور المزامنة")
+        repeat(3) { attempt ->
+            val pulled = client.pull(profileId, passphrase)
+            val snapshot = when (pulled) {
+                is SyncOutcome.Error -> return pulled
+                is SyncOutcome.Ok -> pulled.snapshot ?: SyncSnapshot()
+            }
+            val plan = SyncApply.plan(repo, loadStamps(), snapshot.data)
+            SyncApply.execute(repo, plan)
+            val built = SyncPayload.build(repo, plan.stamps, System.currentTimeMillis(), forceRefresh = true)
+            val pushed = client.push(profileId, passphrase, built.data, baseRevision = snapshot.revision)
+            when (pushed) {
+                is SyncOutcome.Ok -> {
+                    repo.putSyncMeta("stamps", json.encodeToString(built.stamps))
+                    val revision = pushed.snapshot?.revision ?: snapshot.revision
+                    saveLastSync(LastSync(System.currentTimeMillis(), revision, true, "تمت المزامنة"))
+                    return pushed
+                }
+                is SyncOutcome.Error -> {
+                    if (pushed.status == 409 && attempt < 2) {
+                        // كاتب متزامن سبقنا: نعيد السحب والختم من المراجعة الجديدة.
+                    } else {
+                        saveLastSync(LastSync(System.currentTimeMillis(), snapshot.revision, false, pushed.message))
+                        return pushed
+                    }
+                }
+            }
+        }
+        return SyncOutcome.Error("تعذّرت إعادة الرفع — ستكتمل مع المزامنة التالية")
     }
 
     fun syncNow(session: SyncSession): SyncOutcome {

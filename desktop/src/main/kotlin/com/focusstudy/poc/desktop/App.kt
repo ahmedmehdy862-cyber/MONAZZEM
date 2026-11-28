@@ -98,6 +98,12 @@ class DesktopAppState(val repo: DesktopRepository) {
     var syncMessage by mutableStateOf<String?>(null)
     var loginError by mutableStateOf<String?>(null)
     var loginBusy by mutableStateOf(false)
+    var showChangePassphrase by mutableStateOf(false)
+    var changeBusy by mutableStateOf(false)
+    var changeMessage by mutableStateOf<String?>(null)
+    /** One-time recovery code shown once after activation/reset; never stored. */
+    var shownRecoveryCode by mutableStateOf<String?>(null)
+    var recoveryNote by mutableStateOf<String?>(null)
 
     /** profileId محفوظ من جلسة سابقة؛ كلمة المرور ما زالت مطلوبة. */
     val restoredProfileId: Boolean = session.restoreProfileId()
@@ -126,21 +132,113 @@ class DesktopAppState(val repo: DesktopRepository) {
         if (triggerAutoSync) autoSync.notifyLocalChange()
     }
 
-    fun linkWithPassphrase(profileId: String, passphrase: String, currentPassphrase: String? = null) {
+    /**
+     * Link with the account's CURRENT passphrase only. There is deliberately no
+     * «current passphrase» field here any more: entering a different passphrase at
+     * login used to change the auth hash with no re-seal, which breaks reading the
+     * snapshot once it is encrypted (v2, design §2.3). Changing the password has
+     * its own flow ([changePassphrase]) with a re-seal.
+     */
+    fun linkWithPassphrase(profileId: String, passphrase: String) {
         if (loginBusy) return
         loginBusy = true
         loginError = null
         scope.launch(Dispatchers.IO) {
-            val outcome = syncClient.register(profileId.trim(), passphrase, currentPassphrase)
+            val result = syncClient.register(profileId.trim(), passphrase)
+            val outcome = result.outcome
             if (outcome is SyncOutcome.Ok) {
                 session.link(profileId.trim(), passphrase)
                 linked = true
                 syncMessage = "تم ربط الحساب"
                 autoSync.start()
                 refresh(triggerAutoSync = false)
+                if (result.created) showNewRecoveryCode(passphrase)
             } else {
                 loginError = (outcome as? SyncOutcome.Error)?.message ?: "تعذّر ربط الحساب"
             }
+            loginBusy = false
+        }
+    }
+
+    /** Generates a recovery code, stores its hash, and shows the code once on success. */
+    fun showNewRecoveryCode(passphrase: String) {
+        val profileId = session.profileId ?: return
+        scope.launch(Dispatchers.IO) {
+            val code = SyncRecoveryCode.generate()
+            val outcome = syncClient.setRecoveryCode(profileId, passphrase, code)
+            if (outcome is SyncOutcome.Ok) {
+                shownRecoveryCode = SyncRecoveryCode.display(code)
+                recoveryNote = null
+            } else {
+                recoveryNote = "تعذّر حفظ كود الاسترداد على الخادم؛ أعد المحاولة من شاشة الدخول بعد الربط."
+            }
+        }
+    }
+
+    /**
+     * Passphrase change (design §2.2, Option A): change the auth hash on the server,
+     * update the vault only after success, then re-seal (re-push with +1ms stamps and
+     * `baseRevision`) via [SyncService.reseal].
+     */
+    fun changePassphrase(current: String, newPassphrase: String) {
+        if (changeBusy) return
+        changeBusy = true
+        changeMessage = null
+        scope.launch(Dispatchers.IO) {
+            val profileId = session.profileId
+            if (profileId == null) {
+                changeMessage = "الحساب غير مرتبط"
+                changeBusy = false
+                return@launch
+            }
+            val outcome = syncClient.changePassphrase(profileId, current, newPassphrase)
+            if (outcome is SyncOutcome.Error) {
+                changeMessage = outcome.message
+                changeBusy = false
+                return@launch
+            }
+            // The server knows the new secret now — and only now — so the vault follows.
+            session.link(profileId, newPassphrase)
+            val resealed = syncService.reseal(session)
+            changeMessage = if (resealed is SyncOutcome.Ok) {
+                "تم تغيير كلمة المرور. الأجهزة الأخرى ستحتاج كلمة المرور الجديدة عند مزامنتها التالية."
+            } else {
+                "تم تغيير كلمة المرور، وستكتمل إعادة الرفع مع المزامنة التالية."
+            }
+            changeBusy = false
+        }
+    }
+
+    /**
+     * Forgot-password reset (design §3.2): the code deletes the old account and its
+     * snapshot, so this device re-registers with a new passphrase and uploads its
+     * local data. Without a device holding the data there is no recovery at all — the
+     * login screen says so plainly.
+     */
+    fun resetWithRecoveryCode(profileId: String, code: String, newPassphrase: String) {
+        if (loginBusy) return
+        loginBusy = true
+        loginError = null
+        scope.launch(Dispatchers.IO) {
+            val reset = syncClient.resetWithRecoveryCode(profileId.trim(), code)
+            if (reset is SyncOutcome.Error) {
+                loginError = reset.message
+                loginBusy = false
+                return@launch
+            }
+            val result = syncClient.register(profileId.trim(), newPassphrase)
+            val outcome = result.outcome
+            if (outcome is SyncOutcome.Error) {
+                loginError = outcome.message
+                loginBusy = false
+                return@launch
+            }
+            session.link(profileId.trim(), newPassphrase)
+            linked = true
+            syncMessage = "تم الاسترداد وربط الحساب الجديد"
+            autoSync.start()
+            refresh(triggerAutoSync = false)
+            if (result.created) showNewRecoveryCode(newPassphrase)
             loginBusy = false
         }
     }
@@ -221,12 +319,18 @@ fun App(state: DesktopAppState) {
                     Text(if (state.syncBusy) "جارٍ…" else "مزامنة الآن")
                 }
                 Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = { state.showChangePassphrase = !state.showChangePassphrase }) { Text("تغيير كلمة المرور") }
+                Spacer(Modifier.width(8.dp))
                 OutlinedButton(onClick = { state.unlink() }) { Text("تسجيل الخروج") }
                 Spacer(Modifier.width(8.dp))
             }
             OutlinedButton(onClick = { state.dark = !state.dark }) {
                 Text(if (state.dark) "فاتح" else "داكن")
             }
+        }
+        state.shownRecoveryCode?.let { code -> RecoveryCodeCard(state, code) }
+        if (state.showChangePassphrase) {
+            ChangePassphraseCard(state)
         }
         if (!state.linked && state.offlineMode) {
             Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -281,7 +385,10 @@ private fun LoginScreen(state: DesktopAppState) {
         mutableStateOf(state.session.profileId.orEmpty())
     }
     var passphrase by remember { mutableStateOf("") }
-    var currentPassphrase by remember { mutableStateOf("") }
+    var showForgot by remember { mutableStateOf(false) }
+    var forgotCode by remember { mutableStateOf("") }
+    var forgotNew by remember { mutableStateOf("") }
+    var forgotConfirm by remember { mutableStateOf("") }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(Modifier.width(420.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("مُنظِّم — ويندوز", fontSize = 26.sp, fontWeight = FontWeight.Bold)
@@ -306,18 +413,10 @@ private fun LoginScreen(state: DesktopAppState) {
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
-                value = currentPassphrase,
-                onValueChange = { currentPassphrase = it },
-                label = { Text("كلمة المرور الحالية — عند تغييرها فقط (اتركها فارغة للربط بنفس كلمة مرور الهاتف)") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-            )
             state.loginError?.let { Text(it, fontSize = 13.sp) }
             Button(
                 onClick = {
-                    state.linkWithPassphrase(profileId, passphrase, currentPassphrase.ifBlank { null })
+                    state.linkWithPassphrase(profileId, passphrase)
                 },
                 enabled = !state.loginBusy && profileId.isNotBlank() && passphrase.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
@@ -330,12 +429,147 @@ private fun LoginScreen(state: DesktopAppState) {
                 ) { Text("دخول بالحساب المحفوظ") }
             }
             TextButton(
+                onClick = { showForgot = !showForgot },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("نسيت كلمة المرور") }
+            if (showForgot) {
+                Text(
+                    "إن نسيت كلمة المرور ولا تملك كود الاسترداد، ولا يوجد جهاز عليه بياناتك، فنسخة الويب فُقدت ولا يمكن استرجاعها — لا توجد طريقة أخرى. أما إن كان لديك جهاز عليه بياناتك، فأدخل كود الاسترداد وكلمة مرور جديدة: سيُحذف الحساب القديم ونسخته، ثم تُرفع بيانات هذا الجهاز.",
+                    fontSize = 12.sp,
+                )
+                OutlinedTextField(
+                    value = forgotCode,
+                    onValueChange = { forgotCode = it },
+                    label = { Text("كود الاسترداد") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = forgotNew,
+                    onValueChange = { forgotNew = it },
+                    label = { Text("كلمة المرور الجديدة (10 أحرف فأكثر)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = forgotConfirm,
+                    onValueChange = { forgotConfirm = it },
+                    label = { Text("تأكيد كلمة المرور الجديدة") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        when {
+                            !SyncRecoveryCode.isValid(forgotCode) ->
+                                state.loginError = "كود الاسترداد غير صحيح الصيغة — ٣٢ حرفًا."
+                            !SyncSession.isValidPassphrase(forgotNew) ->
+                                state.loginError = "كلمة المرور بين 10 و 200 حرف."
+                            forgotNew != forgotConfirm ->
+                                state.loginError = "الكلمتان غير متطابقتين."
+                            else -> state.resetWithRecoveryCode(profileId, forgotCode, forgotNew)
+                        }
+                    },
+                    enabled = !state.loginBusy && profileId.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (state.loginBusy) "جارٍ الاسترداد…" else "استرداد الحساب بكود الاسترداد") }
+            }
+            TextButton(
                 onClick = { state.offlineMode = true },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("استخدام دون مزامنة (على هذا الجهاز فقط)") }
             Text(
                 "معرّف الحساب (profileId) تجده في تطبيق الهاتف: من شاشة المزامنة. " +
                     "إن لم يكن لديك حساب مزامنة بعد، أنشئه من الهاتف أولًا ثم اربطه هنا.",
+                fontSize = 12.sp,
+            )
+            Text(
+                "وإن نسيت كلمة المرور بلا كود استرداد وبلا جهاز عليه بياناتك، فلا يمكن استرجاع نسخة الويب — احفظ كود الاسترداد الذي يظهر بعد الربط.",
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecoveryCodeCard(state: DesktopAppState, code: String) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("كود الاسترداد — احفظه الآن", fontWeight = FontWeight.Bold)
+            Text(code, fontSize = 15.sp)
+            Row {
+                Button(onClick = {
+                    val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                    clipboard.setContents(java.awt.datatransfer.StringSelection(code), null)
+                    state.recoveryNote = "نُسخ كود الاسترداد."
+                }) { Text("نسخ الكود") }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = { state.shownRecoveryCode = null }) { Text("أخفيتُ الكود — تم الحفظ") }
+            }
+            Text(
+                "يُعرض مرة واحدة فقط ولا يُحفظ على الجهاز. من يفقد كلمة المرور والكود معًا ولا يملك جهازًا عليه بياناته، يفقد نسخة الويب ولا يمكن استرجاعها.",
+                fontSize = 12.sp,
+            )
+            state.recoveryNote?.let { Text(it, fontSize = 13.sp) }
+        }
+    }
+}
+
+@Composable
+private fun ChangePassphraseCard(state: DesktopAppState) {
+    var current by remember { mutableStateOf("") }
+    var newPass by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("تغيير كلمة مرور المزامنة", fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = current,
+                onValueChange = { current = it },
+                label = { Text("كلمة المرور الحالية") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = newPass,
+                onValueChange = { newPass = it },
+                label = { Text("كلمة المرور الجديدة (10 أحرف فأكثر)") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = confirm,
+                onValueChange = { confirm = it },
+                label = { Text("تأكيد كلمة المرور الجديدة") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row {
+                Button(
+                    onClick = {
+                        when {
+                            !SyncSession.isValidPassphrase(current) || !SyncSession.isValidPassphrase(newPass) ->
+                                state.changeMessage = "كلمة المرور بين 10 و 200 حرف."
+                            newPass != confirm ->
+                                state.changeMessage = "الكلمتان الجديدتان غير متطابقتين."
+                            newPass == current ->
+                                state.changeMessage = "كلمة المرور الجديدة مطابقة للحالية."
+                            else -> state.changePassphrase(current, newPass)
+                        }
+                    },
+                    enabled = !state.changeBusy,
+                ) { Text(if (state.changeBusy) "جارٍ…" else "تغيير كلمة المرور") }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = { state.showChangePassphrase = false }) { Text("إغلاق") }
+            }
+            state.changeMessage?.let { Text(it, fontSize = 13.sp) }
+            Text(
+                "الأجهزة الأخرى ستحتاج كلمة المرور الجديدة عند مزامنتها التالية.",
                 fontSize = 12.sp,
             )
         }

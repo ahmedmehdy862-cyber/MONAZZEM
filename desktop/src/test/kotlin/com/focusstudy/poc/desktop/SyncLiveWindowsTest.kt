@@ -28,7 +28,7 @@ class SyncLiveWindowsTest {
         //    فيعيد العميل المحاولة تلقائيًا بها — إصلاح مسار الربط.
         val registered = client.register(credentials.profileId, credentials.passphrase)
         assertTrue("linking Windows to the phone-registered account must succeed, got $registered",
-            registered is SyncOutcome.Ok)
+            registered.outcome is SyncOutcome.Ok)
 
         // 2) سحب وتطبيق بيانات أندرويد (المجموعات العشر).
         val first = service.syncNow(session)

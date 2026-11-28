@@ -116,6 +116,7 @@ internal object AutoSync {
             state.enabled = false
             state.sessionOnly = false
             state.pendingPush = false
+            state.authFailedAt = 0L
             credentialStore(app).clear()
             SyncSession.clear()
             return EnableOutcome.DISABLED
@@ -123,6 +124,7 @@ internal object AutoSync {
         val typed = passphrase?.takeIf { SyncPassphrase.isValid(it) }
         val effective = typed ?: resolvePassphrase(app)
         if (effective == null) return EnableOutcome.NEEDS_PASSPHRASE
+        state.authFailedAt = 0L
         SyncSession.set(effective)
         val stored = if (typed != null) {
             credentialStore(app).save(typed)
@@ -135,6 +137,18 @@ internal object AutoSync {
     }
 
     /**
+     * A passphrase change from the sync screen, run under the same lock as the automatic
+     * triggers so no auto push/pull can interleave with the pull → change → re-seal
+     * sequence (design §2.2, Option A). The stored secret is updated inside
+     * [SyncAccount.changePassphrase] only after the server accepted the new secret.
+     */
+    suspend fun changePassphrase(context: Context, current: String, new: String): SyncAccount.Result {
+        mutex.withLock {
+            return SyncAccount.changePassphrase(context.applicationContext, current, new)
+        }
+    }
+
+    /**
      * A manual push/pull from the sync screen, run under the same lock as the automatic
      * triggers so this account never has a push and a pull in flight at once (contract §5).
      * Auto-sync timestamps are untouched, except a successful manual push clears
@@ -144,8 +158,9 @@ internal object AutoSync {
         mutex.withLock {
             val app = context.applicationContext
             val result = if (isPush) runner.push(app, passphrase) else runner.pull(app, passphrase)
-            if (isPush && result == SyncAccount.Result.SUCCESS) {
-                AutoSyncState.get(app).pendingPush = false
+            if (result == SyncAccount.Result.SUCCESS) {
+                AutoSyncState.get(app).authFailedAt = 0L
+                if (isPush) AutoSyncState.get(app).pendingPush = false
             }
             return result
         }
@@ -217,9 +232,19 @@ internal object AutoSync {
             val state = AutoSyncState.get(context)
             if (pull) {
                 when (runner.pull(context, passphrase)) {
-                    SyncAccount.Result.SUCCESS -> state.lastAutoPullAt = clock()
+                    SyncAccount.Result.SUCCESS -> {
+                        state.lastAutoPullAt = clock()
+                        state.authFailedAt = 0L
+                    }
                     SyncAccount.Result.NETWORK_ERROR -> {
                         NetworkRetryJob.schedule(context)
+                        return
+                    }
+                    SyncAccount.Result.REJECTED -> {
+                        // The stored passphrase stopped working: it changed on another
+                        // device (or the account was deleted). Never delete local data;
+                        // the sync screen shows the «changed elsewhere» message.
+                        state.authFailedAt = clock()
                         return
                     }
                     else -> return
@@ -230,8 +255,10 @@ internal object AutoSync {
                     SyncAccount.Result.SUCCESS -> {
                         state.pendingPush = false
                         state.lastAutoPushAt = clock()
+                        state.authFailedAt = 0L
                     }
                     SyncAccount.Result.NETWORK_ERROR -> NetworkRetryJob.schedule(context)
+                    SyncAccount.Result.REJECTED -> state.authFailedAt = clock()
                     else -> Unit
                 }
             }

@@ -57,6 +57,22 @@ class SyncPayloadTest {
         assertEquals(5_000L, next.data.getValue("tasks").single()["updatedAt"])
     }
 
+    @Test fun forceRefreshRestampsUnchangedRecordsForReseal() {
+        val first = SyncPayload.build(listOf(task()), emptyList(), emptyList(), emptyMap(), 1_000L)
+        assertEquals(1_000L, first.data.getValue("tasks").single()["updatedAt"])
+        // Without the flag an unchanged record keeps its stamp…
+        val kept = SyncPayload.build(listOf(task()), emptyList(), emptyList(), first.stamps, 5_000L)
+        assertEquals(1_000L, kept.data.getValue("tasks").single()["updatedAt"])
+        // …with it, the same content is re-stamped at `now` (design §2.2, Option A),
+        // and the new stamp is the one the next build keeps.
+        val resealed = SyncPayload.build(
+            listOf(task()), emptyList(), emptyList(), first.stamps, 5_000L, forceRefresh = true
+        )
+        assertEquals(5_000L, resealed.data.getValue("tasks").single()["updatedAt"])
+        val after = SyncPayload.build(listOf(task()), emptyList(), emptyList(), resealed.stamps, 9_000L)
+        assertEquals(5_000L, after.data.getValue("tasks").single()["updatedAt"])
+    }
+
     @Test fun removedRecordsBecomePersistentTombstones() {
         val first = SyncPayload.build(listOf(task()), emptyList(), emptyList(), emptyMap(), 1_000L)
         val removed = SyncPayload.build(emptyList(), emptyList(), emptyList(), first.stamps, 7_000L)

@@ -25,11 +25,18 @@ class SyncAccountResultTest {
         )
     }
 
-    @Test fun transientFailuresStayNetworkErrors() {
+    @Test fun staleRevisionAndRateLimitHaveTheirOwnOutcomes() {
         assertEquals(
-            SyncAccount.Result.NETWORK_ERROR,
+            SyncAccount.Result.STALE_REVISION,
+            SyncAccount.resultFor(HttpStatusException(409, """{"error":"stale_revision"}"""))
+        )
+        assertEquals(
+            SyncAccount.Result.RATE_LIMITED,
             SyncAccount.resultFor(HttpStatusException(429, """{"error":"too_many_requests"}"""))
         )
+    }
+
+    @Test fun transientFailuresStayNetworkErrors() {
         assertEquals(
             SyncAccount.Result.NETWORK_ERROR,
             SyncAccount.resultFor(HttpStatusException(503, """{"error":"sync_unavailable"}"""))

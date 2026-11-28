@@ -73,16 +73,26 @@ internal object SyncPayload {
         subjects: List<StudySubject>,
         types: List<TaskType>,
         tracked: Map<String, SyncStamp>,
-        now: Long
-    ): SyncBuilt = build(tasks, subjects, types, tracked, now, LifeSyncSnapshot())
+        now: Long,
+        forceRefresh: Boolean = false
+    ): SyncBuilt = build(tasks, subjects, types, tracked, now, LifeSyncSnapshot(), forceRefresh)
 
+    /**
+     * With `forceRefresh` every live record is re-stamped at `now` even when its content
+     * is unchanged. That is the re-seal step of a passphrase change (design §2.2,
+     * Option A): on v1 the records are plaintext so the bump only re-asserts them, but
+     * the same call carries the re-encrypted envelopes once v2 lands — the server's
+     * merge rule keeps the stored row on an equal timestamp, so a re-seal without the
+     * bump would be dropped silently. Tombstones already on the server keep their stamp.
+     */
     fun build(
         tasks: List<StudyTask>,
         subjects: List<StudySubject>,
         types: List<TaskType>,
         tracked: Map<String, SyncStamp>,
         now: Long,
-        life: LifeSyncSnapshot
+        life: LifeSyncSnapshot,
+        forceRefresh: Boolean = false
     ): SyncBuilt {
         val stamps = LinkedHashMap<String, SyncStamp>()
         val lists = LinkedHashMap<String, MutableList<Map<String, Any>>>()
@@ -93,7 +103,7 @@ internal object SyncPayload {
             val out = LinkedHashMap<String, Any>()
             out["id"] = id
             out.putAll(fields)
-            out["updatedAt"] = stamp(tracked, "$kind:$id", contentFingerprint(out), now, stamps)
+            out["updatedAt"] = stamp(tracked, "$kind:$id", contentFingerprint(out), now, stamps, forceRefresh)
             return out
         }
 
@@ -222,10 +232,13 @@ internal object SyncPayload {
         key: String,
         fingerprint: String,
         now: Long,
-        out: MutableMap<String, SyncStamp>
+        out: MutableMap<String, SyncStamp>,
+        forceRefresh: Boolean = false
     ): Long {
         val previous = tracked[key]
-        val updatedAt = if (previous?.fingerprint == fingerprint && !previous.deleted) previous.updatedAt else now
+        val updatedAt = if (forceRefresh) now
+            else if (previous?.fingerprint == fingerprint && !previous.deleted) previous.updatedAt
+            else now
         out[key] = SyncStamp(fingerprint, updatedAt)
         return updatedAt
     }

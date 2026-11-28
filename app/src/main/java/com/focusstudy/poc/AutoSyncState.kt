@@ -39,6 +39,17 @@ internal class AutoSyncState(private val prefs: SharedPreferences) {
         get() = prefs.getLong(KEY_LAST_CHANGE, 0L)
         set(value) = prefs.edit().putLong(KEY_LAST_CHANGE, value).apply()
 
+    /**
+     * When the stored/session passphrase last started being rejected (0 = never). A
+     * rejection here never means a typo — no trigger ever asks the user to type — so a
+     * non-zero value means the passphrase changed on another device (or the account was
+     * deleted): the sync screen shows «تغيّرت من جهاز آخر» instead of a generic error,
+     * and local data is never deleted. Cleared on the next successful sync.
+     */
+    var authFailedAt: Long
+        get() = prefs.getLong(KEY_AUTH_FAILED, 0L)
+        set(value) = prefs.edit().putLong(KEY_AUTH_FAILED, value).apply()
+
     /** Records a local change to a synced collection; the debounced push reads this. */
     fun recordLocalChange(now: Long) {
         prefs.edit()
@@ -55,6 +66,7 @@ internal class AutoSyncState(private val prefs: SharedPreferences) {
         private const val KEY_LAST_PULL = "last_auto_pull_at"
         private const val KEY_LAST_PUSH = "last_auto_push_at"
         private const val KEY_LAST_CHANGE = "last_local_change_at"
+        private const val KEY_AUTH_FAILED = "auth_failed_at"
 
         fun get(context: Context): AutoSyncState = AutoSyncState(
             context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
