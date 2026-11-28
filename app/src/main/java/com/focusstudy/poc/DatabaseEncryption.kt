@@ -89,7 +89,7 @@ internal object DatabaseEncryption {
         val tmpFile = File(dbFile.path + TEMP_SUFFIX)
         val backupFile = File(dbFile.path + BACKUP_SUFFIX)
         deleteTempFiles(tmpFile)
-        try {
+        return try {
             // قراءة فقط في الحالة العادية؛ كتابة فقط إن وُجد journal ساخن
             // (انقطاع أثناء معاملة) حتى يستطيع SQLite استرداده — حذف
             // الـ journal الساخن دون استرداد كان سيُبقي كتابات جزئية.

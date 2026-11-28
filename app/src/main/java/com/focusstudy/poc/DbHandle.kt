@@ -34,6 +34,9 @@ internal interface DbHandle : Closeable {
         conflictAlgorithm: Int
     ): Long
 
+    /** مثل SQLiteDatabase.insertOrThrow في الواجهتين: يرمي عند التعارض بدل −1. */
+    fun insertOrThrow(table: String, nullColumnHack: String?, values: ContentValues): Long
+
     fun update(
         table: String,
         values: ContentValues,
@@ -81,6 +84,9 @@ internal class PlatformDbHandle(
         conflictAlgorithm: Int
     ): Long = db.insertWithOnConflict(table, nullColumnHack, values, conflictAlgorithm)
 
+    override fun insertOrThrow(table: String, nullColumnHack: String?, values: ContentValues): Long =
+        db.insertOrThrow(table, nullColumnHack, values)
+
     override fun update(
         table: String,
         values: ContentValues,
@@ -118,6 +124,9 @@ internal class SqlCipherDbHandle(
         values: ContentValues,
         conflictAlgorithm: Int
     ): Long = db.insertWithOnConflict(table, nullColumnHack, values, conflictAlgorithm)
+
+    override fun insertOrThrow(table: String, nullColumnHack: String?, values: ContentValues): Long =
+        db.insertOrThrow(table, nullColumnHack, values)
 
     override fun update(
         table: String,

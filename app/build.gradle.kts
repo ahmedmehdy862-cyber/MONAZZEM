@@ -142,6 +142,13 @@ dependencies {
     // ADR_002، لا في هذا الإصدار. المفتاح عشوائي في Keystore عبر
     // DatabaseKeyManager؛ لا PIN ولا مفتاح في الكود.
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    // androidx.sqlite:sqlite is a *runtime-only* transitive dependency of
+    // android-database-sqlcipher 4.5.4 (its POM declares scope=runtime), so
+    // the compiler cannot see SupportSQLiteDatabase — the supertype of
+    // net.sqlcipher.database.SQLiteDatabase that SQLCipher 4.5.x implements.
+    // Without this explicit declaration every use of the SQLCipher database
+    // fails with "Cannot access 'SupportSQLiteDatabase'...". Version 2.2.0
+    // is exactly the version SQLCipher 4.5.4 was built against (its POM).
     // 3D companion «منظم» (0.34.0): SceneView فوق Filament — العارض التصريحي
     // لـ Compose، خليفة Sceneform المدعوم. الاختيار مقابل Filament الخام:
     // Filament وحده يحتاج ModelViewer يدويًا بلا تكامل Compose ولا إدارة

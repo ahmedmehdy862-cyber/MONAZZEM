@@ -51,8 +51,8 @@ class StudyDb private constructor(
     private val appContext: Context = context.applicationContext
 
     /** الوصول للقاعدة عبر الواجهة الخلفية (مشفرة على الجهاز، منصة على JVM). */
-    val writableDatabase: DbHandle get() = backend.writable
-    val readableDatabase: DbHandle get() = backend.readable
+    internal val writableDatabase: DbHandle get() = backend.writable
+    internal val readableDatabase: DbHandle get() = backend.readable
 
     fun close() = backend.close()
 
