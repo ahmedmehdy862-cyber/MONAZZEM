@@ -22,7 +22,8 @@ class AssistantSuggestionsTest {
         habitNames: Map<Long, String> = emptyMap(),
         spentToday: Double = 0.0,
         avgSpend: Double = 0.0,
-        acceptance: Map<String, Double> = emptyMap()
+        acceptance: Map<String, Double> = emptyMap(),
+        shows: Map<String, Int> = emptyMap()
     ): AssistantSnapshot {
         val learned = LearnedProfile(
             bestFocusHours = focusHours,
@@ -39,7 +40,8 @@ class AssistantSuggestionsTest {
             habitNames = habitNames,
             spentToday = spentToday,
             learned = learned,
-            suggestionAcceptance = acceptance
+            suggestionAcceptance = acceptance,
+            suggestionShows = shows
         )
         return AssistantSnapshot(
             userName = "أحمد",
@@ -100,12 +102,26 @@ class AssistantSuggestionsTest {
 
     @Test
     fun ignoredKindIsDemoted() {
+        // A-18 (الدفعة A): الكتم بعد 5 عروض بلا نقرة فقط — لا بعد عرض واحد.
         val snap = snapshotWith(
             overdue = listOf(AssistantTaskRef(1, "مراجعة فيزياء")),
-            acceptance = mapOf("late_task" to 0.1)
+            acceptance = mapOf("late_task" to 0.1),
+            shows = mapOf("late_task" to 5)
         )
         val suggestions = AssistantSuggestions.suggest(snap, LocalDateTime.of(2026, 11, 25, 14, 0))
         assertFalse(suggestions.any { it.kind == "late_task" })
+    }
+
+    @Test
+    fun ignoredKindSurvivesBeforeFiveShows() {
+        // عرض واحد بلا نقرة (نسبة 0.0) لا يكتم النوع — كان يُكتم نهائيًا.
+        val snap = snapshotWith(
+            overdue = listOf(AssistantTaskRef(1, "مراجعة فيزياء")),
+            acceptance = mapOf("late_task" to 0.0),
+            shows = mapOf("late_task" to 1)
+        )
+        val suggestions = AssistantSuggestions.suggest(snap, LocalDateTime.of(2026, 11, 25, 14, 0))
+        assertTrue(suggestions.any { it.kind == "late_task" })
     }
 
     @Test

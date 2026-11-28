@@ -3,6 +3,7 @@ package com.focusstudy.poc
 import android.content.Context
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -79,9 +80,12 @@ class AssistantMemoryTest {
         db.saveAssistantProfile(
             listOf(AssistantProfileEntry("best_focus_hour", "أفضل وقت تركيز: الساعة 11:00 (5 جلسات)", 11.0, 0.85, 5, 2000L))
         )
+        // A-14 (الدفعة A): مفتاح غائب عن التحديث يُحذف — نمط توقف عن التأهل
+        // لا يبقى معروضًا كمعرفة حالية.
         val updated = db.assistantProfile()
-        assertEquals(2, updated.size)
+        assertEquals(1, updated.size)
         assertEquals("أفضل وقت تركيز: الساعة 11:00 (5 جلسات)", updated.first { it.key == "best_focus_hour" }.textValue)
+        assertFalse(updated.any { it.key == "wird_streak" })
     }
 
     @Test
