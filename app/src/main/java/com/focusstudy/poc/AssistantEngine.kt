@@ -362,7 +362,7 @@ internal object AssistantEngine {
                     addedAt = now
                 )
             }
-            .distinctBy { it.text }
+            .distinctBy { it.text }.toList()
     }
 
     fun greeting(settings: AssistantSettings, userName: String): String {

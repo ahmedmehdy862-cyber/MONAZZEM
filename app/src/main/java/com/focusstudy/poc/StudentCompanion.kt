@@ -232,8 +232,9 @@ internal fun AvatarPortrait(
                 .padding(4.dp).clip(CircleShape).background(FocusColors.SurfaceHigh),
             contentAlignment = Alignment.Center
         ) {
-            if (bitmap != null) {
-                Image(bitmap, contentDescription = "صورة رفيق المذاكرة", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            val currentBitmap = bitmap
+            if (currentBitmap != null) {
+                Image(currentBitmap, contentDescription = "صورة رفيق المذاكرة", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             } else {
                 Text(name.trim().take(1).ifBlank { "✦" }, color = FocusColors.onTint(FocusColors.Blue), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             }
