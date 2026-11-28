@@ -26,7 +26,7 @@ import org.junit.runner.RunWith
 import org.junit.runners.MethodSorters
 
 /**
- * تحقق حي (فرع adhan-notify-verify، أساس fix-035-feedback 5b4aed68):
+ * تحقق حي (فرع adhan-notify-verify، أساس fix-035-feedback c906beb8):
  *
  * 1) إشعارات الأذان لا تتراكم: معرّف ثابت لكل نوع (AT=6202، BEFORE=6204)
  *    فيُستبدل لا يتكدّس؛ إعادة الجدولة تلغي المنبّهات القديمة أولًا؛ نشاط
@@ -109,9 +109,20 @@ class AdhanNotifyVerifyTest {
         }
     }
 
+    /**
+     * ملخّص التجميع الذي يولّده النظام نفسه: عندما يكون للتطبيق إشعاران
+     * نشطان أو أكثر على قناة واحدة ينشر SystemUI إدخالًا إضافيًا بنفس
+     * القناة بالمعرّف Integer.MAX_VALUE والوسم ranker_group وعنوان null —
+     * ليس إشعار صلاة ثانيًا (التشغيل 46103625296: AT=2 على API 34 كان
+     * 6202 + هذا الملخّص؛ وعلى API 30 لا يظهر في العدّ). يُستبعد من كل
+     * عدّ ومن كل سجل، ويُذكر استبعاده صراحة في السجل.
+     */
+    private fun isSystemSummary(sb: android.service.notification.StatusBarNotification): Boolean =
+        sb.id == Int.MAX_VALUE || sb.tag == "ranker_group"
+
     private fun countOnChannel(channelId: String): Int {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        return nm.activeNotifications.count { it.notification.channelId == channelId }
+        return nm.activeNotifications.count { it.notification.channelId == channelId && !isSystemSummary(it) }
     }
 
     /**
@@ -129,6 +140,10 @@ class AdhanNotifyVerifyTest {
             return
         }
         onChannel.forEach { sb ->
+            if (isSystemSummary(sb)) {
+                log("active on $channelId: id=${sb.id} tag=${sb.tag} title=null — system group summary, EXCLUDED from count")
+                return@forEach
+            }
             val title = sb.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)
             log("active on $channelId: id=${sb.id} tag=${sb.tag} title=$title")
         }
@@ -215,11 +230,20 @@ class AdhanNotifyVerifyTest {
 
         fireReceiver(PrayerAlertType.AT, "fajr", "الفجر", now)
         assertTrue("AT fajr never posted", waitForChannel(at))
-        Thread.sleep(3000)
+        // لغز التشغيل 46103625296 على API 30: BEFORE نُشر فعلًا ثم كان
+        // العدّ صفرًا بعد ~ثانيتين بلا إلغاء مسجَّل — فسجّل كل استطلاع
+        // (AT وBEFORE في كل استطلاع) ليُظهر التشغيل التالي ما يحدث بين
+        // الاستطلاعات بدل نقطة عدّ واحدة.
+        var atCount = 0
+        var beforeCount = 0
+        repeat(10) { poll ->
+            atCount = countOnChannel(at)
+            beforeCount = countOnChannel(before)
+            log("test02 poll $poll: AT=$atCount BEFORE=$beforeCount")
+            if (poll < 9) Thread.sleep(500)
+        }
         logActiveOnChannel(at)
         logAllActive()
-        val atCount = countOnChannel(at)
-        val beforeCount = countOnChannel(before)
         log("after AT fajr: AT=$atCount BEFORE=$beforeCount (total=${atCount + beforeCount})")
         device.openNotification()
         Thread.sleep(1500)
@@ -320,13 +344,25 @@ class AdhanNotifyVerifyTest {
         // 30.0444/31.2357) يعيد الظهر 12:56، مطابقًا لحساب التطبيق بالدقيقة؛
         // وهو يوافق التطبيق أيضًا في فجر يونيو (04:08) وفجر نوفمبر (04:59)
         // وظهر نوفمبر (11:43). المرجع هنا إذن 12:56 لا 12:59.
-        check(
-            LocalDate.of(2026, 6, 15),
-            mapOf(
-                "fajr" to "04:09", "dhuhr" to "12:56", "asr" to "16:32",
-                "maghrib" to "19:59", "isha" to "21:32"
+        //
+        // يُستثنى فحص يونيو على API 30 فقط: التشغيل 46103625296 أعطى فجر
+        // يونيو 03:08 مقابل مرجع 04:09 (فرق ‎-61 دقيقة) على API 30 بينما
+        // طابقت كل فحوصات يونيو على API 34 وطابق 27 نوفمبر على كلا الـ API
+        // — فالسبب tzdata قديمة في صورة محاكي API 30 لا تعرف عودة التوقيت
+        // الصيفي في مصر (2023) فتنسّق يونيو بـ UTC+2 بدل UTC+3: مشكلة بيئة
+        // لا خطأ في حساب التطبيق. المرجع والتسامح بلا تغيير، والفحص يبقى
+        // كاملًا على API 34.
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {
+            check(
+                LocalDate.of(2026, 6, 15),
+                mapOf(
+                    "fajr" to "04:09", "dhuhr" to "12:56", "asr" to "16:32",
+                    "maghrib" to "19:59", "isha" to "21:32"
+                )
             )
-        )
+        } else {
+            log("API ${Build.VERSION.SDK_INT}: June DST-sensitive check SKIPPED — stale tzdata in API 30 emulator image (no Egypt DST since 2023); November check still runs on both APIs")
+        }
 
         // إزاحة «قبل»: كل منبّه BEFORE يضرب قبل وقت صلاته بعشر دقائق بالظبط.
         val day = LocalDate.of(2026, 11, 27)
@@ -345,7 +381,7 @@ class AdhanNotifyVerifyTest {
             log("offset $key: AT=${at.prayerAt} BEFORE fires ${offsetMin}min earlier")
             assertEquals("BEFORE offset must be 10 minutes for $key", 10L, offsetMin)
         }
-        log("times match reference (both dates, tolerance 2min) + BEFORE offset 10min — OK")
+        log("times match reference (tolerance 2min) + BEFORE offset 10min — OK")
     }
 
     private fun minutesBetween(expected: String, computed: String): Int {
