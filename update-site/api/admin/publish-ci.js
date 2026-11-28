@@ -1,7 +1,8 @@
 const { safeEqual, parseBody, json } = require("../../lib/admin-auth");
 const { put } = require("@vercel/blob");
-const { RELEASE_PATH, readLatestRelease, decideCiPublish } = require("../../lib/release-store");
+const { RELEASE_PATH, readLatestRelease, decideCiPublish, normalizeSha256, releasePageHost, verifyApkMagic } = require("../../lib/release-store");
 const { recordRelease } = require("../../lib/release-history");
+const { appendAdminAudit } = require("../../lib/admin-audit");
 
 module.exports = async function publishFromCi(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
@@ -18,6 +19,9 @@ module.exports = async function publishFromCi(req, res) {
     const apkUrl = String(body.apkUrl || "").trim();
     const storeUrl = String(body.storeUrl || process.env.FOCUS_STORE_URL || "https://qubixstore.vercel.app/focus-study-updates").trim();
     const description = String(body.description || "نظّم مهامك وموادك وجلسات تركيزك وخطتك الدراسية في مساحة واحدة.").trim().slice(0, 500);
+    // B9: SHA-256 of the APK when CI knows it (computed from the built APK).
+    const sha256 = normalizeSha256(body.sha256);
+    if (body.sha256 && !sha256) return json(res, 400, { error: "invalid_sha256" });
     if (!Number.isInteger(versionCode) || versionCode < 1 || !/^\d+\.\d+\.\d+$/.test(versionName) || !releaseNotes || !apkUrl) {
       return json(res, 400, { error: "release_fields_required" });
     }
@@ -50,7 +54,9 @@ module.exports = async function publishFromCi(req, res) {
       if (!validWindows) return json(res, 400, { error: "invalid_windows_release" });
       windows = { downloadUrl, version, sizeBytes };
     }
-    const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+    // B10: releasePageUrl is pinned to the configured host (FOCUS_SITE_HOST)
+    // when one is set, instead of trusting the request host header.
+    const host = releasePageHost(req);
     if (!host) return json(res, 400, { error: "release_host_missing" });
 
     // `publishedAt` is added only on a real write so an identical re-run stays byte-for-byte
@@ -58,6 +64,7 @@ module.exports = async function publishFromCi(req, res) {
     const release = {
       packageName: "com.focusstudy.poc", versionCode, versionName, storeUrl, apkUrl, description,
       releasePageUrl: `https://${host}/#download`, releaseNotes,
+      ...(sha256 ? { sha256 } : {}),
       ...(windows ? { windows } : {}),
     };
 
@@ -70,14 +77,21 @@ module.exports = async function publishFromCi(req, res) {
       return json(res, 200, { ok: true, unchanged: true, release: current });
     }
 
+    // B10: the APK at the published URL must at least be a ZIP (PK\x03\x04).
+    // Checked only on a real write, so identical re-runs stay cheap.
+    const magic = await verifyApkMagic(apkUrl);
+    if (!magic.ok) return json(res, magic.error === "apk_not_a_zip" ? 400 : 503, { error: magic.error });
+
     const published = { ...release, publishedAt: new Date().toISOString() };
     await put(RELEASE_PATH, JSON.stringify(published), {
       access: "public", addRandomSuffix: false, allowOverwrite: true,
       contentType: "application/json; charset=utf-8", cacheControlMaxAge: 60
     });
     await recordRelease(published);
+    await appendAdminAudit([{ actor: "ci", action: "release_publish", outcome: "ok", detail: `CI ${versionName} (${versionCode})${sha256 ? " sha256 set" : " no sha256"}` }]);
     return json(res, 200, {
       ok: true, packageName: release.packageName, versionCode, versionName, storeUrl, apkUrl,
+      ...(sha256 ? { sha256 } : {}),
       ...(windows ? { windows } : {}),
     });
   } catch (error) {

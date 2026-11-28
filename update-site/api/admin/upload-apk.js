@@ -1,5 +1,6 @@
 const { handleUpload } = require("@vercel/blob/client");
-const { isAdmin, originIsSame, parseBody, json } = require("../../lib/admin-auth");
+const { requireAdmin, originIsSame, parseBody, json } = require("../../lib/admin-auth");
+const { appendAdminAudit } = require("../../lib/admin-audit");
 
 module.exports = async function uploadApk(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
@@ -9,8 +10,16 @@ module.exports = async function uploadApk(req, res) {
       request: req,
       body: parseBody(req.body),
       onBeforeGenerateToken: async (pathname) => {
-        if (!originIsSame(req) || !isAdmin(req)) throw new Error("authentication_required");
+        if (!originIsSame(req)) throw new Error("authentication_required");
+        // B2: the uploading session must be current-generation and must have
+        // cleared mustChange; a revoked or bootstrap session cannot upload.
+        const gate = await requireAdmin(req);
+        if (!gate.ok) throw new Error("authentication_required");
         if (!/^focus-study\/releases\/[0-9]+-[a-f0-9-]+\.apk$/i.test(pathname)) throw new Error("invalid_upload_path");
+        // B10: content-type is client-declared; the real check is the ZIP
+        // magic bytes at publish time plus the panel's pre-upload check.
+        // B4: token issuance is audited (best-effort, never blocks upload).
+        appendAdminAudit([{ actor: process.env.ADMIN_USERNAME || "admin", action: "apk_upload", outcome: "ok", detail: pathname }]).catch(() => {});
         return {
           allowedContentTypes: ["application/vnd.android.package-archive", "application/octet-stream"],
           maximumSizeInBytes: 200 * 1024 * 1024,

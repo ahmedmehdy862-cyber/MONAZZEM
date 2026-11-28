@@ -1,15 +1,18 @@
 const {
   readMessages, readUsers, upsertUser, readNotificationSounds, normalizeProfileId,
-  appendDeliveryEvents, appendRegistrationEvents, deleteUser,
+  appendDeliveryEvents, appendRegistrationEvents, deleteUser, visibleMessages,
 } = require("../lib/messaging-store");
 const { authenticate } = require("../lib/sync-store");
 const { createMessagesLimiter } = require("../lib/messages-rate-limit");
+const { createFixedWindowLimiter } = require("../lib/rate-limit");
 const { userCode } = require("../lib/user-code");
-const { parseBody } = require("../lib/admin-auth");
+const { parseBody, setSecurityHeaders } = require("../lib/admin-auth");
 
 // H2: one limiter instance per serverless container (same caveat as the sync limiter:
 // a cold start resets it; the ownership proof is the real control).
 const registerLimiter = createMessagesLimiter();
+// B7/B10: delivery receipts get the same shape (10/IP + 5/uid per 15 min).
+const deliveredLimiter = createFixedWindowLimiter("delivered");
 
 const cut = (value, max) => String(value || "").trim().slice(0, max);
 const ALLOWED_PROFILES = new Set(["", "student", "graduate", "professional", "retired", "general"]);
@@ -25,12 +28,13 @@ const ALLOWED_PROFILES = new Set(["", "student", "graduate", "professional", "re
  * All three share this function so the deployment stays within the Hobby function limit.
  */
 module.exports = async function messages(request, response) {
+  setSecurityHeaders(response);
   if (request.method === "POST") {
     const body = parseBody(request.body);
     const action = String(body.action || "");
     if (action === "register") return register(request, body, response);
     if (action === "delete") return remove(request, body, response);
-    if (action === "delivered") return delivered(body, response);
+    if (action === "delivered") return delivered(request, body, response);
     return response.status(400).json({ error: "invalid_action" });
   }
   if (request.method !== "GET") {
@@ -86,7 +90,8 @@ module.exports = async function messages(request, response) {
       return hasTarget(item) ? personMatch(item) : audienceMatch(item);
     };
 
-    const messages = all.filter(visible);
+    // B1: expired team messages never reach the client feed.
+    const messages = visibleMessages(all.filter(visible));
     // Personalised answers depend on uid/pid and must never be stored in a shared cache; anonymous
     // broadcasts stay cacheable, so the feed remains cheap without delaying targeted messages.
     response.setHeader(
@@ -226,7 +231,7 @@ async function register(request, body, response) {
 }
 
 /** App-side receipt, stored in the private audit ledger. Duplicate reports are ignored by the store. */
-async function delivered(body, response) {
+async function delivered(request, body, response) {
   const uid = cut(body.uid, 64).toLowerCase();
   const pid = normalizeProfileId(body.pid);
   const validUid = /^[a-z0-9-]{6,64}$/.test(uid);
@@ -236,7 +241,46 @@ async function delivered(body, response) {
     : [];
   if (!ids.length) return response.status(400).json({ error: "invalid_ids" });
 
+  // B7: receipts are rate-limited like registration (10/IP + 5/uid / 15 min).
+  const gate = deliveredLimiter.check(request, uid || pid);
+  if (!gate.allowed) {
+    response.setHeader("Retry-After", String(gate.retryAfter));
+    return response.status(429).json({ error: "too_many_requests" });
+  }
+
   try {
+    // B10 (SA-P3-1): a receipt must prove it comes from the install it names.
+    // Proof is the stored profile id (the client sends it as `pid`, as the
+    // current app does) or the sync passphrase. A registry row that never
+    // received a profile id (legacy) can only present its uid, so uid-only
+    // is accepted for those rows — and only those rows.
+    const users = await readUsers();
+    const byUid = validUid ? users.find((item) => String(item.id || "").toLowerCase() === uid) : null;
+    const byPid = pid ? users.find((item) => normalizeProfileId(item.profileId) === pid) : null;
+    if (byUid && byPid && byUid.id !== byPid.id) {
+      deliveredLimiter.record(gate.keys);
+      return response.status(409).json({ error: "already_registered" });
+    }
+    const owner = byUid || byPid;
+    if (!owner) {
+      deliveredLimiter.record(gate.keys);
+      return response.status(409).json({ error: "already_registered" });
+    }
+    const storedProfileId = normalizeProfileId(owner.profileId);
+    let proven = false;
+    if (storedProfileId) {
+      proven = pid === storedProfileId
+        || (typeof body.passphrase === "string" && body.passphrase.length > 0
+          && (await authenticate(storedProfileId, body.passphrase)));
+    } else {
+      // Legacy row without a profile id: the uid itself is the only key.
+      proven = Boolean(validUid) && String(owner.id || "").toLowerCase() === uid;
+    }
+    if (!proven) {
+      deliveredLimiter.record(gate.keys);
+      return response.status(409).json({ error: "already_registered" });
+    }
+
     const all = await readMessages();
     const byId = new Map(all.map((item) => [String(item.id), item]));
     const recipient = pid || uid;
@@ -251,6 +295,7 @@ async function delivered(body, response) {
       };
     });
     await appendDeliveryEvents(events);
+    deliveredLimiter.record(gate.keys);
     response.setHeader("Cache-Control", "no-store");
     return response.status(200).json({ ok: true });
   } catch {

@@ -6,7 +6,7 @@ const FALLBACK_PATH = path.join(__dirname, "..", "release-history.json");
 const MAX_ENTRIES = 30;
 const FIELDS = [
   "packageName", "versionCode", "versionName", "storeUrl", "apkUrl",
-  "description", "releasePageUrl", "releaseNotes", "publishedAt",
+  "description", "releasePageUrl", "releaseNotes", "publishedAt", "sha256",
 ];
 
 /** Only known feed fields are kept, so a malformed Blob record cannot inject arbitrary data. */

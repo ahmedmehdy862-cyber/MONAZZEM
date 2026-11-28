@@ -78,6 +78,18 @@
         <label class="meta" for="min-version">من إصدار</label>
         <input id="min-version" type="number" min="0" max="1000000" value="0" style="max-width:130px">
       </div>
+      <div class="row">
+        <label class="meta" for="expires-in">تنتهي بعد</label>
+        <select id="expires-in" style="max-width:220px">
+          <option value="">بلا انتهاء</option>
+          <option value="1">يوم واحد</option>
+          <option value="3">3 أيام</option>
+          <option value="7">أسبوع</option>
+          <option value="14">أسبوعان</option>
+          <option value="30">شهر</option>
+        </select>
+        <span class="meta">الرسائل المنتهية تختفي من التطبيق تلقائيًا وتبقى هنا للحذف.</span>
+      </div>
       <div class="row hidden" id="person-row">
         <label class="meta" for="target-user">رمز المستخدم</label>
         <input id="target-user" maxlength="64" placeholder="مثال: AB12-CD34 — اضغط «مراسلة» في جدول المستخدمين">
@@ -91,9 +103,9 @@
         <div><strong>المستخدمون الذين فتحوا التطبيق</strong><div class="meta">يصل اسمك ورمزك تلقائيًا عند أول فتح، ويُحدَّث عند تغيير الاسم — بلا حساب ولا رقم هاتف.</div></div>
         <div class="row"><span id="user-count" class="meta"></span><button class="ghost" id="refresh-users">تحديث</button></div>
       </div>
-      <div class="table-tools" style="margin-top:10px"><input id="user-search" type="search" placeholder="ابحث بالاسم أو الرمز أو الإصدار…"></div>
+      <div class="table-tools" style="margin-top:10px"><input id="user-search" type="search" placeholder="ابحث بالاسم أو الرمز أو الإصدار…"><button class="ghost" id="delete-selected">حذف المحددين</button></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>الاسم</th><th>الرمز</th><th>الملف</th><th>الإصدار</th><th>أول ظهور</th><th>آخر ظهور</th><th>إجراء</th></tr></thead>
+        <thead><tr><th></th><th>الاسم</th><th>الرمز</th><th>الملف</th><th>الإصدار</th><th>أول ظهور</th><th>آخر ظهور</th><th>إجراء</th></tr></thead>
         <tbody id="users"></tbody>
       </table></div>
     </div>
@@ -127,6 +139,20 @@
       <div class="table-wrap"><table>
         <thead><tr><th>الوقت</th><th>الحدث</th><th>الرسالة</th><th>النوع</th><th>المستلم</th></tr></thead>
         <tbody id="deliveries"></tbody>
+      </table></div>
+    </div>
+
+    <div class="card" id="audit-card">
+      <div class="row" style="justify-content:space-between"><strong>سجل تدقيق الإدارة</strong><span id="audit-count" class="meta"></span></div>
+      <p class="meta">دخول الإدارة (ناجح/فاشل)، تغيير كلمة المرور، النشر، حذف الرسائل، رابط المتجر، الرفع، حذف المستخدمين — آخر 500 حدث.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>الوقت</th><th>الإجراء</th><th>النتيجة</th><th>التفاصيل</th></tr></thead>
+        <tbody id="audit"></tbody>
+      </table></div>
+      <div class="row" style="justify-content:space-between;margin-top:14px"><strong>سجل التسجيل</strong><span id="registration-count" class="meta"></span></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>الوقت</th><th>الحدث</th><th>المستخدم</th><th>السبب</th></tr></thead>
+        <tbody id="registrations"></tbody>
       </table></div>
     </div>
 
@@ -198,18 +224,19 @@
     ].some((value) => String(value || "").toLowerCase().includes(query)));
     document.getElementById("user-count").textContent = `${users.length} مستخدم · ${visible.length} ظاهر`;
     if (!visible.length) {
-      box.innerHTML = `<tr><td colspan="7" class="meta">${users.length ? "لا نتائج مطابقة." : "لا مستخدمين مسجلين بعد."}</td></tr>`;
+      box.innerHTML = `<tr><td colspan="8" class="meta">${users.length ? "لا نتائج مطابقة." : "لا مستخدمين مسجلين بعد."}</td></tr>`;
       return;
     }
     box.innerHTML = visible.map((item) => `
       <tr>
+        <td><input type="checkbox" class="user-select" data-user-id="${esc(item.id || "")}"></td>
         <td><strong>${esc(item.name || "مستخدم مُنظِّم")}</strong></td>
         <td class="code">${esc(item.code || "—")}</td>
         <td><span class="pill">${esc(profileLabels[item.profile] || item.profile || "عام")}</span></td>
         <td>${esc(item.versionName || "—")}${item.versionCode ? ` <span class="meta">(${Number(item.versionCode)})</span>` : ""}</td>
         <td class="meta">${when(item.firstSeen)}</td>
         <td class="meta">${when(item.lastSeen)}</td>
-        <td><button class="ghost" data-message-code="${esc(item.code || "")}">مراسلة</button></td>
+        <td><button class="ghost" data-message-code="${esc(item.code || "")}">مراسلة</button> <button class="ghost" data-delete-user="${esc(item.id || "")}" data-user-name="${esc(item.name || "مستخدم")}">حذف</button></td>
       </tr>`).join("");
   }
 
@@ -228,7 +255,7 @@
       return `
       <div class="item">
         <div><strong>${esc(item.title)}</strong><div class="meta">${esc(item.body)}</div>
-        <div class="meta">${when(item.at)} · ${mode} · ${detail}</div></div>
+        <div class="meta">${when(item.at)} · ${mode} · ${detail}${item.expiresAt ? ` · تنتهي ${when(item.expiresAt)}${new Date(item.expiresAt) <= new Date() ? " (منتهية)" : ""}` : ""}</div></div>
         <button class="ghost" data-delete="${esc(item.id)}">حذف</button>
       </div>`;
     }).join("");
@@ -251,6 +278,38 @@
       </tr>`).join("");
   }
 
+  function renderAudit(events) {
+    const box = document.getElementById("audit");
+    document.getElementById("audit-count").textContent = `${events.length} حدث`;
+    if (!events.length) {
+      box.innerHTML = '<tr><td colspan="4" class="meta">لا أحداث بعد.</td></tr>';
+      return;
+    }
+    box.innerHTML = events.map((event) => `
+      <tr>
+        <td class="meta">${when(event.at)}</td>
+        <td><span class="pill">${esc(event.action || "—")}</span></td>
+        <td>${esc(event.outcome || "—")}</td>
+        <td>${esc(event.detail || "—")}</td>
+      </tr>`).join("");
+  }
+
+  function renderRegistrations(events) {
+    const box = document.getElementById("registrations");
+    document.getElementById("registration-count").textContent = `${events.length} حدث`;
+    if (!events.length) {
+      box.innerHTML = '<tr><td colspan="4" class="meta">لا أحداث بعد.</td></tr>';
+      return;
+    }
+    box.innerHTML = events.map((event) => `
+      <tr>
+        <td class="meta">${when(event.at)}</td>
+        <td><span class="pill">${esc(event.event || "—")}</span></td>
+        <td class="code">${esc(event.uid ? formatCode(event.uid) : "—")}</td>
+        <td>${esc(event.reason || "—")}</td>
+      </tr>`).join("");
+  }
+
   function renderInbox(items) {
     const box = document.getElementById("inbox");
     document.getElementById("open-count").textContent = `${items.filter((i) => i.status === "new").length} جديدة من ${items.length}`;
@@ -259,6 +318,7 @@
       <div class="item">
         <div><strong>${esc(item.name || "بدون اسم")}</strong> <span class="${item.status === "new" ? "new" : "handled"}">${item.status === "new" ? "جديدة" : "تمّت"}</span>
           <div>${esc(item.body)}</div>
+          ${Array.isArray(item.images) && item.images.length ? `<div class="row" style="margin-top:8px">${item.images.map((img) => `<a href="/api/admin/messages?view=support-image&image=${encodeURIComponent(img.path)}" target="_blank" rel="noopener"><img src="/api/admin/messages?view=support-image&image=${encodeURIComponent(img.path)}" alt="صورة مرفقة" loading="lazy" style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line)"></a>`).join("")}</div>` : ""}
           <div class="meta">${esc(item.contact || "بلا وسيلة تواصل")} · ${when(item.at)} · نسخة ${esc(item.version || "?")}${item.uid ? ` · رمز <button class="link" data-code="${esc(formatCode(item.uid))}">${esc(formatCode(item.uid))}</button>` : ""}</div></div>
         <button class="ghost" data-mark="${esc(item.id)}" data-status="${item.status === "new" ? "handled" : "new"}">${item.status === "new" ? "تم" : "إرجاع"}</button>
       </div>`).join("");
@@ -273,7 +333,9 @@
         api("/api/admin/messages?view=inbox"),
         api("/api/admin/messages?view=users"),
         api("/api/admin/messages?view=sounds"),
-        api("/api/admin/messages?view=deliveries")
+        api("/api/admin/messages?view=deliveries"),
+        api("/api/admin/messages?view=audit"),
+        api("/api/admin/messages?view=registrations")
       ]);
     } catch {
       status.hidden = false;
@@ -282,7 +344,7 @@
       document.getElementById("panel").hidden = false;
       return;
     }
-    const [messages, inbox, people, soundConfig, deliveryLog] = responses;
+    const [messages, inbox, people, soundConfig, deliveryLog, auditLog, registrationLog] = responses;
     if (responses.some((response) => response.status === 401)) {
       document.getElementById("login-card").hidden = false;
       document.getElementById("panel").hidden = true;
@@ -300,6 +362,8 @@
     renderUsers();
     if (soundConfig.ok) renderSounds((await bodyOf(soundConfig)).sounds || {});
     if (deliveryLog.ok) renderDeliveries((await bodyOf(deliveryLog)).events || []);
+    if (auditLog.ok) renderAudit((await bodyOf(auditLog)).events || []);
+    if (registrationLog.ok) renderRegistrations((await bodyOf(registrationLog)).events || []);
   }
 
   // Delegation is registered once so repeated refreshes never stack listeners.
@@ -315,6 +379,13 @@
     }
     if (button.dataset.mark) {
       if ((await api("/api/admin/messages", { method: "POST", body: JSON.stringify({ markId: button.dataset.mark, status: button.dataset.status }) })).ok) load();
+    }
+    if (button.dataset.deleteUser) {
+      const name = button.dataset.userName || "هذا المستخدم";
+      if (!confirm(`حذف ${name} نهائيًا؟ سيُحذف صف المستخدم ونسخة المزامنة ورسائل الدعم وصورها. لا يمكن التراجع.`)) return;
+      const res = await api("/api/admin/messages", { method: "POST", body: JSON.stringify({ action: "deleteUser", userId: button.dataset.deleteUser, confirm: "DELETE" }) });
+      if (!res.ok) alert("تعذّر حذف المستخدم.");
+      load();
     }
   });
 
@@ -345,9 +416,10 @@
     if (targetMode === "audience" && !audienceProfile && !minVersionCode) {
       status.textContent = "اختر فئة أو اكتب إصدارًا أدنى."; return;
     }
+    const expiresInDays = document.getElementById("expires-in").value;
     const res = await api("/api/admin/messages", {
       method: "POST",
-      body: JSON.stringify({ title, body, targetMode, audienceProfile, minVersionCode, targetRef })
+      body: JSON.stringify({ title, body, targetMode, audienceProfile, minVersionCode, targetRef, ...(expiresInDays ? { expiresInDays: Number(expiresInDays) } : {}) })
     });
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
@@ -372,7 +444,19 @@
     document.getElementById("target-user").value = "";
     document.getElementById("audience").value = "student";
     document.getElementById("min-version").value = "0";
+    document.getElementById("expires-in").value = "";
     updateModeFields();
+    load();
+  });
+
+  document.getElementById("delete-selected").addEventListener("click", async () => {
+    const selected = [...document.querySelectorAll(".user-select:checked")].map((box) => box.dataset.userId).filter(Boolean);
+    if (!selected.length) { alert("حدّد مستخدمًا واحدًا على الأقل."); return; }
+    if (!confirm(`حذف ${selected.length} مستخدم نهائيًا؟ سيُحذف كل صف ونسخة مزامنة ورسائل دعم وصور. لا يمكن التراجع.`)) return;
+    const typed = prompt('للتأكيد اكتب: DELETE ALL');
+    if (typed !== "DELETE ALL") { alert("أُلغي الحذف الجماعي."); return; }
+    const res = await api("/api/admin/messages", { method: "POST", body: JSON.stringify({ action: "deleteUsers", userIds: selected, confirm: "DELETE ALL" }) });
+    if (!res.ok) alert("تعذّر الحذف الجماعي.");
     load();
   });
 

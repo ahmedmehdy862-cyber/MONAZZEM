@@ -63,6 +63,11 @@ function makeStore(initialUsers = []) {
   let issued = 0;
   return {
     normalizeProfileId,
+    visibleMessages: (messages, now = Date.now()) =>
+      (Array.isArray(messages) ? messages : []).filter((item) => {
+        const time = Date.parse(String(item?.expiresAt || ""));
+        return !(Number.isFinite(time) && time <= now);
+      }),
     readUsers: async () => currentUsers.map((item) => ({ ...item })),
     readMessages: async () => [],
     readNotificationSounds: async () => ({ sounds: {}, updatedAt: "" }),
@@ -102,7 +107,7 @@ function loadHandler(store, syncStore) {
   return loadMocked("api/messages.js", {
     "../lib/messaging-store": store,
     "../lib/sync-store": syncStore || { authenticate: async () => false },
-    "../lib/admin-auth": { parseBody: (body) => body || {} },
+    "../lib/admin-auth": { parseBody: (body) => body || {}, setSecurityHeaders: () => {} },
   });
 }
 

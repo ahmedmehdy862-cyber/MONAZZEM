@@ -16,28 +16,51 @@ async function readBlob(access) {
   return null;
 }
 
+/**
+ * B2 (SA-P1-2): "no credential stored" and "credential read failed" are
+ * DIFFERENT outcomes and must never be confused.
+ *
+ * - Returns null ONLY when no stored credential exists (no token configured,
+ *   or neither the private nor the legacy record exists). Callers may then
+ *   fall back to the env bootstrap password.
+ * - THROWS (error.code === "credential_read_failed") on any read/write error,
+ *   including a transient Blob outage. Callers must fail closed (503) and
+ *   NEVER fall back to the env bootstrap password on an error — otherwise a
+ *   Blob outage silently re-enables the retired bootstrap credential.
+ */
 async function readCredential() {
   if (!process.env.BLOB_READ_WRITE_TOKEN) return null;
+  let current;
   try {
-    const current = await readBlob(ACCESS);
-    if (current) return current;
-    // Public and private blobs live on different hosts. Older installs wrote this record to the
-    // public host, so copy it once before deleting the public copy instead of losing admin access.
-    const legacy = await readBlob(LEGACY_ACCESS);
-    if (!legacy) return null;
-    await writeCredential(legacy);
-    try {
-      const { del } = await import("@vercel/blob");
-      await del(PATH, { access: LEGACY_ACCESS });
-    } catch (error) {
-      console.error("legacy credential cleanup failed", error?.message || "unknown");
-    }
-    console.log("admin credential migrated to private Blob");
-    return legacy;
+    current = await readBlob(ACCESS);
   } catch (error) {
     console.error("credential read failed", error?.message || "unknown");
+    const failure = new Error("credential_read_failed");
+    failure.code = "credential_read_failed";
+    throw failure;
   }
-  return null;
+  if (current) return current;
+  // Public and private blobs live on different hosts. Older installs wrote this record to the
+  // public host, so copy it once before deleting the public copy instead of losing admin access.
+  let legacy;
+  try {
+    legacy = await readBlob(LEGACY_ACCESS);
+  } catch (error) {
+    console.error("credential read failed", error?.message || "unknown");
+    const failure = new Error("credential_read_failed");
+    failure.code = "credential_read_failed";
+    throw failure;
+  }
+  if (!legacy) return null;
+  await writeCredential(legacy);
+  try {
+    const { del } = await import("@vercel/blob");
+    await del(PATH, { access: LEGACY_ACCESS });
+  } catch (error) {
+    console.error("legacy credential cleanup failed", error?.message || "unknown");
+  }
+  console.log("admin credential migrated to private Blob");
+  return legacy;
 }
 
 async function writeCredential(record) {
@@ -69,4 +92,10 @@ async function mustChangePassword() {
   return Boolean(record.mustChange);
 }
 
-module.exports = { readCredential, writeCredential, hashPassword, verifyPassword, mustChangePassword };
+/** Current session-generation counter; 0 when no credential is stored yet. */
+function sessionVersionOf(record) {
+  const version = Number(record?.sessionVersion || 0);
+  return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+}
+
+module.exports = { readCredential, writeCredential, hashPassword, verifyPassword, mustChangePassword, sessionVersionOf };

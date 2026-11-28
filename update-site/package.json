@@ -14,7 +14,8 @@
     "test:web": "node scripts/test-web-data.cjs",
     "test:history": "node scripts/test-release-history.cjs",
     "test:session": "node scripts/test-admin-session.cjs",
-    "test:catalog": "node scripts/test-app-catalog.cjs"
+    "test:catalog": "node scripts/test-app-catalog.cjs",
+    "test:server-audit": "node scripts/test-final-audit-server.cjs"
   },
   "dependencies": {
     "@vercel/blob": "2.9.0"

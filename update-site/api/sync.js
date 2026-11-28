@@ -3,7 +3,7 @@ const {
   readSync, writeSync, mergeSync, stripEncrypted, deleteSync, deleteAccount,
 } = require("../lib/sync-store");
 const { readUsers } = require("../lib/messaging-store");
-const { parseBody, json } = require("../lib/admin-auth");
+const { parseBody, json, setSecurityHeaders } = require("../lib/admin-auth");
 const { limiter } = require("../lib/sync-rate-limit");
 
 const ACTIONS = new Set(["register", "pull", "push", "delete"]);
@@ -17,6 +17,7 @@ const ACTIONS = new Set(["register", "pull", "push", "delete"]);
  * Failed authentication is rate-limited per caller; storage errors never spend a caller's slots.
  */
 module.exports = async function sync(request, response) {
+  setSecurityHeaders(response);
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     return json(response, 405, { error: "method_not_allowed" });
