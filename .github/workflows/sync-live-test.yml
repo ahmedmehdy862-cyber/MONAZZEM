@@ -315,9 +315,14 @@ jobs:
           script: |
             ./gradlew installDebug --no-daemon
             # دفع بيانات الاعتماد إلى filesDir قبل تشغيل الاختبار (عبر stdin؛ لا تظهر في السجل).
-            # التطبيق مثبّت جديد ولم يُشغَّل بعد، فمجلد filesDir غير موجود أصلاً (أندرويد ينشئه كسولاً عند أول تشغيل) — إنشاؤه أولاً وإلا فشل الدفع بـ Permission denied (run 46131205163).
+            # تشغيل التطبيق مرة واحدة أولاً حتى ينشئ filesDir بنفسه بسياق SELinux الصحيح:
+            # في run 46132986978 أثبت `ls -ld` أن المجلد موجود بصلاحيات كاملة (أنشأه mkdir -p)
+            # ومع ذلك فشل الدفع بـ Permission denied — فالمشكلة في سياق المجلد لا في وجوده.
+            adb shell am start -W -n com.focusstudy.poc/.MainActivity
+            sleep 10
             adb shell run-as com.focusstudy.poc mkdir -p /data/data/com.focusstudy.poc/files
             adb shell run-as com.focusstudy.poc ls -ld /data/data/com.focusstudy.poc /data/data/com.focusstudy.poc/files
+            adb shell run-as com.focusstudy.poc ls -Z /data/data/com.focusstudy.poc /data/data/com.focusstudy.poc/files || true
             adb shell run-as com.focusstudy.poc sh -c 'cat > /data/data/com.focusstudy.poc/files/sync-live-credentials.json' < sync-live-credentials.json
             ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveVerifyTest
             timeout 60 adb logcat -d > ./logcat-verify.txt || true
