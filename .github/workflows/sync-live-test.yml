@@ -314,16 +314,19 @@ jobs:
           disable-animations: true
           script: |
             ./gradlew installDebug --no-daemon
-            # دفع بيانات الاعتماد إلى filesDir قبل تشغيل الاختبار (عبر stdin؛ لا تظهر في السجل).
-            # تشغيل التطبيق مرة واحدة أولاً حتى ينشئ filesDir بنفسه بسياق SELinux الصحيح:
-            # في run 46132986978 أثبت `ls -ld` أن المجلد موجود بصلاحيات كاملة (أنشأه mkdir -p)
-            # ومع ذلك فشل الدفع بـ Permission denied — فالمشكلة في سياق المجلد لا في وجوده.
+            # دفع بيانات الاعتماد قبل تشغيل الاختبار (الخيار أ):
+            # إعادة توجيه shell تحت run-as معطلة على صورة هذا المحاكي (runs 15–17 فشلت
+            # بـ Permission denied رغم وجود المجلد بسياق SELinux الصحيح) — فتُدفع بيانات
+            # الاعتماد إلى المجلد الخارجي الخاص بالتطبيق على /sdcard، وreadCredentials
+            # يقرأه من هناك مباشرة (fallback موجود أصلاً في SyncLiveTestSupport).
             adb shell am start -W -n com.focusstudy.poc/.MainActivity
             sleep 10
             adb shell run-as com.focusstudy.poc mkdir -p /data/data/com.focusstudy.poc/files
             adb shell run-as com.focusstudy.poc ls -ld /data/data/com.focusstudy.poc /data/data/com.focusstudy.poc/files
             adb shell run-as com.focusstudy.poc ls -Z /data/data/com.focusstudy.poc /data/data/com.focusstudy.poc/files || true
-            adb shell run-as com.focusstudy.poc sh -c 'cat > /data/data/com.focusstudy.poc/files/sync-live-credentials.json' < sync-live-credentials.json
+            adb shell mkdir -p /sdcard/Android/data/com.focusstudy.poc/files
+            adb push sync-live-credentials.json /sdcard/Android/data/com.focusstudy.poc/files/sync-live-credentials.json
+            adb shell ls -ld /sdcard/Android/data/com.focusstudy.poc/files/sync-live-credentials.json || true
             ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveVerifyTest
             timeout 60 adb logcat -d > ./logcat-verify.txt || true
 
