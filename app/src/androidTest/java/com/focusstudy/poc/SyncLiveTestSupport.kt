@@ -167,6 +167,41 @@ internal object SyncLiveTestSupport {
         return JSONObject(response)
     }
 
+    /**
+     * تشخيص (يُطبع دائمًا بعد السحب وقبل الـ assertions): ماذا أعادت اللقطة
+     * المسحوبة فعلًا من الخادم، وماذا في القاعدة المحلية بعدها — يحدد إن كان
+     * الخلل في السحب أم في التطبيق. سحب خام مستقل عن منطق التطبيق (rawPull).
+     * يظهر في system-out بتقرير XML (println) وفي logcat (Log.i) فيُصنَّف في
+     * مصنّف sync-live-verify-logcat. لا يغيّر أي assertion.
+     */
+    fun dumpSyncDiag(profileId: String, passphrase: String, localTasks: List<StudyTask>) {
+        val snapshot = runCatching { rawPull(profileId, passphrase) }.getOrNull()
+        val snapArray = snapshot?.optJSONObject("data")?.optJSONArray("tasks")
+        val snapLines = StringBuilder()
+        if (snapArray == null) {
+            snapLines.append("RAW_PULL_FAILED")
+        } else {
+            for (i in 0 until snapArray.length()) {
+                val t = snapArray.optJSONObject(i) ?: continue
+                snapLines.append("{id=${t.opt("id")} title=${t.optString("title")} ")
+                snapLines.append("status=${t.optString("status")} updatedAt=${t.optLong("updatedAt")} ")
+                snapLines.append("deleted=${t.optBoolean("deleted", false)}} ")
+            }
+        }
+        val winInSnapshot = if (snapArray == null) false else
+            (0 until snapArray.length()).any { snapArray.optJSONObject(it)?.optString("title") == WINDOWS_TASK_TITLE }
+        val localLines = localTasks.joinToString(" ") {
+            "{id=${it.id} title=${it.title} status=${it.status} isDone=${it.isDone}}"
+        }
+        val text = "SyncLiveDiag revision=${snapshot?.optLong("revision", -1L)} " +
+            "snapshotTasks=${snapArray?.length() ?: -1} [$snapLines] " +
+            "localTasks=${localTasks.size} [$localLines] " +
+            "winInSnapshot=$winInSnapshot " +
+            "winInLocal=${localTasks.any { it.title == WINDOWS_TASK_TITLE }}"
+        println(text)
+        Log.i("SyncLiveDiag", text)
+    }
+
     fun writeCredentials(context: Context, credentials: JSONObject): File {
         val file = File(context.filesDir, CREDENTIALS_FILE)
         file.writeText(credentials.toString())

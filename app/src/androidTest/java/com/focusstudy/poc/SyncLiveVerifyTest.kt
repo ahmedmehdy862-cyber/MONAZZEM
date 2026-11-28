@@ -45,6 +45,10 @@ class SyncLiveVerifyTest {
         val db = StudyDb.get(context)
         val tasks = db.tasks()
 
+        // تشخيص قبل الـ assertions: اللقطة المسحوبة مقابل القاعدة المحلية —
+        // يحدد إن كان الخلل في السحب أم في التطبيق عند أي فشل لاحق.
+        SyncLiveTestSupport.dumpSyncDiag(profileId, passphrase, tasks)
+
         // مهمة ويندوز وصلت — بمعرّف سالب (عقد §7: معرّفات ويندوز سالبة).
         val winTask = tasks.firstOrNull { it.title == SyncLiveTestSupport.WINDOWS_TASK_TITLE }
         assertNotNull("Windows task did not arrive on Android", winTask)
