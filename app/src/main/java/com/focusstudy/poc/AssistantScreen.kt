@@ -10,25 +10,26 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.onSizeChanged
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.derivedStateOf
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -218,7 +219,7 @@ internal fun AssistantScreen(
         companionController?.think()
         scope.launch {
             try {
-                val fresh = AssistantKnowledge.load(context, userName)
+                val fresh = withContext(Dispatchers.IO) { AssistantKnowledge.load(context, userName) }
                 snapshot = fresh
                 val reply = AssistantEngine.reply(clean, fresh, settings, facts, profile, today = today, zone = zone)
                 reply.learnedFact?.let { learned ->
@@ -347,16 +348,17 @@ internal fun AssistantScreen(
         }
     }
 
+    // الترحيب فوري — قبل أي قراءة قاعدة بيانات: التحية البسيطة لا تحتاج
+    // اللقطة، فتظهر في أول إطار بعد فتح الشاشة. (عيب أول فتح للشات: انتظار
+    // AssistantKnowledge.load() — عشرات قراءات قاعدة البيانات — على الـ Main
+    // كان يؤخر الترحيب إلى ما بعد مهلة اختبار البوابة.)
     LaunchedEffect(Unit) {
-        val loaded = AssistantKnowledge.load(context, userName)
+        if (messages.isEmpty()) {
+            addMessage("assistant", AssistantEngine.greeting(settings, userName))
+        }
+        val loaded = withContext(Dispatchers.IO) { AssistantKnowledge.load(context, userName) }
         snapshot = loaded
         memories = loaded.context.memories
-        if (messages.isEmpty()) {
-            addMessage(
-                "assistant",
-                AssistantEngine.greeting(settings, loaded, AssistantEngine.parseProfileFacts(profile))
-            )
-        }
     }
     // تُسجَّل الاقتراحات المعروضة (قبول/عرض) مرة لكل لقطة، ليتعلم المساعد
     // أي نوع اقتراح ينفع فعلًا وأي نوع يتجاهله المستخدم.
@@ -460,6 +462,14 @@ internal fun AssistantScreen(
         Spacer(Modifier.height(12.dp))
 
         if (tab == 0) {
+            // جسم الشات مثبّت (إصلاح عيب أول فتح للشات): قائمة الرسائل تملأ
+            // المساحة، وشريط الرقاقات والإدخال مثبّت في أسفل الشاشة بلا
+            // اعتماد على weight — فحتى لو انهار توزيع الـ weight في السلف،
+            // يبقى حقل الإدخال ظاهرًا والرقاقات غير مقصوصة. ارتفاع الشريط
+            // السفلي يُقاس وقت التشغيل فيُحجز مثله أسفل القائمة حتى لا
+            // تُحجب آخر رسالة خلف الشريط.
+            val density = LocalDensity.current
+            var bottomBarHeight by remember { mutableStateOf(0.dp) }
             // زر قفز للأعلى (A4): يظهر بعد التمرير لأسفل، فيعود المستخدم
             // لفقاعة الترحيب بلا تمرير يدوي طويل.
             val showScrollTop by remember {
@@ -467,23 +477,32 @@ internal fun AssistantScreen(
                     listState.firstVisibleItemIndex > 1 || listState.firstVisibleItemScrollOffset > 0
                 }
             }
-            if (showScrollTop) {
-                TextButton(onClick = { scope.launch { listState.animateScrollToItem(0) } }) {
-                    Text("↑ العودة لأول المحادثة")
+            Box(Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = 16.dp, bottom = bottomBarHeight + 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(messages) { message -> AssistantMessageBubble(message) }
                 }
-            }
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(top = 16.dp, bottom = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(messages) { message -> AssistantMessageBubble(message) }
-            }
-            Spacer(Modifier.height(8.dp))
+                if (showScrollTop) {
+                    TextButton(
+                        onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                        modifier = Modifier.align(Alignment.TopCenter)
+                    ) {
+                        Text("↑ العودة لأول المحادثة")
+                    }
+                }
+                Column(
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .background(FocusColors.Surface)
+                        .onSizeChanged { size -> bottomBarHeight = with(density) { size.height.toDp() } }
+                ) {
+                    Spacer(Modifier.height(8.dp))
             // صف الأوامر التنفيذية أولًا: الضغط على أي منها ينفّذ الفعل فعلًا
             // (إضافة مهمة، تسجيل ورد، بدء جلسة، فتح المصحف أو خطة اليوم).
-            FadedChipRow {
+            WrappedChipRow {
                 ASSISTANT_ACTION_PROMPTS.forEach { prompt ->
                     AssistChip(onClick = { send(prompt) }, label = { Text(prompt) })
                 }
@@ -492,7 +511,7 @@ internal fun AssistantScreen(
             // رقاقات متكيفة من بيانات المستخدم (لا أسئلة ثابتة): كل رقاقة
             // تُرسل نصها وتُسجَّل قبولًا ليتعلم المساعد ما ينفع. بلا بيانات
             // كافية تُعرض الأسئلة المعروفة كبداية فقط.
-            FadedChipRow {
+            WrappedChipRow {
                 if (suggestions.isNotEmpty()) {
                     suggestions.forEach { suggestion ->
                         AssistChip(
@@ -554,7 +573,7 @@ internal fun AssistantScreen(
             // رقاقات توضيحية: خيارات سؤال المساعد التوضيحي (مثلًا «خلصت إيه؟»).
             if (pendingChips.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                FadedChipRow {
+                WrappedChipRow {
                     pendingChips.forEach { chip ->
                         AssistChip(
                             onClick = {
@@ -620,6 +639,8 @@ internal fun AssistantScreen(
                     modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
                 )
             } ?: Spacer(Modifier.height(8.dp))
+                } // نهاية شريط الرقاقات والإدخال المثبّت في الأسفل
+            } // نهاية Box جسم الشات
         } else {
             Column(
                 Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -741,37 +762,19 @@ private fun AssistantMessageBubble(message: AssistantChatMessage) {
 }
 
 /**
- * صف رقاقات أفقي قابل للتمرير مع حشوة أفقية وتدرج حافة (A4/A-08): الرقاقة
- * الطرفية لا تُقصّ عند حافة الشاشة، والتدرج يوحي بوجود المزيد. طبقتا
- * التدرج زخرفيتان بلا معالج لمس فلا تحجبان ضغطات الرقاقات.
+ * صف رقاقات ملتفّ (A4/A-08، إصلاح عيب أول فتح للشات): الرقاقات تلتفّ على
+ * أسطر بدل التمرير الأفقي، فلا تُقصّ أي رقاقة عند حافة الشاشة — التمرير
+ * الأفقي كان يخفي الرقاقة الطرفية اليسرى («سجّل ورد اليوم»).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FadedChipRow(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
-    Box(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
-        ) {
-            Spacer(Modifier.width(12.dp))
-            content()
-            Spacer(Modifier.width(12.dp))
-        }
-        Box(
-            Modifier.align(Alignment.CenterStart).width(24.dp).fillMaxHeight()
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(FocusColors.Surface.copy(alpha = 0f), FocusColors.Surface)
-                    )
-                )
-        )
-        Box(
-            Modifier.align(Alignment.CenterEnd).width(24.dp).fillMaxHeight()
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(FocusColors.Surface, FocusColors.Surface.copy(alpha = 0f))
-                    )
-                )
-        )
+private fun WrappedChipRow(content: @Composable () -> Unit) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip),
+        verticalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
+    ) {
+        content()
     }
 }
 

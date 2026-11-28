@@ -842,7 +842,11 @@ class EmulatorQaTest {
             openSection("مساعدي")
             shot("60-assistant-chat")
         }
-        step("assistant-greeting-unclipped") {
+        // تأكيدات صلبة (إصلاح عيب أول فتح للشات): خارج step() الذي يبتلع
+        // الفشل — أي فشل هنا يُسقط الاختبار، مع تفريغ هرمية النافذة
+        // ولقطة للتشخيص. يغطي: الترحيب غير مقصوص + حقل الإدخال ظاهر
+        // + الرقاقة الطرفية («سجّل ورد اليوم») كاملة بلا قص.
+        try {
             val greetingFound = runCatching { device.wait(Until.hasObject(By.textContains("أهلًا")), 10000) }.getOrDefault(false)
             val greeting = if (greetingFound) device.findObject(By.textContains("أهلًا")) else null
             val tabs = device.findObject(By.text("المحادثة"))
@@ -852,7 +856,32 @@ class EmulatorQaTest {
             val unclipped = greeting != null && top > tabsBottom && height > 0
             log("ASSISTANT GREETING found=$greetingFound top=$top tabsBottom=$tabsBottom height=$height unclipped=$unclipped")
             check(unclipped) { "greeting bubble clipped or missing (top=$top tabsBottom=$tabsBottom)" }
+            // تأكيد 1: حقل الإدخال ظاهر وكامل على الشاشة.
+            val inputFound = runCatching { device.wait(Until.hasObject(By.clazz("android.widget.EditText")), 10000) }.getOrDefault(false)
+            val input = if (inputFound) device.findObject(By.clazz("android.widget.EditText")) else null
+            val inputBounds = input?.visibleBounds
+            val inputVisible = input != null && inputBounds != null && inputBounds.height() > 0 &&
+                inputBounds.top >= 0 && inputBounds.bottom <= device.displayHeight
+            log("ASSISTANT INPUT found=$inputFound bounds=$inputBounds visible=$inputVisible")
+            check(inputVisible) { "assistant input field missing or off-screen (bounds=$inputBounds)" }
+            // تأكيد 2: الرقاقة الطرفية («سجّل ورد اليوم») ظاهرة كاملة بلا قص.
+            val chipFound = runCatching { device.wait(Until.hasObject(By.text("سجّل ورد اليوم")), 10000) }.getOrDefault(false)
+            val chip = if (chipFound) device.findObject(By.text("سجّل ورد اليوم")) else null
+            val chipBounds = chip?.visibleBounds
+            val chipWhole = chip != null && chipBounds != null && chipBounds.height() > 0 &&
+                chipBounds.left >= 0 && chipBounds.right <= device.displayWidth &&
+                chipBounds.top >= 0 && chipBounds.bottom <= device.displayHeight
+            log("ASSISTANT CHIP found=$chipFound bounds=$chipBounds whole=$chipWhole")
+            check(chipWhole) { "leftmost chip clipped or missing (bounds=$chipBounds display=${device.displayWidth}x${device.displayHeight})" }
             shot("61-assistant-greeting")
+        } catch (e: Throwable) {
+            runCatching {
+                val dump = File(shotDir, "hierarchy-assistant-failure.xml")
+                device.dumpWindowHierarchy(dump)
+                log("HIERARCHY DUMP -> ${dump.name} size=${dump.length()}")
+            }
+            shot("61-assistant-failure")
+            throw e
         }
         log("assistant bubble unclipped done")
     }
