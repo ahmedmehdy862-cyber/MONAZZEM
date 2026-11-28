@@ -69,6 +69,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // نسخة تجريبية فقط (فرع test-035-debug-2): تُثبَّت كتطبيق منفصل
+            // بجانب النسخة المنشورة — لا تمس بيانات المستخدم إطلاقًا.
+            applicationIdSuffix = ".debug"
+        }
         release {
             // م7: تصغير R8 مفعّل — الزيادة ~10MB (PDFBox + Compose + الأيقونات)
             // لا تُقبل بصمت. قواعد الحفظ في proguard-rules.pro (PDFBox/adhan/
