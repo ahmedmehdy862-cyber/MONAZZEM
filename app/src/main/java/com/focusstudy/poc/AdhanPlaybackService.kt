@@ -115,12 +115,20 @@ internal class AdhanPlaybackService : Service() {
                     Uri.parse("android.resource://${packageName}/${PrayerAdhanSounds.resource(voice)}")
                 )
                 setOnCompletionListener { stopPlayback(); stopSelf() }
-                setOnErrorListener { _, _, _ -> stopPlayback(); stopSelf(); true }
-                prepare()
-                start()
+                setOnErrorListener { _, _, _ -> starting = false; stopPlayback(); stopSelf(); true }
+                // A5: تحضير غير متزامن — prepare() المتزامن كان يحجب خيط
+                // الخدمة الرئيسي (ادعاء الطي السابق غير موجود بالكود).
+                // starting يبقى true حتى جهوزية التشغيل فيمنع تشغيلًا مكررًا،
+                // ويُصفَّر عند الخطأ أو الإيقاف أيضًا.
+                setOnPreparedListener { prepared ->
+                    if (player === prepared) {
+                        starting = false
+                        prepared.start()
+                    }
+                }
+                prepareAsync()
             }
-        }.onFailure { stopPlayback() }.getOrNull()
-        starting = false
+        }.onFailure { starting = false; stopPlayback() }.getOrNull()
         if (player == null) stopSelf()
     }
 
@@ -200,6 +208,7 @@ internal class AdhanPlaybackService : Service() {
     }
 
     private fun stopPlayback() {
+        starting = false
         player?.runCatching {
             setOnCompletionListener(null)
             setOnErrorListener(null)

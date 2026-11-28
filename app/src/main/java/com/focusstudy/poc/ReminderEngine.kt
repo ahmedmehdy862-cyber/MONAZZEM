@@ -48,6 +48,28 @@ internal object ReminderEngine {
     private const val NOTIFICATION_BASE_ID = 7300
     private const val DEFER_PREFIX = "deferred|"
     private const val PERMISSION_RETRY_MS = 30 * 60 * 1000L
+    /** ملف حالة سقف المنبهات: عدد التذكيرات المسقَطة عند آخر إعادة بناء. */
+    private const val CAP_PREFS = "reminder_cap_state"
+    private const val KEY_CAP_DROPPED = "cap_dropped_count"
+
+    /** عدد التذكيرات التي تجاوزت سقف 30 منبهًا عند آخر إعادة بناء (0 إن لم يُتجاوز). */
+    fun capWarning(context: Context): Int =
+        context.getSharedPreferences(CAP_PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CAP_DROPPED, 0)
+
+    /** يمسح تحذير السقف بعد أن يقرأه المستخدم («فهمت»). */
+    fun clearCapWarning(context: Context) {
+        context.getSharedPreferences(CAP_PREFS, Context.MODE_PRIVATE)
+            .edit().putInt(KEY_CAP_DROPPED, 0).apply()
+    }
+
+    /** يرتب التذكيرات القادمة بالأقرب موعدًا أولًا (A8) — الأولوية للموعد
+     * لا لترتيب الإدخال — ويعيد قائمة الجدولة + عدد المسقَطين عن السقف. */
+    internal fun prioritizeUpcoming(reminders: List<StoredReminder>, now: Long): Pair<List<StoredReminder>, Int> {
+        val upcoming = reminders.filter { it.fireAt > now }.sortedBy { it.fireAt }
+        val scheduled = upcoming.take(MAX_ALARMS)
+        return scheduled to (upcoming.size - scheduled.size)
+    }
 
     fun channels(context: Context) {
         // Task and exam alerts use the new high-priority channels so they appear on screen.
@@ -108,8 +130,13 @@ internal object ReminderEngine {
     private fun scheduleAlarms(context: Context, db: StudyDb) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = System.currentTimeMillis()
-        val upcoming = db.pendingReminders(MAX_ALARMS * 4).filter { it.fireAt > now }.take(MAX_ALARMS)
-        for (reminder in upcoming) {
+        // A8: الأولوية للأقرب موعدًا؛ وما زاد عن السقف يُحفظ عدده للتحذير
+        // داخل التطبيق بدل إسقاطه بصمت. pendingReminders مرتبة بـ fire_at
+        // أصلًا، لكن الترتيب هنا صريح حتى لو تغيّر مصدر الصفوف.
+        val (scheduled, dropped) = prioritizeUpcoming(db.pendingReminders(MAX_ALARMS * 4), now)
+        context.getSharedPreferences(CAP_PREFS, Context.MODE_PRIVATE)
+            .edit().putInt(KEY_CAP_DROPPED, dropped).apply()
+        for (reminder in scheduled) {
             val decoded = decodeKind(reminder.kind)
             scheduleFire(
                 context,

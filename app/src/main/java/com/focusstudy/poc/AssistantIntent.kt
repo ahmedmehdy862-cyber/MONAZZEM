@@ -39,7 +39,9 @@ sealed class ClassifiedIntent {
         val title: String,
         val dueAt: Long?,
         val priorityLevel: Int?,
-        val recurrence: Recurrence
+        val recurrence: Recurrence,
+        /** مدة المهمة بالدقائق كما ذكرها المستخدم، أو null للافتراضي. */
+        val durationMinutes: Int? = null
     ) : ClassifiedIntent()
 
     /** غامض: سؤال توضيحي يسمّي الخيارات الحقيقية من بيانات المستخدم. */
@@ -73,7 +75,7 @@ internal object AssistantIntentClassifier {
      */
     private fun clarifyIfAmbiguous(lower: String, snapshot: AssistantSnapshot): ClassifiedIntent.Clarify? {
         val user = snapshot.userName.ifBlank { "صديقي" }
-        val bareDone = (lower == "خلصت" || lower == "خلصت كل حاجة" || lower == "خلصت اللي عليا" ||
+        val bareDone = (lower == "خلصت" || lower == "خلصت كل حاجة" || lower == "خلصت كل حاجه" || lower == "خلصت اللي عليا" ||
             lower == "خلصت كل اللي عليا" || lower == "تم" || lower == "تمام") &&
             !lower.contains("ورد")
         if (bareDone) {
@@ -162,10 +164,10 @@ internal object AssistantIntentClassifier {
         zone: ZoneId
     ): ClassifiedIntent.ProposeTask? {
         val triggers = listOf(
-            "عندي امتحان", "عندي مقابلة", "عندي اجتماع", "عندي تسليم", "عندي واجب",
-            "عندي مذاكرة", "عندي مراجعه", "عندي مراجعة", "لازم أخلص", "لازم اخلص",
+            "عندي امتحان", "عندي مقابلة", "عندي مقابله", "عندي اجتماع", "عندي تسليم", "عندي واجب",
+            "عندي مذاكرة", "عندي مذاكره", "عندي مراجعه", "عندي مراجعة", "لازم أخلص", "لازم اخلص",
             "محتاج أذاكر", "محتاج اذاكر", "عايز أذاكر", "عايز اذاكر", "عندي شغل",
-            "عندي محاضرة", "عندي درس"
+            "عندي محاضرة", "عندي محاضره", "عندي درس"
         )
         if (triggers.none { lower.contains(it) }) return null
         if (lower.contains("ضيف") || lower.contains("أضف") || lower.contains("اضف")) return null
@@ -190,7 +192,8 @@ internal object AssistantIntentClassifier {
             title = title,
             dueAt = dueAt,
             priorityLevel = parsed.priorityLevel,
-            recurrence = parsed.recurrence
+            recurrence = parsed.recurrence,
+            durationMinutes = parsed.durationMinutes
         )
     }
 }

@@ -212,8 +212,17 @@ internal fun AvatarPortrait(
     size: Dp,
     modifier: Modifier = Modifier
 ) {
-    val bitmap = remember(avatarPath) {
-        if (avatarPath.isNotBlank()) runCatching { BitmapFactory.decodeFile(avatarPath)?.asImageBitmap() }.getOrNull() else null
+    // A4 (A-04): فك ترميز JPEG على IO لا على الخيط الرئيسي أثناء التركيب —
+    // كان decodeFile متزامنًا في remember فيعيق كل إعادة تركيب.
+    var bitmap by remember(avatarPath) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    androidx.compose.runtime.LaunchedEffect(avatarPath) {
+        bitmap = withContext(Dispatchers.IO) {
+            if (avatarPath.isNotBlank()) {
+                runCatching { BitmapFactory.decodeFile(avatarPath)?.asImageBitmap() }.getOrNull()
+            } else {
+                null
+            }
+        }
     }
     val style = CompanionStyle.all[styleIndex.coerceIn(0, CompanionStyle.all.lastIndex)]
     Box(modifier.size(size), contentAlignment = Alignment.Center) {

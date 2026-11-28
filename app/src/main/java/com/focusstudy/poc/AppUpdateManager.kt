@@ -33,6 +33,11 @@ internal data class AppRelease(
     val releaseNotes: String,
     /** رابط ملف APK المباشر من الموجز؛ فارغ إن لم ينشره الموجز بعد. */
     val apkUrl: String,
+    /**
+     * بصمة SHA-256 لملف APK كما نشرها الموجز (A9 — يضيفها الخادم في B9).
+     * null/فارغة تعني موجزًا قديمًا بلا حقل: يُتخطى التحقق ولا يفشل الفحص.
+     */
+    val sha256: String? = null,
     /** نسخة ويندوز من الموجز؛ null عند غياب الحقل أو فساده (لا يفشل فحص التحديث). */
     val windows: WindowsRelease? = null
 )
@@ -108,7 +113,10 @@ internal object AppUpdateManager {
 
             val json = JSONObject(jsonText)
             val packageName = json.getString("packageName")
-            require(packageName == app.packageName) { "ملف التحديث لا يخص هذا التطبيق." }
+            // A7: صياغة قابلة للتنفيذ بدل تشخيص المطور — المستخدم يعرف ماذا يفعل.
+            require(packageName == app.packageName) {
+                "ملف التحديث لا يخص هذا التطبيق. تأكد أنك حمّلت التحديث من داخل التطبيق أو من صفحة المتجر الرسمية، ثم اضغط «فحص الآن» لإعادة المحاولة."
+            }
             val versionCode = json.getLong("versionCode")
             require(versionCode > 0) { "رقم إصدار غير صالح." }
             val releasePage = requireHttps(json.getString("releasePageUrl"), "صفحة الإصدار")
@@ -123,6 +131,8 @@ internal object AppUpdateManager {
                 releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة."),
                 apkUrl = json.optString("apkUrl").trim().takeIf { it.isNotEmpty() }
                     ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty(),
+                sha256 = json.optString("sha256").trim().lowercase()
+                    .takeIf { it.matches(Regex("[0-9a-f]{64}")) },
                 windows = parseWindows(json)
             )
 
@@ -165,6 +175,8 @@ internal object AppUpdateManager {
         releaseNotes = json.optString("releaseNotes", "تحسينات وإصلاحات جديدة."),
         apkUrl = json.optString("apkUrl").trim().takeIf { it.isNotEmpty() }
             ?.let { requireHttps(it, "رابط ملف التحديث") }.orEmpty(),
+        sha256 = json.optString("sha256").trim().lowercase()
+            .takeIf { it.matches(Regex("[0-9a-f]{64}")) },
         windows = parseWindows(json)
     )
 

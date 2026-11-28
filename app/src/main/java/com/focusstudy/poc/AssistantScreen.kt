@@ -22,7 +22,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -101,8 +109,9 @@ internal fun AssistantScreen(
     assistantName: String,
     onAssistantNameChanged: (String) -> Unit,
     onOpenTasks: () -> Unit = {},
-    /** تنفّذها MainActivity: إضافة مهمة عبر TaskRepository وإشعار واجهة المهام. */
-    onAssistantAddTask: suspend (String, Long?, Int?, Recurrence) -> Boolean = { _, _, _, _ -> false },
+    /** تنفّذها MainActivity: إضافة مهمة عبر TaskRepository وإشعار واجهة المهام.
+     * [plannedMinutes] مدة المهمة كما ذكرها المستخدم (null للافتراضي 30). */
+    onAssistantAddTask: suspend (String, Long?, Int?, Recurrence, Int?) -> Boolean = { _, _, _, _, _ -> false },
     /** تنفّذها MainActivity: تسجيل ورد اليوم عبر LifeRepository بإعدادات الورد. */
     onAssistantLogWird: suspend () -> Boolean = { false },
     /** تنفّذها MainActivity: بدء جلسة عبر مسار بدء الجلسة القائم أو فتح إعدادها. */
@@ -163,7 +172,7 @@ internal fun AssistantScreen(
      */
     suspend fun executeAssistantAction(action: AssistantAction, confirmation: String): String = when (action) {
         is AssistantAction.AddTask ->
-            if (onAssistantAddTask(action.title, action.dueAt, action.priorityLevel, action.recurrence)) confirmation
+            if (onAssistantAddTask(action.title, action.dueAt, action.priorityLevel, action.recurrence, action.plannedMinutes)) confirmation
             else "حاولت أضيف المهمة بس حصلت مشكلة. جرّب تاني من زر الإضافة السريع."
         AssistantAction.LogWird ->
             if (onAssistantLogWird()) confirmation
@@ -194,9 +203,14 @@ internal fun AssistantScreen(
         }
     }
 
+    /** حارس الإرسال المكرر (A-16): نقرة مزدوجة على زر أو رقاقة لا تُرسل
+     * الرسالة مرتين ولا تنفّذ الفعل مرتين. */
+    var sending by remember { mutableStateOf(false) }
+
     fun send(rawText: String) {
         val clean = rawText.trim()
-        if (clean.isBlank()) return
+        if (clean.isBlank() || sending) return
+        sending = true
         input = ""
         voiceNote = null
         avatarState = AssistantAvatarState.TALKING
@@ -204,29 +218,34 @@ internal fun AssistantScreen(
         // الرفيق يفكر أثناء توليد الرد (M3 — كانت حالة THINKING بلا متصل).
         companionController?.think()
         scope.launch {
-            val fresh = AssistantKnowledge.load(context, userName)
-            snapshot = fresh
-            val reply = AssistantEngine.reply(clean, fresh, settings, facts, profile, today = today, zone = zone)
-            reply.learnedFact?.let { learned ->
-                facts = facts + learned
-                AssistantStore.saveFacts(context, facts)
-                // تُحفظ الحقيقة أيضًا في ذاكرة قاعدة البيانات (بثقة واضمحلال)
-                // لتُسترجع في محادثات لاحقة.
-                withContext(Dispatchers.IO) {
-                    AssistantMemoryStore.saveMemory(context, learned.text, learned.category, source = "chat")
+            try {
+                val fresh = AssistantKnowledge.load(context, userName)
+                snapshot = fresh
+                val reply = AssistantEngine.reply(clean, fresh, settings, facts, profile, today = today, zone = zone)
+                reply.learnedFact?.let { learned ->
+                    facts = facts + learned
+                    AssistantStore.saveFacts(context, facts)
+                    // A2 (A-15): مصدر واحد للحقائق — تُحفظ في التفضيلات فقط؛
+                    // استرجاعها يتم من الحقائق نفسها (memoryAnswer) لا من نسخة
+                    // ثانية في قاعدة البيانات، فلا تظهر مرتين في تبويب الملف.
                 }
+                reply.usedMemoryId?.let { id ->
+                    withContext(Dispatchers.IO) { AssistantMemoryStore.touchMemory(context, id) }
+                }
+                pendingProposal = reply.proposedTask
+                pendingChips = reply.chips
+                // الفعل يُنفَّذ أولًا، ثم يُعرض تأكيده: نص المحرك عند النجاح، أو
+                // رسالة بديلة دقيقة عند الفشل أو عند فتح إعداد الجلسة بدل بدئها.
+                val finalText = reply.action?.let { executeAssistantAction(it, reply.text) } ?: reply.text
+                addMessage("assistant", finalText)
+                // الحارس يُرفع فور ظهور الرد — لا بعد تأخير حالة TALKING
+                // الاصطناعي، فيستطيع المستخدم إرسال رسالة جديدة فورًا.
+                sending = false
+                if (settings.speakReplies) voice.speak(finalText)
+                delay(finalText.length.coerceIn(30, 130) * 45L)
+            } finally {
+                sending = false
             }
-            reply.usedMemoryId?.let { id ->
-                withContext(Dispatchers.IO) { AssistantMemoryStore.touchMemory(context, id) }
-            }
-            pendingProposal = reply.proposedTask
-            pendingChips = reply.chips
-            // الفعل يُنفَّذ أولًا، ثم يُعرض تأكيده: نص المحرك عند النجاح، أو
-            // رسالة بديلة دقيقة عند الفشل أو عند فتح إعداد الجلسة بدل بدئها.
-            val finalText = reply.action?.let { executeAssistantAction(it, reply.text) } ?: reply.text
-            addMessage("assistant", finalText)
-            if (settings.speakReplies) voice.speak(finalText)
-            delay(finalText.length.coerceIn(30, 130) * 45L)
             avatarState = AssistantAvatarState.IDLE
             companionController?.playIdle()
         }
@@ -236,7 +255,9 @@ internal fun AssistantScreen(
         AssistantSpeechRecognizer(
             context = context,
             onResult = { heard -> send(heard) },
-            onPartial = { heard -> input = heard },
+            // A4 (A-21): النتائج الجزئية لا تستبدل نصًا كتبه المستخدم —
+            // تُملأ فقط إن كان الحقل فارغًا (إملاء صوتي من الصفر).
+            onPartial = { heard -> if (input.isBlank()) input = heard },
             onError = { message ->
                 voiceNote = message
                 avatarState = AssistantAvatarState.IDLE
@@ -283,7 +304,16 @@ internal fun AssistantScreen(
         profile = clean.take(20_000)
         AssistantStore.saveProfile(context, profile)
         saveSettings(settings.copy(profileImported = true))
-        importStatus = "تمام، حفظت ملفك التعريفي من $sourceLabel (${profile.length} حرف). من النهاردة هستخدمه عشان أفهمك أكتر."
+        // A2: تحليل السطور الموسومة إلى حقائق مصنّفة (اسم/هدف/روتين/صحة…)
+        // تُستخدم في التحية والخطة؛ سطر بلا وسم يبقى اقتباسًا حرفيًا فقط.
+        val parsed = AssistantEngine.parseProfileFacts(profile)
+        val fresh = parsed.filter { item -> facts.none { it.text == item.text } }
+        if (fresh.isNotEmpty()) {
+            facts = facts + fresh
+            AssistantStore.saveFacts(context, facts)
+        }
+        importStatus = "تمام، حفظت ملفك التعريفي من $sourceLabel (${profile.length} حرف)." +
+            if (parsed.isNotEmpty()) " حلّلت منه ${parsed.size} حقائق مصنفة (اسم/هدف/روتين…) وهستخدمها عشان أفهمك أكتر." else " من النهاردة هستخدمه عشان أفهمك أكتر."
         addMessage("assistant", "حفظت ملفك التعريفي من $sourceLabel، وهستخدمه عشان أفهمك وأساعدك بشكل أفضل.")
     }
 
@@ -323,7 +353,10 @@ internal fun AssistantScreen(
         snapshot = loaded
         memories = loaded.context.memories
         if (messages.isEmpty()) {
-            addMessage("assistant", AssistantEngine.greeting(settings, loaded))
+            addMessage(
+                "assistant",
+                AssistantEngine.greeting(settings, loaded, AssistantEngine.parseProfileFacts(profile))
+            )
         }
     }
     // تُسجَّل الاقتراحات المعروضة (قبول/عرض) مرة لكل لقطة، ليتعلم المساعد
@@ -428,10 +461,22 @@ internal fun AssistantScreen(
         Spacer(Modifier.height(12.dp))
 
         if (tab == 0) {
+            // زر قفز للأعلى (A4): يظهر بعد التمرير لأسفل، فيعود المستخدم
+            // لفقاعة الترحيب بلا تمرير يدوي طويل.
+            val showScrollTop by remember {
+                derivedStateOf {
+                    listState.firstVisibleItemIndex > 1 || listState.firstVisibleItemScrollOffset > 0
+                }
+            }
+            if (showScrollTop) {
+                TextButton(onClick = { scope.launch { listState.animateScrollToItem(0) } }) {
+                    Text("↑ العودة لأول المحادثة")
+                }
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 4.dp),
+                contentPadding = PaddingValues(top = 16.dp, bottom = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages) { message -> AssistantMessageBubble(message) }
@@ -439,10 +484,7 @@ internal fun AssistantScreen(
             Spacer(Modifier.height(8.dp))
             // صف الأوامر التنفيذية أولًا: الضغط على أي منها ينفّذ الفعل فعلًا
             // (إضافة مهمة، تسجيل ورد، بدء جلسة، فتح المصحف أو خطة اليوم).
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
-            ) {
+            FadedChipRow {
                 ASSISTANT_ACTION_PROMPTS.forEach { prompt ->
                     AssistChip(onClick = { send(prompt) }, label = { Text(prompt) })
                 }
@@ -451,10 +493,7 @@ internal fun AssistantScreen(
             // رقاقات متكيفة من بيانات المستخدم (لا أسئلة ثابتة): كل رقاقة
             // تُرسل نصها وتُسجَّل قبولًا ليتعلم المساعد ما ينفع. بلا بيانات
             // كافية تُعرض الأسئلة المعروفة كبداية فقط.
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
-            ) {
+            FadedChipRow {
                 if (suggestions.isNotEmpty()) {
                     suggestions.forEach { suggestion ->
                         AssistChip(
@@ -498,7 +537,8 @@ internal fun AssistantScreen(
                                 pendingProposal = null
                                 scope.launch {
                                     val added = onAssistantAddTask(
-                                        toAdd.title, toAdd.dueAt, toAdd.priorityLevel, toAdd.recurrence
+                                        toAdd.title, toAdd.dueAt, toAdd.priorityLevel, toAdd.recurrence,
+                                        toAdd.plannedMinutes
                                     )
                                     addMessage(
                                         "assistant",
@@ -515,10 +555,7 @@ internal fun AssistantScreen(
             // رقاقات توضيحية: خيارات سؤال المساعد التوضيحي (مثلًا «خلصت إيه؟»).
             if (pendingChips.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
-                ) {
+                FadedChipRow {
                     pendingChips.forEach { chip ->
                         AssistChip(
                             onClick = {
@@ -531,17 +568,31 @@ internal fun AssistantScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.imePadding()
+            ) {
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("اكتب رسالتك لـ ${settings.name}…") },
                     singleLine = false,
-                    maxLines = 3
+                    maxLines = 3,
+                    // A4: زر الإدخال في لوحة المفاتيح يرسل بدل سطر جديد.
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { send(input) })
                 )
                 Spacer(Modifier.width(8.dp))
                 IconButton(onClick = {
+                    // A4 (A-20): النقرة الثانية على الميك تلغي الاستماع بدل
+                    // إعادة تشغيله — المستخدم لا ينتظر المهلة.
+                    if (avatarState == AssistantAvatarState.LISTENING) {
+                        recognizer.stop()
+                        voiceNote = null
+                        avatarState = AssistantAvatarState.IDLE
+                        return@IconButton
+                    }
                     if (!AssistantVoice.isRecognitionAvailable(context)) {
                         voiceNote = "التعرف الصوتي مش متاح على الجهاز ده — اكتب رسالتك."
                         return@IconButton
@@ -550,11 +601,11 @@ internal fun AssistantScreen(
                 }) {
                     Icon(
                         imageVector = Icons.Filled.Mic,
-                        contentDescription = "تحدث",
+                        contentDescription = if (avatarState == AssistantAvatarState.LISTENING) "إيقاف الاستماع" else "تحدث",
                         tint = if (avatarState == AssistantAvatarState.LISTENING) FocusColors.onTint(FocusColors.Blue) else FocusColors.TextSecondary
                     )
                 }
-                IconButton(onClick = { send(input) }, enabled = input.isNotBlank()) {
+                IconButton(onClick = { send(input) }, enabled = input.isNotBlank() && !sending) {
                     Icon(
                         imageVector = Icons.Filled.Send,
                         contentDescription = "إرسال",
@@ -631,7 +682,11 @@ internal fun AssistantScreen(
                     },
                     onOpenTasks = onOpenTasks,
                     learnedEntries = snapshot.context.profileEntries,
-                    memories = memories,
+                    // A2 (A-15): ذكريات قاعدة البيانات التي تطابق حقيقة في
+                    // التفضيلات (من نسخ مزدوجة قديمة) لا تُعرض مرتين.
+                    memories = memories.filter { memory ->
+                        facts.none { it.text == memory.text }
+                    },
                     onDeleteMemory = { memory ->
                         scope.launch {
                             withContext(Dispatchers.IO) {
@@ -667,10 +722,13 @@ private fun AssistantMessageBubble(message: AssistantChatMessage) {
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
+        // A4 (A-09): الفقاعة بعرض محتواها (حد أقصى 85%) — رسالة من كلمتين
+        // لا تُرسم كلوح أزرق بعرض الشاشة.
+        if (isUser) Spacer(Modifier.weight(0.15f))
         Surface(
             color = if (isUser) FocusColors.Blue else FocusColors.SurfaceHigh,
             shape = RoundedCornerShape(FocusSpacing.radiusCard),
-            modifier = Modifier.fillMaxWidth(0.85f)
+            modifier = Modifier.weight(0.85f, fill = false)
         ) {
             Text(
                 text = message.text,
@@ -679,6 +737,42 @@ private fun AssistantMessageBubble(message: AssistantChatMessage) {
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
             )
         }
+        if (!isUser) Spacer(Modifier.weight(0.15f))
+    }
+}
+
+/**
+ * صف رقاقات أفقي قابل للتمرير مع حشوة أفقية وتدرج حافة (A4/A-08): الرقاقة
+ * الطرفية لا تُقصّ عند حافة الشاشة، والتدرج يوحي بوجود المزيد. طبقتا
+ * التدرج زخرفيتان بلا معالج لمس فلا تحجبان ضغطات الرقاقات.
+ */
+@Composable
+private fun FadedChipRow(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(FocusSpacing.chip)
+        ) {
+            Spacer(Modifier.width(12.dp))
+            content()
+            Spacer(Modifier.width(12.dp))
+        }
+        Box(
+            Modifier.align(Alignment.CenterStart).width(24.dp).fillMaxHeight()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(FocusColors.Surface.copy(alpha = 0f), FocusColors.Surface)
+                    )
+                )
+        )
+        Box(
+            Modifier.align(Alignment.CenterEnd).width(24.dp).fillMaxHeight()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(FocusColors.Surface, FocusColors.Surface.copy(alpha = 0f))
+                    )
+                )
+        )
     }
 }
 
@@ -915,7 +1009,7 @@ private fun AssistantProfileTab(
                 color = FocusColors.TextPrimary
             )
             Text(
-                text = "أنماط استنتجها المساعد من مهامك وجلساتك ووردك وعاداتك — على جهازك فقط، وتتطور مع الاستخدام. احذف أي ذكرى لا تريدها.",
+                text = "احذف أي ذكرى لا تريدها.",
                 style = MaterialTheme.typography.bodySmall,
                 color = FocusColors.TextSecondary
             )
@@ -989,16 +1083,22 @@ internal object AssistantPdfImport {
 }
 
 /**
- * بطاقة المساعد في أعلى شاشة اليوم (إصلاح 0.34.0 — كان مخفيًا في ركن
- * أسفل البطل وخطة اليوم): صورة الرفيق + اسمه + دعوة واضحة لفتح
- * المحادثة. البطاقة كلها قابلة للضغط، والزر يفتح المحادثة مباشرة.
+ * بطاقة المساعد الوحيدة في أعلى شاشة اليوم (A3 — دُمج فيها CompanionHomeSlot
+ * فلا بطاقتا «مساعدك منظّم» مكررتان): صورة الرفيق أو نموذجه ثلاثي الأبعاد +
+ * اسمه + دعوة واضحة لفتح المحادثة. البطاقة كلها قابلة للضغط، والزر يفتح
+ * المحادثة مباشرة. عند تعطيل الرفيق ثلاثي الأبعاد تُعرض الصورة المرفوعة.
  */
 @Composable
 internal fun AssistantHomeCard(
     assistantName: String,
     onOpenAssistant: () -> Unit,
-    preferences: FocusPreferences
+    preferences: FocusPreferences,
+    companionController: CompanionController? = null,
+    companion3DHost: Companion3DHost? = null,
+    companionEnabled: Boolean = false,
+    companionAnimationsEnabled: Boolean = true
 ) {
+    val show3D = companionController != null && companion3DHost != null && companionEnabled
     Card(
         colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
         shape = RoundedCornerShape(FocusSpacing.radiusCard),
@@ -1008,12 +1108,22 @@ internal fun AssistantHomeCard(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AvatarPortrait(
-                avatarPath = preferences.avatarPath,
-                name = preferences.studentName,
-                styleIndex = preferences.companionStyle,
-                size = 52.dp
-            )
+            if (show3D) {
+                MONAZZEMCompanionView(
+                    controller = companionController!!,
+                    host = companion3DHost!!,
+                    modifier = Modifier.size(96.dp),
+                    enabled = true,
+                    animationsEnabled = companionAnimationsEnabled
+                )
+            } else {
+                AvatarPortrait(
+                    avatarPath = preferences.avatarPath,
+                    name = preferences.studentName,
+                    styleIndex = preferences.companionStyle,
+                    size = 52.dp
+                )
+            }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(

@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.os.SystemClock
 import android.util.Log
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -62,8 +64,8 @@ import kotlinx.coroutines.withContext
  * جديدة، ويعمل دون أي خادم.
  *
  * قواعد السلامة (§11 — الأولوية فوق جمال الرفيق):
- * - الرفيق يعيش داخل مساحة محددة بالـ layout فقط (انظر [CompanionHomeSlot])؛
- *   لا overlay ولا موضع مطلق ولا تغطية لأي عنصر واجهة أبدًا.
+ * - الرفيق يعيش داخل مساحة محددة بالـ layout فقط (بطاقة المساعد الوحيدة
+ *   [AssistantHomeCard])؛ لا overlay ولا موضع مطلق ولا تغطية لأي عنصر واجهة أبدًا.
  * - عند التعطيل لا يُركَّب العارض أصلًا، والتطبيق يعمل كاملًا بدونه.
  * - عند إيقاف الحركات (أو تقليل الحركة) تُعرض الصورة الثابتة بدل العارض.
  * - عند فشل تحميل النموذج تُعرض الصورة الثابتة، ولا يتعطل أي شيء آخر.
@@ -448,6 +450,19 @@ internal fun MONAZZEMCompanionView(
 
     Box(
         modifier = modifier
+            // A6: خلفية متباينة خلف النموذج في الفاتح والداكن — النموذج UNLIT
+            // شبه أبيض فكان يختفي على بطاقة بيضاء؛ التدرج الأزرق الرمادي
+            // يجعل حوافه مقروءة في أي سمة. مستقل عن فرضية الاختفاء.
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        FocusColors.Blue.copy(alpha = 0.16f),
+                        FocusColors.SurfaceHigh,
+                        FocusColors.Teal.copy(alpha = 0.12f)
+                    )
+                ),
+                RoundedCornerShape(16.dp)
+            )
             .semantics(mergeDescendants = true) { contentDescription = "منظم — رفيقك ثلاثي الأبعاد" }
     ) {
         val instance = modelInstance
@@ -503,70 +518,6 @@ internal fun MONAZZEMCompanionView(
             }
         } else {
             CompanionFallbackImage(Modifier.matchParentSize())
-        }
-    }
-}
-
-/**
- * مساحة الرئيسية المخصصة للرفيق (§11.1 و§12): بطاقة في عمود التمرير نفسه،
- * بارتفاع أدنى 168dp (L4: يكبر مع تكبير الخط بدل قصّ النص)، يشارك فيها
- * التخطيط كأي بطاقة أخرى — لا overlay ولا تغطية.
- * يمينها/يسارها النموذج، وبجانبه نص قصير وزر يفتح المحادثة؛ البطاقة كلها
- * قابلة للضغط. عند تعطيل الرفيق لا تُركَّب البطاقة أصلًا فيستعيد التخطيط
- * مساحتها دون أن يتغير أي عنصر آخر.
- */
-@Composable
-internal fun CompanionHomeSlot(
-    controller: CompanionController,
-    host: Companion3DHost,
-    assistantName: String,
-    onOpenAssistant: () -> Unit,
-    enabled: Boolean,
-    animationsEnabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    if (!enabled) return
-    Card(
-        colors = CardDefaults.cardColors(containerColor = FocusColors.Surface),
-        shape = RoundedCornerShape(FocusSpacing.radiusCard),
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 168.dp)
-            .clickable(onClick = onOpenAssistant)
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            MONAZZEMCompanionView(
-                controller = controller,
-                host = host,
-                modifier = Modifier.size(148.dp),
-                enabled = true,
-                animationsEnabled = animationsEnabled
-            )
-            Spacer(Modifier.width(4.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "مساعدك $assistantName",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = FocusColors.TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "رفيقك ثلاثي الأبعاد — يرحب بك، ويحتفل معك بكل مهمة تُنجزها.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FocusColors.TextSecondary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = onOpenAssistant, shape = RoundedCornerShape(16.dp)) {
-                    Text("افتح المحادثة")
-                }
-            }
         }
     }
 }

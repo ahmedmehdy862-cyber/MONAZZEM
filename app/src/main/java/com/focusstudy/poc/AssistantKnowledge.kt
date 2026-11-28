@@ -269,7 +269,8 @@ internal object AssistantKnowledge {
             learned = learned,
             memories = runCatching { AssistantMemoryStore.loadMemories(context) }.getOrDefault(emptyList()),
             profileEntries = runCatching { AssistantMemoryStore.loadProfileEntries(context) }.getOrDefault(emptyList()),
-            suggestionAcceptance = runCatching { AssistantMemoryStore.suggestionAcceptance(context) }.getOrDefault(emptyMap())
+            suggestionAcceptance = runCatching { AssistantMemoryStore.suggestionAcceptance(context) }.getOrDefault(emptyMap()),
+            suggestionShows = runCatching { AssistantMemoryStore.suggestionShowCounts(context) }.getOrDefault(emptyMap())
         )
     }
 }

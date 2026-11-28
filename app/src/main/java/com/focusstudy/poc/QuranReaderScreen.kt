@@ -170,12 +170,8 @@ internal fun QuranReaderScreen(
                 )
             }
             Spacer(Modifier.height(8.dp))
-            Text(
-                "نص القرآن الكريم: مشروع تنزيل (Tanzil.net) — النص العثماني v1.1 — رخصة CC Attribution 3.0. " +
-                    "خريطة صفحات مصحف المدينة: AlQuran Cloud.",
-                style = MaterialTheme.typography.bodySmall,
-                color = FocusColors.TextSecondary
-            )
+            // A7: نسبة Tanzil انتقلت إلى «تخصيص تجربتك» ← «مصادر المحتوى»؛
+            // لا سطر ترخيص تحت كل صفحة مصحف.
         }
 
         Spacer(Modifier.height(10.dp))

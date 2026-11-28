@@ -40,15 +40,21 @@ class AssistantVoice(context: Context) {
                 ttsReady = true
                 pendingText?.let { text ->
                     pendingText = null
-                    engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "assistant-utterance")
+                    // النص المعلّق لا يُنطق فوق مكالمة بدأت أثناء تهيئة المحرك.
+                    if (!CallAware.isInCall(appContext)) {
+                        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "assistant-utterance")
+                    }
                 }
             }
         }
     }
 
-    /** ينطق الرد؛ إن لم يكن المحرك جاهزًا بعد، يُنطق فور جهوزيته. */
+    /** ينطق الرد؛ إن لم يكن المحرك جاهزًا بعد، يُنطق فور جهوزيته.
+     * A4 (A-22): وعي بالمكالمة — لا نطق فوق مكالمة جارية (كالأذان)؛
+     * النص المعلّق يُسقط بصمت بدل نطقه بعد انتهاء المكالمة. */
     fun speak(text: String) {
         if (text.isBlank()) return
+        if (CallAware.isInCall(appContext)) return
         ensureTts()
         val engine = tts ?: return
         if (ttsReady) {

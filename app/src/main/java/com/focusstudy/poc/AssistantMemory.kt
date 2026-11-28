@@ -75,6 +75,14 @@ object AssistantMemoryStore {
             }
     }
 
+    /** عدد مرات عرض كل نوع اقتراح (A-18): الكتم بعد 5 عروض فقط، لا بعد عرض واحد. */
+    fun suggestionShowCounts(context: Context): Map<String, Int> {
+        val db = StudyDb.get(context.applicationContext)
+        return runCatching { db.assistantInteractionStats() }.getOrDefault(emptyList())
+            .groupBy { it.kind }
+            .mapValues { (_, rows) -> rows.size }
+    }
+
     fun loadProfileEntries(context: Context): List<AssistantProfileEntry> =
         runCatching { StudyDb.get(context.applicationContext).assistantProfile() }
             .getOrDefault(emptyList())

@@ -52,7 +52,9 @@ data class AssistantContext(
     /** بنود الملف المتعلَّم المحفوظة (للعرض في تبويب «عرّفني عليك»). */
     val profileEntries: List<AssistantProfileEntry> = emptyList(),
     /** نسبة قبول كل نوع اقتراح (مقبول/معروض) — لترتيب الاقتراحات بما ينفع فعلًا. */
-    val suggestionAcceptance: Map<String, Double> = emptyMap()
+    val suggestionAcceptance: Map<String, Double> = emptyMap(),
+    /** عدد مرات عرض كل نوع اقتراح (A-18) — الكتم بعد 5 عروض فقط. */
+    val suggestionShows: Map<String, Int> = emptyMap()
 )
 
 /** صف ذاكرة محادثة محفوظ: نص بثقة وعدد استخدام وتواريخ. */

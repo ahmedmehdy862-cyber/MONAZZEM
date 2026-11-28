@@ -2652,6 +2652,14 @@ class StudyDb private constructor(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
+            // A2 (A-14): مفاتيح غائبة عن التحديث تُحذف — نمط توقف عن التأهل
+            // (مثلًا تغيّرت ساعة التركيز المفضلة) لا يبقى معروضًا كمعرفة حالية.
+            val keepKeys = entries.map { it.key }.toSet()
+            db.delete(
+                "assistant_profile",
+                if (keepKeys.isEmpty()) null else "key NOT IN (${keepKeys.joinToString(",") { "?" }})",
+                if (keepKeys.isEmpty()) null else keepKeys.toTypedArray()
+            )
             entries.forEach { entry ->
                 val values = ContentValues().apply {
                     put("key", entry.key)

@@ -97,6 +97,12 @@ compose.desktop {
             vendor = "Monazzem"
             description = "Organize your tasks, wird, habits, health, money and mood - the Windows version of Monazzem"
             copyright = "(c) Monazzem"
+            // A12: كود ترقية MSI ثابت — بدونه يولّد jpackage كودًا جديدًا كل
+            // بناء فيعامل MSI الجديد كتطبيق مختلف بدل ترقية المثبَّت.
+            // (بلا توقيع كود: الشهادة غير متوفرة لدى أحمد — محظور، انظر التقرير.)
+            windows {
+                upgradeUuid = "197920be-e6a8-4a70-b392-7f824d16739d"
+            }
         }
     }
 }

@@ -74,6 +74,8 @@ internal object DirectUpdateDownloader {
      * تنزيل منتهٍ بحالة نهائية غير ناجحة يُحذف ملفه حتى لا يُعرض زر تثبيت
      * وهمي. وبلا سجل تنزيل مطابق (سجل مُسح أو ملف من مصدر آخر) لا يُعتبر
      * الملف جاهزًا أبدًا — إعادة التنزيل آمنة ورخيصة.
+     * A9: إن حمل الموجز بصمة sha256 يُتحقق منها هنا؛ عدم المطابقة يحذف
+     * الملف ويعيد false (بلا بصمة في الموجز يُتخطى التحقق).
      */
     fun hasDownloadedApk(context: Context, release: AppRelease): Boolean {
         val file = runCatching { apkFile(context, release) }.getOrNull() ?: return false
@@ -90,7 +92,39 @@ internal object DirectUpdateDownloader {
             file.delete()
             return false
         }
+        if (!matchesSha256(file, release.sha256)) {
+            file.delete()
+            return false
+        }
         return true
+    }
+
+    /**
+     * بصمة SHA-256 لملف (A9) — دالة خالصة قابلة للاختبار بوحدات JVM عادية.
+     * تعيد null عند تعذر القراءة.
+     */
+    fun sha256Of(file: File): String? = runCatching {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }.getOrNull()
+
+    /**
+     * true إن طابقت بصمة الملف البصمة المنشورة، أو إن لم ينشر الموجز بصمة
+     * أصلًا (توافق مع الموجز القديم). false تعني ملفًا مختلفًا/تالفًا.
+     */
+    fun matchesSha256(file: File, expectedSha256: String?): Boolean {
+        val expected = expectedSha256?.trim()?.lowercase().orEmpty()
+        if (expected.isEmpty()) return true
+        if (!expected.matches(Regex("[0-9a-f]{64}"))) return false
+        return sha256Of(file) == expected
     }
 
     /** يحذف ملف APK لإصدار معين (يُستدعى عند فشل تنزيله حتى لا يبقى ملف جزئي). */
@@ -171,6 +205,12 @@ internal object DirectUpdateDownloader {
         if (!hasDownloadedApk(context, release)) return false
         val file = runCatching { apkFile(context, release) }.getOrNull()
             ?.takeIf { it.isFile && it.length() > 0L } ?: return false
+        // A9: تحقق أخير من البصمة قبل المثبّت (hasDownloadedApk تحقق أصلًا؛
+        // هذا يحمي مسار استدعاء مباشر بلا hasDownloadedApk قبله).
+        if (!matchesSha256(file, release.sha256)) {
+            file.delete()
+            return false
+        }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")

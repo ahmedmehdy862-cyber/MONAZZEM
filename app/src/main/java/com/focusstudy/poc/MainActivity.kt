@@ -730,8 +730,11 @@ private fun AppRoot(
 
         ReminderEngine.channels(context)
 
-        if (preferences.smartRemindersEnabled) ReminderEngine.refresh(context)
-        else StudyDb.get(context).pendingReminders(200).forEach { StudyDb.get(context).markReminderDone(it.id, "disabled") }
+        // A8: إعادة بناء جدول التذكيرات قراءة/كتابة قاعدة بيانات — خارج الخيط الرئيسي.
+        withContext(Dispatchers.IO) {
+            if (preferences.smartRemindersEnabled) ReminderEngine.refresh(context)
+            else StudyDb.get(context).pendingReminders(200).forEach { StudyDb.get(context).markReminderDone(it.id, "disabled") }
+        }
 
     }
 
@@ -1058,11 +1061,11 @@ private fun AppRoot(
                     assistantName = assistantName,
                     onAssistantNameChanged = { assistantName = it },
                     onOpenTasks = { openRoot("tasks") },
-                    onAssistantAddTask = { title, dueAt, priorityLevel, recurrence ->
+                    onAssistantAddTask = { title, dueAt, priorityLevel, recurrence, plannedMinutes ->
                         runCatching {
                             TaskRepository.get(context).add(
                                 title = title,
-                                plannedMinutes = 30,
+                                plannedMinutes = plannedMinutes ?: 30,
                                 blockedPackages = emptySet(),
                                 priority = TaskPriority.from(priorityLevel ?: TaskPriority.MEDIUM.level),
                                 dueAt = dueAt,
@@ -1319,6 +1322,37 @@ private fun taskTimeSectionColor(group: TaskTimeGroup): Color = when (group) {
 }
 
 
+/**
+ * تحذير داخل التطبيق عند بلوغ سقف المنبهات (A8): المنبهات تُرتَّب بالأقرب
+ * موعدًا فتُرنّ أولًا، وما زاد عن 30 لا يُسقَط بصمت — يُحذَّر المستخدم هنا
+ * بعددها، مع اقتراح تقليل المهام المستحقة. يُمسح بالضغط على «فهمت».
+ */
+@Composable
+private fun AlarmCapWarningCard(count: Int, onDismiss: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = FocusColors.SurfaceHigh),
+        shape = RoundedCornerShape(FocusSpacing.radiusCard),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                text = "تنبيهات كثيرة: $count تذكيرات لن ترن في وقتها",
+                style = MaterialTheme.typography.titleSmall,
+                color = FocusColors.TextPrimary,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "التطبيق يرنّ 30 منبهًا كحد أقصى، ورتّب الأقرب موعدًا أولًا. قلّل المهام المستحقة أو أجّل بعضها لتصلها التنبيهات.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FocusColors.TextSecondary
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) { Text("فهمت") }
+            }
+        }
+    }
+}
 @Composable
 
 private fun TasksScreen(
@@ -1354,6 +1388,12 @@ private fun TasksScreen(
 ) {
 
     val context = LocalContext.current
+    // A8: عدد التذكيرات المسقَطة عند سقف 30 منبهًا — تُقرأ مرة عند فتح الشاشة.
+    var capDropped by remember { mutableStateOf(0) }
+    val capScope = rememberCoroutineScope()
+    LaunchedEffect(Unit) {
+        capDropped = withContext(Dispatchers.IO) { ReminderEngine.capWarning(context) }
+    }
     val today = rememberCurrentDate()
 
     val version by SessionEngine.tasksVersion.collectAsState()
@@ -1460,7 +1500,8 @@ private fun TasksScreen(
 
         viewModel.refresh()
 
-        if (preferences.smartRemindersEnabled) ReminderEngine.refresh(context)
+        // A8: خارج الخيط الرئيسي (انظر أعلاه).
+        if (preferences.smartRemindersEnabled) withContext(Dispatchers.IO) { ReminderEngine.refresh(context) }
 
     }
 
@@ -1592,22 +1633,29 @@ private fun TasksScreen(
                 doneToday = todayTasksForWelcome.count { it.isDone || it.status == TaskStatus.DONE }
             )
             Spacer(Modifier.height(12.dp))
-            AssistantHomeCard(assistantName = assistantName, onOpenAssistant = onOpenAssistant, preferences = preferences)
-            Spacer(Modifier.height(12.dp))
-            // الرفيق ثلاثي الأبعاد (0.34.0) في مساحته المخصصة (§11.1):
-            // بطاقة في عمود التمرير نفسه، لا overlay ولا تغطية لأي عنصر.
-            // عند التعطيل لا تُركَّب أصلًا فيستعيد التخطيط مساحتها.
-            if (companionController != null && companion3DHost != null) {
-                CompanionHomeSlot(
-                    controller = companionController,
-                    host = companion3DHost,
-                    assistantName = assistantName,
-                    onOpenAssistant = onOpenAssistant,
-                    enabled = preferences.companion3dEnabled,
-                    animationsEnabled = preferences.companion3dAnimationsEnabled && !preferences.reduceMotion
+            // A3: بطاقة مساعد واحدة فقط — النموذج ثلاثي الأبعاد (أو الصورة)
+            // داخل AssistantHomeCard نفسها؛ بطاقة CompanionHomeSlot المنفصلة حُذفت.
+            // A8: تحذير سقف المنبهات فوقها عند تجاوز 30 منبهًا بدل الإسقاط الصامت.
+            if (capDropped > 0) {
+                AlarmCapWarningCard(
+                    count = capDropped,
+                    onDismiss = {
+                        capDropped = 0
+                        capScope.launch(Dispatchers.IO) { ReminderEngine.clearCapWarning(context) }
+                    }
                 )
                 Spacer(Modifier.height(12.dp))
             }
+            AssistantHomeCard(
+                assistantName = assistantName,
+                onOpenAssistant = onOpenAssistant,
+                preferences = preferences,
+                companionController = companionController,
+                companion3DHost = companion3DHost,
+                companionEnabled = preferences.companion3dEnabled,
+                companionAnimationsEnabled = preferences.companion3dAnimationsEnabled && !preferences.reduceMotion
+            )
+            Spacer(Modifier.height(12.dp))
             HeroCard(
                 totalMinutes = totalMinutes,
                 tasks = tasks,

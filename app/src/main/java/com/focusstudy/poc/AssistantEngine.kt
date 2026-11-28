@@ -14,7 +14,7 @@ import org.json.JSONObject
  * لا يوجد هنا أي اتصال شبكي ولا نموذج لغوي ولا حساب سحابي: الردود قواعد مبنية على
  * كلمات مفتاحية عربية وعلى معرفة التطبيق (انظر [AssistantKnowledge])، وكل البيانات
  * — الإعدادات والملف التعريفي والحقائق وسجل المحادثة — محفوظة في
- * SharedPreferences على الجهاز فقط، بصيغة JSON، عمدًا بدل جدول جديد في قاعدة
+ * تفضيلات مشفّرة ([SecurePrefs]) على الجهاز فقط، بصيغة JSON، عمدًا بدل جدول جديد في قاعدة
  * البيانات حتى لا يتعارض ترحيلها مع مراحل لاحقة.
  */
 
@@ -100,12 +100,15 @@ val ASSISTANT_ACTION_PROMPTS = listOf(
  * المحرك أي مرجع لمستودع أو نشاط، ولا ينشئ مسار تنفيذ موازيًا.
  */
 sealed class AssistantAction {
-    /** إضافة مهمة جديدة؛ [dueAt] بالمللي ثانية أو null بلا موعد محدد. */
+    /** إضافة مهمة جديدة؛ [dueAt] بالمللي ثانية أو null بلا موعد محدد.
+     * [plannedMinutes] مدة المهمة بالدقائق كما ذكرها المستخدم، أو null
+     * فيستخدم التنفيذ الافتراضي (30 دقيقة) — لا مدة ثابتة صامتة. */
     data class AddTask(
         val title: String,
         val dueAt: Long?,
         val priorityLevel: Int?,
-        val recurrence: Recurrence
+        val recurrence: Recurrence,
+        val plannedMinutes: Int? = null
     ) : AssistantAction()
 
     /** تسجيل ورد اليوم بإعدادات الورد الحالية. */
@@ -143,7 +146,10 @@ enum class AssistantFocusOutcome {
     FAILED
 }
 
-/** تخزين المساعد المحلي: SharedPreferences واحدة باسم ثابت، بلا قاعدة بيانات. */
+/** تخزين المساعد المحلي: تفضيلات مشفّرة عبر [SecurePrefs] (A10 — كانت
+ * SharedPreferences عادية بنص صريح). الترحيل الآمن (نسخ + تحقق بالقراءة +
+ * حذف بعد النجاح) يتولاه [SecurePrefs]؛ وإن تعذّر التشفير على الجهاز يرجع
+ * الملف العادي دون فقدان أي بيانات. */
 internal object AssistantStore {
     private const val FILE = "assistant_preferences"
     private const val KEY_SETTINGS = "settings"
@@ -153,8 +159,7 @@ internal object AssistantStore {
     private const val MAX_HISTORY = 200
     private const val MAX_FACTS = 100
 
-    private fun prefs(context: Context) =
-        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+    private fun prefs(context: Context) = SecurePrefs.prefs(context, FILE)
 
     fun loadSettings(context: Context): AssistantSettings {
         val raw = prefs(context).getString(KEY_SETTINGS, null) ?: return AssistantSettings()
@@ -254,7 +259,9 @@ data class ProposedTask(
     val title: String,
     val dueAt: Long?,
     val priorityLevel: Int?,
-    val recurrence: Recurrence
+    val recurrence: Recurrence,
+    /** مدة المهمة بالدقائق كما ذكرها المستخدم، أو null للافتراضي. */
+    val plannedMinutes: Int? = null
 )
 
 /**
@@ -281,6 +288,83 @@ internal object AssistantEngine {
     /** مدة جلسة التركيز الافتراضية بالدقائق عند عدم ذكر مدة (مطابقة لإعداد التطبيق). */
     private const val DEFAULT_FOCUS_MINUTES = 25
 
+    /**
+     * تطبيع عربي واحد لكل مطابقة (A1): يُستدعى مرة واحدة في [reply] قبل
+     * المصنّف و[decideAction] و[answerFor]، فلا يفشل «انتا مين» و«عامل اي»
+     * بسبب همزة أو تاء مربوطة أو ألف مقصورة. أ/إ/آ/ٱ→ا، ة→ه، ى→ي، وإزالة
+     * التشكيل والتطويل، و«انتا»→«انت». الإدخال الأصلي يبقى للعرض (عناوين
+     * المهام تُبنى من النص الأصلي لا المطبَّع) — التطبيع للمطابقة فقط.
+     */
+    fun normalizeArabic(text: String): String {
+        val withoutDiacritics = text.map { ch ->
+            when (ch) {
+                'أ', 'إ', 'آ', 'ٱ' -> 'ا'
+                'ة' -> 'ه'
+                'ى' -> 'ي'
+                'ـ' -> null // تطويل: يُحذف
+                in '\u064B'..'\u0652', '\u0670' -> null // تشكيل: يُحذف
+                else -> ch
+            }
+        }.filterNotNull().joinToString("")
+        return withoutDiacritics.split(Regex("\\s+"))
+            .joinToString(" ") { token -> if (token == "انتا") "انت" else token }
+            .trim()
+    }
+
+    /**
+     * غلاف النبرة (A2): يُطبَّق على كل إجابات المحتوى — لا على التحية والرد
+     * الاحتياطي فقط (لهما صياغتهما الخاصة بالنبرة أصلًا). المرحة هي صوت
+     * النص الحالي فيبقى كما هو؛ الهادئة تختم بهدوء، والرسمية تختم بصياغة
+     * رسمية، فيتغير كل رد فعليًا بتبديل النبرة.
+     */
+    fun toneWrap(text: String, tone: AssistantTone): String = when (tone) {
+        AssistantTone.PLAYFUL -> text
+        AssistantTone.CALM -> "$text\nخذ وقتك — أنا معك خطوة بخطوة."
+        AssistantTone.FORMAL -> "$text\nإن احتجت إلى أي مساعدة أخرى، فأنا في الخدمة."
+    }
+
+    /**
+     * تحليل الملف التعريفي الملصوق (A2): سطور موسومة فقط — «الاسم: …»،
+     * «الوظيفة/عملي: …»، «هدفي/أهدافي: …»، «روتيني/روتين: …»، «نومي: …»،
+     * «صحتي/وزني: …»، «هواياتي: …» — تتحول إلى حقائق مصنّفة. سطر بلا وسم
+     * لا يُفسَّر ولا يُخترع له معنى؛ يُبقي النص حرفيًا ويُعرض كمقتطف فقط
+     * (انظر [aboutMeAnswer]). القيم تُقصّ إلى 220 حرفًا كالحقائق العادية.
+     */
+    fun parseProfileFacts(profileText: String): List<LearnedFact> {
+        if (profileText.isBlank()) return emptyList()
+        val now = System.currentTimeMillis()
+        val labelToCategory = listOf(
+            "الاسم" to "اسم", "اسمك" to "اسم", "اسمي" to "اسم",
+            "الوظيفة" to "دراسة وعمل", "وظيفتي" to "دراسة وعمل",
+            "عملي" to "دراسة وعمل", "دراستي" to "دراسة وعمل",
+            "هدفي" to "هدف", "أهدافي" to "هدف", "اهدافي" to "هدف",
+            "روتيني" to "روتين", "روتين" to "روتين",
+            "نومي" to "روتين", "مواعيد نومي" to "روتين",
+            "صحتي" to "صحة", "وزني" to "صحة", "طولي" to "صحة",
+            "هواياتي" to "اهتمامات", "هوايتي" to "اهتمامات",
+            "اهتماماتي" to "اهتمامات"
+        )
+        return profileText.lineSequence()
+            .map { it.trim().trimStart('-', '•', '*').trim() }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { line ->
+                val colon = line.indexOf(':').takeIf { it > 0 } ?: return@mapNotNull null
+                val label = normalizeArabic(line.substring(0, colon).trim())
+                val value = line.substring(colon + 1).trim().trimStart('-').trim()
+                if (value.isBlank()) return@mapNotNull null
+                val category = labelToCategory.firstOrNull { (labelText, _) ->
+                    label == normalizeArabic(labelText) || label.startsWith(normalizeArabic(labelText) + " ")
+                }?.second ?: return@mapNotNull null
+                LearnedFact(
+                    id = "profile-${label.hashCode()}-${value.hashCode()}",
+                    text = value.take(220),
+                    category = category,
+                    addedAt = now
+                )
+            }
+            .distinctBy { it.text }
+    }
+
     fun greeting(settings: AssistantSettings, userName: String): String {
         val name = userName.ifBlank { "صديقي" }
         return when (settings.tone) {
@@ -292,10 +376,17 @@ internal object AssistantEngine {
 
     /**
      * تحية متكيفة من السياق الواسع: تذكر حال اليوم الفعلي (مهام، ورد، سلسلة،
-     * مهمة متأخرة) بدل التحية الثابتة نفسها كل مرة.
+     * مهمة متأخرة) بدل التحية الثابتة نفسها كل مرة. [profileFacts] حقائق
+     * محلَّلة من الملف التعريفي الملصوق (A2): الاسم المفضل يُنادى به،
+     * والهدف الأول يُذكَّر به — لا اختلاق إن لم يوجد ملف.
      */
-    fun greeting(settings: AssistantSettings, snapshot: AssistantSnapshot): String {
-        val user = snapshot.userName.ifBlank { "صديقي" }
+    fun greeting(
+        settings: AssistantSettings,
+        snapshot: AssistantSnapshot,
+        profileFacts: List<LearnedFact> = emptyList()
+    ): String {
+        val preferredName = profileFacts.firstOrNull { it.category == "اسم" }?.text
+        val user = preferredName ?: snapshot.userName.ifBlank { "صديقي" }
         val context = snapshot.context
         val parts = ArrayList<String>()
         parts += when (settings.tone) {
@@ -308,6 +399,9 @@ internal object AssistantEngine {
         if (!snapshot.wirdDoneToday) state += "وردك لسه ما اتسجّلش"
         if (context.overdueCount > 0) state += "وفيه ${context.overdueCount} مهام متأخرة"
         if (context.wirdStreakDays >= 3) state += "وسلسلة وردك ${context.wirdStreakDays} أيام"
+        profileFacts.firstOrNull { it.category == "هدف" }?.let { goal ->
+            state += "وهدفك «${goal.text}» لسه قدامك"
+        }
         if (state.isEmpty()) {
             parts += when (settings.tone) {
                 AssistantTone.FORMAL -> "يومك يبدو هادئًا حتى الآن. كيف أقدر أساعدك؟"
@@ -370,7 +464,11 @@ internal object AssistantEngine {
      * اقتراح خطة متكيف: المتأخر أولًا، ثم المهمة التالية، مع موعد التركيز
      * المفضل ومدة الجلسة المفضلة من التعلّم، وساعة الورد المعتادة.
      */
-    private fun planAdviceAnswer(snapshot: AssistantSnapshot, settings: AssistantSettings): String {
+    private fun planAdviceAnswer(
+        snapshot: AssistantSnapshot,
+        settings: AssistantSettings,
+        profileFacts: List<LearnedFact> = emptyList()
+    ): String {
         val user = snapshot.userName.ifBlank { "صديقي" }
         val context = snapshot.context
         val learned = context.learned
@@ -399,7 +497,13 @@ internal object AssistantEngine {
             lines += "${step++}. وردك: ${snapshot.wirdPagesPerDay} صفحات من سورة ${snapshot.wirdSurah}$hourNote."
         }
         if (step == 1) {
-            lines += "مفيش حاجة مستعجلة — يومك ماشي. لو حابب، نبدأ جلسة تركيز قصيرة؟"
+            // بلا مستعجل: هدف الملف التعريفي خطوة أولى مقترحة بدل فراغ.
+            val goal = profileFacts.firstOrNull { it.category == "هدف" }
+            if (goal != null) {
+                lines += "مفيش حاجة مستعجلة — بس هدفك «${goal.text}» لسه قدامك. نبدأ بخطوة صغيرة منه النهاردة؟"
+            } else {
+                lines += "مفيش حاجة مستعجلة — يومك ماشي. لو حابب، نبدأ جلسة تركيز قصيرة؟"
+            }
         }
         return lines.joinToString("\n")
     }
@@ -430,11 +534,23 @@ internal object AssistantEngine {
     private fun memoryAnswer(
         query: String,
         snapshot: AssistantSnapshot,
-        settings: AssistantSettings
+        settings: AssistantSettings,
+        facts: List<LearnedFact> = emptyList()
     ): Pair<String, Long?> {
         val user = snapshot.userName.ifBlank { "صديقي" }
+        // A2: مصدر واحد للحقائق — الحقائق المتعلمة من المحادثة (prefs) تُبحث
+        // هنا أيضًا، فلا تُحفظ مرتين (prefs + DB) لمجرد استرجاعها.
+        val normalizedQuery = normalizeArabic(query)
+        val queryWords = normalizedQuery.split(Regex("\\s+")).filter { it.length >= 3 }
+        val factMatch = facts.firstOrNull { fact ->
+            val factText = normalizeArabic(fact.text)
+            queryWords.any { word -> factText.contains(word) || normalizeArabic(fact.category).contains(word) }
+        }
+        if (factMatch != null) {
+            return Pair("أيوه فاكر يا $user: «${factMatch.text}» — قلتلي كده قبل كده.", null)
+        }
         val memories = snapshot.context.memories
-        if (memories.isEmpty()) {
+        if (memories.isEmpty() && facts.isEmpty()) {
             return Pair(
                 "لسه ما حفظتش عنك حاجة من المحادثة يا $user — قولي عن نفسك (هدفك، روتينك، اللي بتحبه) وأنا أحفظه وأستخدمه.",
                 null
@@ -448,6 +564,10 @@ internal object AssistantEngine {
             .maxByOrNull { it.confidence * 100 + it.useCount }
         if (matched != null) {
             return Pair("أيوه فاكر يا $user: «${matched.text}» — قلتلي كده قبل كده.", matched.id)
+        }
+        if (memories.isEmpty()) {
+            val listedFacts = facts.take(3).joinToString("؛ ") { it.text }
+            return Pair("فاكر عنك يا $user: $listedFacts.", null)
         }
         val top = memories.sortedByDescending { it.confidence }.take(3)
         val listed = top.joinToString("؛ ") { it.text }
@@ -485,28 +605,34 @@ internal object AssistantEngine {
         zone: ZoneId = ZoneId.systemDefault()
     ): AssistantReply {
         val text = input.trim()
-        val lower = text.lowercase()
+        // A1: تطبيع واحد قبل كل مطابقة — المصنّف وdecideAction وanswerFor
+        // تستقبل النص المطبَّع؛ النص الأصلي يبقى لاستخراج العناوين (فلا
+        // تُحفظ مهمة بعنوان مطبَّع) وللحقائق المتعلمة (تُحفظ كما قالها المستخدم).
+        val originalLower = text.lowercase()
+        val lower = normalizeArabic(originalLower)
         val learned = extractFact(text, lower)
+        val profileFacts = parseProfileFacts(profileText)
         // فهم النية من كلام حر أولًا — قبل محلل الأوامر ذي الصيغ الثابتة:
         // «أعمل إيه دلوقتي؟» كانت تتحول خطأً إلى مهمة بعنوان «إيه دلوقتي»،
         // و«خلصت» بلا موضوع كانت تسقط في الرد الاحتياطي العام.
-        when (val classified = AssistantIntentClassifier.classify(text, snapshot, today, zone)) {
+        when (val classified = AssistantIntentClassifier.classify(normalizeArabic(text), snapshot, today, zone)) {
             ClassifiedIntent.AskDaySummary ->
-                return AssistantReply(text = daySummaryAnswer(snapshot, settings), learnedFact = learned)
+                return AssistantReply(text = toneWrap(daySummaryAnswer(snapshot, settings), settings.tone), learnedFact = learned)
             ClassifiedIntent.AskPlanAdvice ->
-                return AssistantReply(text = planAdviceAnswer(snapshot, settings), learnedFact = learned)
+                return AssistantReply(text = toneWrap(planAdviceAnswer(snapshot, settings, profileFacts), settings.tone), learnedFact = learned)
             ClassifiedIntent.AskMoney ->
-                return AssistantReply(text = moneyAnswer(snapshot, settings), learnedFact = learned)
+                return AssistantReply(text = toneWrap(moneyAnswer(snapshot, settings), settings.tone), learnedFact = learned)
             is ClassifiedIntent.AskMemory -> {
-                val (answer, usedId) = memoryAnswer(classified.query, snapshot, settings)
-                return AssistantReply(text = answer, learnedFact = learned, usedMemoryId = usedId)
+                val (answer, usedId) = memoryAnswer(classified.query, snapshot, settings, facts)
+                return AssistantReply(text = toneWrap(answer, settings.tone), learnedFact = learned, usedMemoryId = usedId)
             }
             is ClassifiedIntent.ProposeTask ->
                 return AssistantReply(
-                    text = proposeTaskText(classified, snapshot),
+                    text = toneWrap(proposeTaskText(classified, snapshot), settings.tone),
                     learnedFact = learned,
                     proposedTask = ProposedTask(
-                        classified.title, classified.dueAt, classified.priorityLevel, classified.recurrence
+                        classified.title, classified.dueAt, classified.priorityLevel, classified.recurrence,
+                        plannedMinutes = classified.durationMinutes
                     )
                 )
             is ClassifiedIntent.Clarify ->
@@ -515,31 +641,46 @@ internal object AssistantEngine {
         }
         // النوايا التنفيذية تُفحص أولًا: «ضيف مهمة…» و«سجّل وردي» مثلًا تحوي
         // كلمات («مهمة»، «ورد») تطابق أيضًا فروع الإجابة الإخبارية أدناه.
-        val decision = decideAction(lower, snapshot, today, zone)
-        val core = decision?.text ?: answerFor(lower, snapshot, settings, facts, profileText, today)
+        val decision = decideAction(lower, originalLower, snapshot, today, zone)
+        // التحية والرد الاحتياطي لهما صياغتهما الخاصة بالنبرة أصلًا، فلا
+        // يُغلَّفان مرة ثانية؛ باقي فروع answerFor تُغلَّف داخلها.
+        val core = decision?.text ?: answerFor(lower, snapshot, settings, facts, profileText, today, profileFacts)
         val withLearning = if (learned != null) {
             "$core\n\nحفظت إن «${learned.text}»، وهستخدمها في ردودي الجاية."
         } else {
             core
         }
-        return AssistantReply(text = withLearning, learnedFact = learned, action = decision?.action)
+        return AssistantReply(
+            text = withLearning,
+            learnedFact = learned,
+            action = decision?.action,
+            chips = decision?.chips ?: emptyList()
+        )
     }
 
-    /** نتيجة فحص نية تنفيذية: فعل يُنفَّذ مع نص تأكيده، أو نص توضيح بلا فعل. */
-    private data class ActionDecision(val action: AssistantAction?, val text: String)
+    /** نتيجة فحص نية تنفيذية: فعل يُنفَّذ مع نص تأكيده، أو نص توضيح بلا فعل.
+     * [chips] رقاقات تأكيد تُعرض مع النص (مثلًا تأكيد بدء جلسة قبل تنفيذها). */
+    private data class ActionDecision(
+        val action: AssistantAction?,
+        val text: String,
+        val chips: List<String> = emptyList()
+    )
 
     /**
      * يطابق نية تنفيذية في الرسالة ويبني فعلها ونص تأكيدها، أو null إن لم تكن
      * الرسالة أمرًا تنفيذيًا. الترتيب مقصود: تسجيل الورد قبل تعليم مهمة
      * كمنجزة («خلصت الورد» ليست مهمة)، وفتح المصحف قبل إجابة حالة الورد.
+     * [lower] نص مطبَّع للمطابقة؛ [originalLower] النص الأصلي (مصغَّر) لاستخراج
+     * العناوين كما كتبها المستخدم.
      */
     private fun decideAction(
         lower: String,
+        originalLower: String,
         snapshot: AssistantSnapshot,
         today: LocalDate,
         zone: ZoneId
     ): ActionDecision? {
-        addTaskDecision(lower, today, zone)?.let { return it }
+        addTaskDecision(lower, originalLower, today, zone)?.let { return it }
         logWirdDecision(lower, snapshot)?.let { return it }
         startFocusDecision(lower, snapshot, today)?.let { return it }
         openQuranDecision(lower, snapshot)?.let { return it }
@@ -548,27 +689,31 @@ internal object AssistantEngine {
         return null
     }
 
-    /** يحذف كلمات الأمر من الرسالة ويبقي ما يصلح عنوانًا أو اسم مهمة. */
+    /** يحذف كلمات الأمر من الرسالة ويبقي ما يصلح عنوانًا أو اسم مهمة.
+     * علامات الترقيم الطرفية («؟» مثلًا) تُقصّ من التوكنات حتى لا تلتصق
+     * بكلمة فتمنع حذفها أو مطابقتها. */
     private fun stripCommandWords(
         lower: String,
         words: Set<String>,
         dropNumbers: Boolean = true
     ): String =
         lower.split(Regex("\\s+"))
+            .map { it.trim('؟', '?', '!', '.', '،', ',') }
             .filter { token ->
                 token.isNotEmpty() && token !in words &&
                     (!dropNumbers || token.all { ch -> !ch.isDigit() })
             }
             .joinToString(" ").trim()
 
-    /** يطابق نصًا مع المهام المفتوحة: تطابق تام أو احتواء في أي اتجاه. */
+    /** يطابق نصًا مع المهام المفتوحة: تطابق تام أو احتواء في أي اتجاه.
+     * الطرفان يُطبَّعان عربيًا (A1) فتطابق «مراجعه» مهمة «مراجعة». */
     private fun matchOpenTasks(query: String, tasks: List<AssistantTaskRef>): List<AssistantTaskRef> {
-        val clean = query.trim()
+        val clean = normalizeArabic(query.trim())
         if (clean.isEmpty()) return emptyList()
-        val exact = tasks.filter { it.title.lowercase() == clean }
+        val exact = tasks.filter { normalizeArabic(it.title.lowercase()) == clean }
         if (exact.isNotEmpty()) return exact
         return tasks.filter { task ->
-            val title = task.title.lowercase()
+            val title = normalizeArabic(task.title.lowercase())
             title.contains(clean) || clean.contains(title)
         }
     }
@@ -579,7 +724,7 @@ internal object AssistantEngine {
         return "لقيت أكتر من مهمة شبه «$query» يا $user: $listed. قولي اسمها بالظبط، أو افتح «مهامي» واختارها."
     }
 
-    private fun addTaskDecision(lower: String, today: LocalDate, zone: ZoneId): ActionDecision? {
+    private fun addTaskDecision(lower: String, originalLower: String, today: LocalDate, zone: ZoneId): ActionDecision? {
         // «سجّل ورد اليوم» تحوي فعل إضافة لكنها تسجيل ورد، لا مهمة.
         if (lower.contains("ورد")) return null
         val addVerbs = setOf("ضيف", "أضف", "اضف", "أضيف", "ضيفي", "سجل", "سجّل", "حط", "اعمل", "أعمل", "أنشئ", "انشئ")
@@ -587,10 +732,11 @@ internal object AssistantEngine {
         val startsWithVerb = addVerbs.any { lower.startsWith(it) }
         if (!mentionsTask && !startsWithVerb) return null
         if (!addVerbs.any { lower.contains(it) }) return null
-        // الأرقام تبقى: المحلل يحتاجها لاستخراج الساعة والمدة («الساعة 6»).
+        // العنوان يُستخرج من النص الأصلي (لا المطبَّع) فيُحفظ كما كتبه المستخدم؛
+        // والأرقام تبقى: المحلل يحتاجها لاستخراج الساعة والمدة («الساعة 6»).
         val cleaned = stripCommandWords(
-            lower,
-            addVerbs + setOf("مهمة", "مهمه", "لي", "جديدة", "جديده", "من فضلك"),
+            originalLower,
+            addVerbs + setOf("مهمة", "مهمه", "لي", "جديدة", "جديده", "من فضلك", "لمدة", "لمده"),
             dropNumbers = false
         )
         val parsed = QuickCaptureParser.parse(cleaned, today)
@@ -635,7 +781,10 @@ internal object AssistantEngine {
                 title = title,
                 dueAt = dueAt,
                 priorityLevel = parsed.priorityLevel,
-                recurrence = parsed.recurrence
+                recurrence = parsed.recurrence,
+                // A2: مدة المهمة من كلام المستخدم («لمدة ساعتين») بدل 30 ثابتة؛
+                // بلا مدة مذكورة يبقى null فيستخدم التنفيذ الافتراضي.
+                plannedMinutes = parsed.durationMinutes
             ),
             text = "تم إضافة المهمة «$title»$dueText، وهتلاقيها في «مهامي»."
         )
@@ -674,12 +823,40 @@ internal object AssistantEngine {
             )
         )
         if (query.isBlank()) {
+            // A2 (A-19): صيغة السؤال («نبدأ جلسة؟» — كما ترسلها رقاقة
+            // focus_invite) تسأل أولًا ولا تبدأ جلسة فورًا؛ التأكيد برقاقة.
+            if (lower.trimEnd().endsWith("؟") || lower.trimEnd().endsWith("?")) {
+                return ActionDecision(
+                    action = null,
+                    text = "أبدأ لك جلسة تركيز عامة لمدة $minutes دقيقة؟",
+                    chips = listOf("أيوه ابدأ جلسة تركيز", "لا مش دلوقتي")
+                )
+            }
             return ActionDecision(
                 action = AssistantAction.StartFocus(taskId = null, taskTitle = null, minutes = minutes),
                 text = "بدأت جلسة تركيز عامة لمدة $minutes دقيقة — بالتوفيق!"
             )
         }
         val matches = matchOpenTasks(query, snapshot.openTasks)
+        // سؤال قبل البدء حين يُصاغ الطلب كسؤال (رقاقة الدعوة): رقاقة التأكيد
+        // تحمل اسم المهمة نفسه فيبدأها التنفيذ بعدها بلا غموض.
+        if (lower.trimEnd().endsWith("؟") || lower.trimEnd().endsWith("?")) {
+            return when {
+                matches.size == 1 -> {
+                    val task = matches.first()
+                    ActionDecision(
+                        action = null,
+                        text = "أبدأ لك جلسة تركيز لمهمة «${task.title}» لمدة $minutes دقيقة؟",
+                        chips = listOf("أيوه ابدأ جلسة «${task.title}»", "لا مش دلوقتي")
+                    )
+                }
+                matches.size > 1 -> ActionDecision(action = null, text = ambiguousText(query, matches, user))
+                else -> ActionDecision(
+                    action = null,
+                    text = "مش لاقي مهمة بالاسم ده يا $user. جرّب «ابدأ جلسة تركيز» لجلسة عامة، أو قولي اسم المهمة زي ما هو في «مهامي»."
+                )
+            }
+        }
         return when {
             matches.size == 1 -> {
                 val task = matches.first()
@@ -788,17 +965,24 @@ internal object AssistantEngine {
         settings: AssistantSettings,
         facts: List<LearnedFact>,
         profileText: String,
-        today: LocalDate = LocalDate.now()
+        today: LocalDate = LocalDate.now(),
+        profileFacts: List<LearnedFact> = emptyList()
     ): String {
         val name = settings.name
         val user = snapshot.userName.ifBlank { "صديقي" }
-        return when {
-            isGreeting(lower) -> when (settings.tone) {
-                AssistantTone.FORMAL -> "أهلًا بك يا $user، يوم موفق بإذن الله. هل أراجع معك مهام اليوم أو وردك؟"
-                AssistantTone.CALM -> "أهلًا يا $user. يومك ماشي بهدوء، وأنا معاك خطوة بخطوة."
-                AssistantTone.PLAYFUL -> "أهلًا أهلًا يا $user! يوم جديد وفرصة جديدة. تحب نبدأ بالمهام ولا بالورد؟"
-            }
-            lower.contains("اسمك") || lower.contains("انت مين") || lower.contains("إنت مين") ->
+        // التحية لها صياغتها الخاصة بالنبرة أصلًا — تُعاد كما هي بلا غلاف.
+        if (isGreeting(lower)) return when (settings.tone) {
+            AssistantTone.FORMAL -> "أهلًا بك يا $user، يوم موفق بإذن الله. هل أراجع معك مهام اليوم أو وردك؟"
+            AssistantTone.CALM -> "أهلًا يا $user. يومك ماشي بهدوء، وأنا معاك خطوة بخطوة."
+            AssistantTone.PLAYFUL -> "أهلًا أهلًا يا $user! يوم جديد وفرصة جديدة. تحب نبدأ بالمهام ولا بالورد؟"
+        }
+        // الرد الاحتياطي له صياغته الخاصة بالنبرة — يُعاد بلا غلاف.
+        var fellBack = false
+        val raw = when {
+            // A1: صيغ الهوية بعد التطبيع («انتا مين»→«انت مين»، «مين انتا»→«مين انت»).
+            lower.contains("اسمك") || lower.contains("انت مين") || lower.contains("مين انت") ||
+                lower.contains("عرف نفسك") || lower.contains("من انت") ||
+                lower.contains("مين اللي بيكلمني") || lower.contains("مين بيكلمني") ->
                 "أنا $name، مساعدك الشخصي في تطبيق مُنظِّم. بتكلم باللهجة المصرية، وكل اللي أعرفه عنك محفوظ على جهازك بس — مفيش حاجة بتطلع برّه."
             lower.contains("تقدر تعمل") || lower.contains("بتعمل ايه") || lower.contains("بتعمل إيه") ||
                 lower.contains("ساعدني ازاي") || lower.contains("ساعدني إزاي") ->
@@ -866,13 +1050,18 @@ internal object AssistantEngine {
                 caloriesAnswer(snapshot, user)
             lower.contains("تعرف عني") || lower.contains("ايه اللي تعرفه") ||
                 lower.contains("إيه اللي تعرفه") || lower.contains("قول لي عن نفسي") ||
-                lower.contains("قولي عن نفسي") -> aboutMeAnswer(snapshot, facts, profileText, user)
+                lower.contains("قولي عن نفسي") -> aboutMeAnswer(snapshot, facts, profileText, user, profileFacts)
             lower.contains("شكرا") || lower.contains("شكرًا") ->
                 "العفو يا $user، ده واجبي. أي وقت تحتاجني، أنا موجود."
             lower.contains("هدف") ->
                 "هدفك خطوة مهمة يا $user. قولي هدفك بصيغة واضحة — مثلًا «هدفي أخلص مادة كذا قبل نهاية الشهر» — وهحفظه وأفكرك بيه."
-            else -> fallback(settings, user, snapshot, today)
+            else -> {
+                fellBack = true
+                fallback(settings, user, snapshot, today)
+            }
         }
+        // كل إجابات المحتوى تُغلَّف بالنبرة (A2)؛ الاحتياطي يُعاد كما هو.
+        return if (fellBack) raw else toneWrap(raw, settings.tone)
     }
 
     private fun tasksAnswer(snapshot: AssistantSnapshot, user: String): String {
@@ -911,13 +1100,19 @@ internal object AssistantEngine {
         snapshot: AssistantSnapshot,
         facts: List<LearnedFact>,
         profileText: String,
-        user: String
+        user: String,
+        profileFacts: List<LearnedFact> = emptyList()
     ): String {
         if (profileText.isBlank() && facts.isEmpty()) {
             return "لسه ما أعرفش عنك كتير يا $user — من التطبيق نفسه بس أعرف إن وردك ${snapshot.wirdTotalPages} صفحة إجمالي، وعندك ${snapshot.openTasksToday} مهام مفتوحة النهاردة. عرّفني عليك من تبويب «عرّفني عليك»، أو قولي هدفك وروتينك هنا في المحادثة."
         }
         val parts = ArrayList<String>()
-        if (profileText.isNotBlank()) {
+        // A2: الملف المحلَّل يُعرض مصنفًا أولًا؛ الاقتباس الحرفي يبقى فقط
+        // للملف بلا وسوم (لا يُفسَّر ولا يُخترع له معنى).
+        if (profileFacts.isNotEmpty()) {
+            val listed = profileFacts.take(4).joinToString("؛ ") { "${it.category}: ${it.text}" }
+            parts.add("من ملفك التعريفي: $listed.")
+        } else if (profileText.isNotBlank()) {
             // م10: الملف التعريفي يُستخدم دلاليًا — مقتطف من أول 3 أسطر غير فارغة
             // (حتى 240 حرفًا) بدل الإشارة إلى طوله فقط.
             val excerpt = profileText.lineSequence()
@@ -981,5 +1176,7 @@ internal object AssistantEngine {
         lower.contains("سلام") || lower.contains("صباح الخير") || lower.contains("مساء الخير") ||
             lower.contains("أهلا") || lower.contains("اهلا") || lower.contains("ازيك") ||
             lower.contains("إزيك") || lower.contains("عامل ايه") || lower.contains("عامل إيه") ||
+            // A1: «عامل اي» (بلا هاء) صيغة أحمد الحرفية — كانت تسقط في الاحتياطي.
+            lower.contains("عامل اي") ||
             lower == "هاي" || lower == "هلا"
 }

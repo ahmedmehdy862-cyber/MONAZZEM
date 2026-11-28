@@ -28,7 +28,9 @@ internal object AssistantSuggestions {
     fun suggest(
         snapshot: AssistantSnapshot,
         now: LocalDateTime = LocalDateTime.now(),
-        zone: ZoneId = ZoneId.systemDefault()
+        zone: ZoneId = ZoneId.systemDefault(),
+        /** عدد مرات عرض كل نوع — الكتم بعد 5 عروض فقط (A-18). */
+        shows: Map<String, Int> = snapshot.context.suggestionShows
     ): List<AssistantSuggestion> {
         val context = snapshot.context
         val learned = context.learned
@@ -73,7 +75,9 @@ internal object AssistantSuggestions {
                     ),
                     seed + 1
                 ),
-                sendText = if (target != null) "ابدأ جلسة تركيز لمهمة $target" else "ابدأ جلسة تركيز",
+                // صيغة سؤال (A-19): الضغط يسأل أولًا ولا يبدأ جلسة فورًا —
+                // المحرك يرد برقاقتي تأكيد («أيوه ابدأ…» / «لا مش دلوقتي»).
+                sendText = if (target != null) "أبدأ جلسة تركيز لمهمة $target؟" else "أبدأ جلسة تركيز؟",
                 action = null
             )
         }
@@ -138,9 +142,12 @@ internal object AssistantSuggestions {
         }
 
         // تعلّم من التجاهل: نوع قُبل أقل من 20% بعد 5 عروض يُحذف من القائمة.
+        // (A-18 — كان يُكتم بعد عرض واحد: عرض واحد بلا نقرة يعطي نسبة 0.0
+        // فيُحذف فورًا ولا يُعرض أبدًا ليتعافى. الآن: أقل من 5 عروض لا يُكتم.)
         val filtered = out.filter { suggestion ->
             val rate = acceptance[suggestion.kind]
-            rate == null || rate >= 0.2
+            val shown = shows[suggestion.kind] ?: 0
+            rate == null || shown < 5 || rate >= 0.2
         }
         return filtered.take(4)
     }

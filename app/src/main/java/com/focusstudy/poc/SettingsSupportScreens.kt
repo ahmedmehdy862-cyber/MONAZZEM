@@ -463,6 +463,16 @@ internal fun PersonalizationScreen(
                     Slider(value = textScale, onValueChange = { textScale = it }, valueRange = 0.9f..1.2f, steps = 2)
                 }
             }
+            // A7: نسبة نص القرآن (Tanzil) هنا في الإعدادات بدل سطر تحت كل
+            // صفحة مصحف.
+            item {
+                PreferenceCard(title = "مصادر المحتوى", description = "نص القرآن الكريم: مشروع تنزيل (Tanzil.net) — النص العثماني v1.1 — رخصة CC Attribution 3.0. خريطة صفحات مصحف المدينة: AlQuran Cloud.") {
+                    Text(
+                        "مواقيت الصلاة: حساب فلكي محلي داخل التطبيق.",
+                        color = FocusColors.TextSecondary
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(10.dp))
         Button(
@@ -1330,7 +1340,7 @@ internal fun AppUpdatesScreen(onBack: () -> Unit) {
                 }
                 result is UpdateCheckResult.Available -> {
                     val release = (result as UpdateCheckResult.Available).release
-                    Text("يتوفر إصدار جديد: ${release.versionName} (رقم ${release.versionCode})", style = MaterialTheme.typography.titleSmall, color = FocusColors.onTint(FocusColors.Green), fontWeight = FontWeight.SemiBold)
+                    Text("يتوفر إصدار جديد: ${release.versionName}", style = MaterialTheme.typography.titleSmall, color = FocusColors.onTint(FocusColors.Green), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
                     Text(release.releaseNotes.ifBlank { "تحسينات وإصلاحات جديدة." }, color = FocusColors.TextSecondary)
                     Spacer(Modifier.height(10.dp))
