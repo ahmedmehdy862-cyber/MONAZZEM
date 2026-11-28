@@ -372,6 +372,12 @@ internal object PrayerNotificationScheduler {
     ) {
         AppNotifications.ensure(context, channel(type))
         if (!AppNotifications.canPost(context)) return
+        // عند وصول «عند» يختفي إشعار «قبل» للصلاة نفسها — وإلا بقي إشعاران
+        // لصلاة واحدة في الستارة. قبل فحص المكالمة الجارية ليغطي مسار
+        // التأجيل الصامت أيضًا (إعادة الأذان المؤجل تنشر AT من جديد).
+        if (type == PrayerAlertType.AT) {
+            AppNotifications.manager(context).cancel(BEFORE_NOTIFICATION)
+        }
         val settings = PrayerAlertPrefs.load(context)
         val rule = settings.rule(key)
         val sound = if (type == PrayerAlertType.AT) rule.atSound else rule.beforeSound
