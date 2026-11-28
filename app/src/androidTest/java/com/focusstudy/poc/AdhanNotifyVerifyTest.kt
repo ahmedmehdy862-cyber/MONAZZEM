@@ -68,6 +68,9 @@ class AdhanNotifyVerifyTest {
         AppNotifications.ensure(context, AppNotifications.PRAYER_AT)
         AppNotifications.ensure(context, AppNotifications.PRAYER_BEFORE)
         AppNotifications.ensurePlaybackChannel(context)
+        // كل اختبار يبدأ بستارة نظيفة: إشعار متبقٍ من اختبار سابق — أو من
+        // تشغيل سابق على المحاكي نفسه — يلوّث العدّ على القناة.
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancelAll()
         shotDir = File(context.getExternalFilesDir(null), "qa-screenshots").apply { mkdirs() }
         logFile = File(shotDir, "qa-log.txt")
         log("canScheduleExact=${NotificationMaintenance.canScheduleExact(context)}")
@@ -111,6 +114,35 @@ class AdhanNotifyVerifyTest {
         return nm.activeNotifications.count { it.notification.channelId == channelId }
     }
 
+    /**
+     * كل إشعار نشط على القناة بالمعرّف والعنوان. تشغيل 45977823486 عدّ
+     * إشعارين على قناة AT بعد إطلاق AT واحد، والكود لا ينشر عليها إلا
+     * بالمعرّف 6202 مرة واحدة (إشعار الخدمة 6301 على قناة adhan_playback_v2
+     * مختلفة) — فآلية الثاني غير معروفة من قراءة الكود، وهذا السجل هو ما
+     * يسمّيه في التشغيل التالي. يُستدعى قبل كل تأكيد على عدّ AT.
+     */
+    private fun logActiveOnChannel(channelId: String) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val onChannel = nm.activeNotifications.filter { it.notification.channelId == channelId }
+        if (onChannel.isEmpty()) {
+            log("active on $channelId: (none)")
+            return
+        }
+        onChannel.forEach { sb ->
+            val title = sb.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)
+            log("active on $channelId: id=${sb.id} tag=${sb.tag} title=$title")
+        }
+    }
+
+    /** كل الإشعارات النشطة بأي قناة — لاستبعاد دخيل من قناة أخرى. */
+    private fun logAllActive() {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.activeNotifications.forEach { sb ->
+            val title = sb.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)
+            log("active all: channel=${sb.notification.channelId} id=${sb.id} tag=${sb.tag} title=$title")
+        }
+    }
+
     private fun fireReceiver(type: PrayerAlertType, key: String, name: String, prayerAt: Long) {
         val action = if (type == PrayerAlertType.AT) "com.focusstudy.poc.PRAYER_AT"
         else "com.focusstudy.poc.PRAYER_BEFORE"
@@ -152,14 +184,17 @@ class AdhanNotifyVerifyTest {
 
         fireReceiver(PrayerAlertType.AT, "fajr", "الفجر", now)
         assertTrue("AT fajr never posted", waitForChannel(at))
+        logActiveOnChannel(at)
         assertEquals("AT must be exactly one notification", 1, countOnChannel(at))
 
         fireReceiver(PrayerAlertType.AT, "dhuhr", "الظهر", now)
         Thread.sleep(3000)
+        logActiveOnChannel(at)
         assertEquals("AT dhuhr must replace AT fajr, not stack", 1, countOnChannel(at))
 
         fireReceiver(PrayerAlertType.AT, "asr", "العصر", now)
         Thread.sleep(3000)
+        logActiveOnChannel(at)
         assertEquals("AT asr must replace AT dhuhr, not stack", 1, countOnChannel(at))
         log("AT replaces across prayers: count=1 after fajr/dhuhr/asr")
     }
@@ -181,6 +216,8 @@ class AdhanNotifyVerifyTest {
         fireReceiver(PrayerAlertType.AT, "fajr", "الفجر", now)
         assertTrue("AT fajr never posted", waitForChannel(at))
         Thread.sleep(3000)
+        logActiveOnChannel(at)
+        logAllActive()
         val atCount = countOnChannel(at)
         val beforeCount = countOnChannel(before)
         log("after AT fajr: AT=$atCount BEFORE=$beforeCount (total=${atCount + beforeCount})")
@@ -278,10 +315,15 @@ class AdhanNotifyVerifyTest {
         // 15 يونيو 2026 — توقيت صيفي (EEST UTC+3). al-habib.info (الهيئة
         // المصرية): الفجر 04:09، الظهر 12:59، العصر 16:32، المغرب 19:59،
         // العشاء 21:32. فرق ساعة كاملة هنا يعني تجاهل التوقيت الصيفي.
+        // تصحيح: ظهر يونيو في al-habib (12:59) شاذ بثلاث دقائق — مصدر مستقل
+        // ثانٍ بالطريقة نفسها (Aladhan API، method=5 الهيئة المصرية،
+        // 30.0444/31.2357) يعيد الظهر 12:56، مطابقًا لحساب التطبيق بالدقيقة؛
+        // وهو يوافق التطبيق أيضًا في فجر يونيو (04:08) وفجر نوفمبر (04:59)
+        // وظهر نوفمبر (11:43). المرجع هنا إذن 12:56 لا 12:59.
         check(
             LocalDate.of(2026, 6, 15),
             mapOf(
-                "fajr" to "04:09", "dhuhr" to "12:59", "asr" to "16:32",
+                "fajr" to "04:09", "dhuhr" to "12:56", "asr" to "16:32",
                 "maghrib" to "19:59", "isha" to "21:32"
             )
         )
@@ -348,7 +390,12 @@ class AdhanNotifyVerifyTest {
 
     /**
      * الإطلاق المزدوج (منبّه النشاط المباشر + نية ملء الشاشة) يفتح نسخة
-     * واحدة فقط من شاشة التنبيه: singleTop + حارس الـ 60 ثانية.
+     * واحدة فقط من شاشة التنبيه: singleTop + حارس الـ 60 ثانية. العدّ على
+     * السجلات المميزة لا سطور dumpsys الخام: التشغيل السابق عدّ 8 سطور
+     * لسجل واحد (dumpsys يكرر السجل نفسه في أقسام المهمة/المستأنف/المركّز)،
+     * وlogcat يثبت نسخة واحدة (LifecycleMonitor: @cb5148a واحدة،
+     * PAUSED ثم RESUMED عند الإطلاق الثاني — مسار onNewIntent) ولقطة
+     * 06 تُظهر شاشة واحدة.
      */
     @Test
     fun test06_doubleLaunchShowsOneActivity() {
@@ -368,11 +415,18 @@ class AdhanNotifyVerifyTest {
         log("alert text visible: $found")
         shot("06_double_launch.png")
         val activities = shellOutput("dumpsys activity activities")
-        val records = activities.lines().count {
+        // سطور dumpsys الخام تكرر السجل الواحد في أقسام عدة، فالعدّ الصحيح
+        // هو عدد قيم ActivityRecord{hash} المميزة: 1 = نسخة واحدة على
+        // الشاشة، 2 = نسختان مكدستان فعلًا.
+        val rawLines = activities.lines().count {
             it.contains("ActivityRecord") && it.contains("PrayerAlertActivity")
         }
-        log("PrayerAlertActivity ActivityRecord lines: $records")
-        assertEquals("double launch stacked two alert activities", 1, records)
+        val distinctRecords = activities.lines()
+            .filter { it.contains("ActivityRecord") && it.contains("PrayerAlertActivity") }
+            .mapNotNull { Regex("ActivityRecord\\{([0-9a-fA-F]+)").find(it)?.groupValues?.get(1) }
+            .distinct()
+        log("PrayerAlertActivity ActivityRecord lines: $rawLines distinct records: ${distinctRecords.size} $distinctRecords")
+        assertEquals("double launch stacked two alert activities", 1, distinctRecords.size)
         runCatching { device.pressBack() }
         Thread.sleep(1000)
     }
