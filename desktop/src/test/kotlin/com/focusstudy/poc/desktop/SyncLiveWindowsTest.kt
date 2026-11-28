@@ -96,7 +96,8 @@ class SyncLiveWindowsTest {
         assertEquals("done", androidOnServer?.status)
         assertTrue(
             "habit log tombstone must be on the server",
-            snapshot.data.habitLogs.none { it.habitId == habit.id.toString() && it.day == credentials.day },
+            snapshot.data.habitLogs.any { it.habitId == habit.id.toString() && it.day == credentials.day && it.deleted == true },
         )
     }
 }
+
