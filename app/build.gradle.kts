@@ -149,6 +149,7 @@ dependencies {
     // Without this explicit declaration every use of the SQLCipher database
     // fails with "Cannot access 'SupportSQLiteDatabase'...". Version 2.2.0
     // is exactly the version SQLCipher 4.5.4 was built against (its POM).
+    implementation("androidx.sqlite:sqlite:2.2.0")
     // 3D companion «منظم» (0.34.0): SceneView فوق Filament — العارض التصريحي
     // لـ Compose، خليفة Sceneform المدعوم. الاختيار مقابل Filament الخام:
     // Filament وحده يحتاج ModelViewer يدويًا بلا تكامل Compose ولا إدارة
