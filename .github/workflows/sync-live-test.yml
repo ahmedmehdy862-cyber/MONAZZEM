@@ -315,6 +315,9 @@ jobs:
           script: |
             ./gradlew installDebug --no-daemon
             # دفع بيانات الاعتماد إلى filesDir قبل تشغيل الاختبار (عبر stdin؛ لا تظهر في السجل).
+            # التطبيق مثبّت جديد ولم يُشغَّل بعد، فمجلد filesDir غير موجود أصلاً (أندرويد ينشئه كسولاً عند أول تشغيل) — إنشاؤه أولاً وإلا فشل الدفع بـ Permission denied (run 46131205163).
+            adb shell run-as com.focusstudy.poc mkdir -p /data/data/com.focusstudy.poc/files
+            adb shell run-as com.focusstudy.poc ls -ld /data/data/com.focusstudy.poc /data/data/com.focusstudy.poc/files
             adb shell run-as com.focusstudy.poc sh -c 'cat > /data/data/com.focusstudy.poc/files/sync-live-credentials.json' < sync-live-credentials.json
             ./gradlew connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.testInstrumentationRunnerArguments.class=com.focusstudy.poc.SyncLiveVerifyTest
             timeout 60 adb logcat -d > ./logcat-verify.txt || true
