@@ -116,12 +116,12 @@ internal object ExerciseReminderScheduler {
         notify(context, test = true)
     }
 
-    fun notify(context: Context, test: Boolean = false) {
+    fun notify(context: Context, test: Boolean = false, today: LocalDate? = null) {
         val app = context.applicationContext
         if (!AppNotifications.canPost(app)) return
         val now = System.currentTimeMillis()
         val zone = AppTimeZone.zone(app)
-        val today = LocalDate.now(zone)
+        val today = today ?: LocalDate.now(zone)
         val todayKey = today.toString()
         val db = StudyDb.get(app)
         if (!test) {

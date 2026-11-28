@@ -162,6 +162,9 @@ jobs:
       - name: Run app catalog tests
         run: npm run test:catalog
 
+      - name: Run server audit tests
+        run: npm run test:server-audit
+
       - name: Verify committed admin bundle
         run: |
           npm run build

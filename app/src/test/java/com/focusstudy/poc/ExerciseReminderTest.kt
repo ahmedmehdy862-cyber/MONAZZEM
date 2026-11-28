@@ -13,7 +13,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
 
 /**
  * اختبارات تذكير التمارين: الإعدادات الافتراضية، والنشر التجريبي،
@@ -65,8 +67,11 @@ class ExerciseReminderTest {
 
     @Test
     fun noReminderOnNonPlanDay() {
-        // اليوم (الخميس) ليس يوم خطة: لا تذكير أصلًا — بغض النظر عن التسجيل.
-        ExerciseReminderScheduler.notify(context, test = false)
+        // أي يوم ليس يوم خطة (الخميس مثلًا): لا تذكير أصلًا — بغض النظر عن التسجيل.
+        // التاريخ يُمرَّر صراحةً حتى لا يعتمد الاختبار على يوم تشغيله.
+        val thursday = LocalDate.now(AppTimeZone.zone(context))
+            .with(TemporalAdjusters.nextOrSame(DayOfWeek.THURSDAY))
+        ExerciseReminderScheduler.notify(context, test = false, today = thursday)
         val posted = shadowOf(AppNotifications.manager(context)).allNotifications
         assertTrue(posted.isEmpty())
     }
