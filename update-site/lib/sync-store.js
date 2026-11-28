@@ -52,6 +52,12 @@ function cleanRecord(item, kind) {
     return habitLogRecord(habitId, day, item, cleanTime(item.updatedAt));
   }
   if (!id) return null;
+  // B11 (SA-P2-12) — v1 SUNSET: DEFERRED by decision, flag only.
+  // v1 plaintext records are still accepted below. The sunset must NOT be
+  // implemented until 0.35.0 is published and adopted: the published 0.34.0
+  // clients depend on v1, and rejecting them would strand their sync.
+  // See update-site/docs/H1_V1_SUNSET.md. When the sunset ships, this
+  // branch is where the rejection goes (and v1 rows stop being stored).
   // H1 - v2 encrypted envelope: the content is opaque ciphertext. The server keeps
   // only id/updatedAt/deleted for the last-write-wins merge and never inspects `enc`,
   // so it cannot read tasks even with the Blob token or the Vercel dashboard.

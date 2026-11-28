@@ -68,6 +68,29 @@ function makeStore(users, messages) {
 
   return {
     normalizeProfileId,
+    visibleMessages: (messages, now = Date.now()) =>
+      (Array.isArray(messages) ? messages : []).filter((item) => {
+        const time = Date.parse(String(item?.expiresAt || ""));
+        return !(Number.isFinite(time) && time <= now);
+      }),
+    normalizeExpiresAt: (value, now = Date.now()) => {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      const time = Date.parse(text);
+      if (!Number.isFinite(time) || time <= now || time > now + 366 * 24 * 60 * 60 * 1000) return "";
+      return new Date(time).toISOString();
+    },
+    expiresAtFromDays: (days, now = Date.now()) => {
+      const n = Number(days);
+      if (!Number.isFinite(n) || n <= 0) return "";
+      return new Date(now + n * 24 * 60 * 60 * 1000).toISOString();
+    },
+    deleteUser: async (id) => {
+      const existing = currentUsers.find((item) => item.id === id);
+      if (!existing) return false;
+      currentUsers = currentUsers.filter((item) => item.id !== id);
+      return true;
+    },
     readUsers: async () => currentUsers.map((item) => ({ ...item })),
     readMessages: async () => currentMessages.map((item) => ({ ...item })),
     appendMessage: async (item) => {
@@ -127,8 +150,18 @@ function loadAdminHandler(store, isAdmin = true) {
     "../../lib/messaging-store": store,
     "../../lib/admin-auth": {
       isAdmin: () => isAdmin,
+      originIsSame: () => true,
+      requireAdmin: async () => ({ ok: true, mustChange: false, version: 0 }),
       parseBody: (body) => body || {},
       json: (res, code, value) => res.status(code).json(value),
+    },
+    "../../lib/admin-audit": {
+      readAdminAudit: async () => [],
+      appendAdminAudit: async () => [],
+    },
+    "../../lib/sync-store": {
+      deleteSync: async () => {},
+      deleteAccount: async () => true,
     },
   });
 }
@@ -137,7 +170,7 @@ function loadMessagesHandler(store, syncStore) {
   return loadMocked("api/messages.js", {
     "../lib/messaging-store": store,
     "../lib/sync-store": syncStore || { authenticate: async () => false },
-    "../lib/admin-auth": { parseBody: (body) => body || {} },
+    "../lib/admin-auth": { parseBody: (body) => body || {}, setSecurityHeaders: () => {} },
   });
 }
 
@@ -379,11 +412,13 @@ async function testFeedAndReceipts() {
   assert.equal(store._deliveries().length, 1, "a retry must not duplicate the receipt");
   console.log("✓ retrying the same receipt leaves a single ledger row");
 
+  // B10: a receipt without ownership proof is rejected — the stored profile
+  // id (pid) or the sync passphrase is required when the row has one.
   res = await receipt({ action: "delivered", uid: FULL_ID, ids: ["m-person"] });
-  assert.equal(res.statusCode, 200);
-  assert.equal(store._deliveries().length, 2, "a legacy install is a separate recipient");
-  assert.equal(store._deliveries()[0].recipient, FULL_ID);
-  console.log("✓ legacy installs are logged as distinct recipients");
+  assert.equal(res.statusCode, 409, JSON.stringify(res.body));
+  assert.equal(res.body.error, "already_registered");
+  assert.equal(store._deliveries().length, 1, "an unproven receipt must not be recorded");
+  console.log("✓ a receipt without ownership proof is rejected");
 
   for (const [body, error] of [
     [{ action: "delivered", ids: ["m-person"] }, "invalid_user"],

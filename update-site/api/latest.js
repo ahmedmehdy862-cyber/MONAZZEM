@@ -1,8 +1,10 @@
-const { readLatestRelease, normalizeWindows } = require("../lib/release-store");
+const { readLatestRelease, normalizeWindows, normalizeSha256 } = require("../lib/release-store");
 const { readHistory } = require("../lib/release-history");
 const { readCatalog } = require("../lib/app-catalog");
+const { setSecurityHeaders } = require("../lib/admin-auth");
 
 module.exports = async function latestRelease(request, response) {
+  setSecurityHeaders(response);
   if (request.method !== "GET" && request.method !== "HEAD") {
     response.setHeader("Allow", "GET, HEAD");
     return response.status(405).json({ error: "method_not_allowed" });
@@ -39,12 +41,15 @@ module.exports = async function latestRelease(request, response) {
   })() ? windows : null;
   const storeUrl = String(release.storeUrl || process.env.FOCUS_STORE_URL || "https://qubixstore.vercel.app/focus-study-updates");
   const releasePageUrl = String(release.releasePageUrl || "").startsWith("https://") ? release.releasePageUrl : `${origin}${release.releasePageUrl || "/#download"}`;
+  // B9: the APK SHA-256 rides the feed when the release carries one.
+  const sha256 = normalizeSha256(release.sha256);
   const feed = {
     packageName: release.packageName,
     versionCode: release.versionCode,
     versionName: release.versionName,
     storeUrl,
     apkUrl: String(release.apkUrl || ""),
+    ...(sha256 ? { sha256 } : {}),
     app: {
       id: "focus-study",
       name: "مُنظِّم",
@@ -56,6 +61,7 @@ module.exports = async function latestRelease(request, response) {
       apkUrl: String(release.apkUrl || ""),
       storeUrl,
       releaseNotes: String(release.releaseNotes || ""),
+      ...(sha256 ? { sha256 } : {}),
       ...(validWindows ? { windows: validWindows } : {})
     },
     ...(validWindows ? { windows: validWindows } : {}),

@@ -1,11 +1,14 @@
 const { put } = require("@vercel/blob");
-const { isAdmin, originIsSame, parseBody, json } = require("../../lib/admin-auth");
-const { RELEASE_PATH, readLatestRelease, readFallbackRelease, normalizeWindows } = require("../../lib/release-store");
+const { requireAdmin, originIsSame, parseBody, json } = require("../../lib/admin-auth");
+const { RELEASE_PATH, readLatestRelease, readFallbackRelease, normalizeWindows, normalizeSha256, releasePageHost, verifyApkMagic } = require("../../lib/release-store");
 const { recordRelease } = require("../../lib/release-history");
+const { appendAdminAudit } = require("../../lib/admin-audit");
 
 module.exports = async function publishRelease(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "method_not_allowed" });
-  if (!originIsSame(req) || !isAdmin(req)) return json(res, 401, { error: "authentication_required" });
+  if (!originIsSame(req)) return json(res, 403, { error: "origin_rejected" });
+  const gate = await requireAdmin(req);
+  if (!gate.ok) return json(res, gate.status, { error: gate.error });
   if (!process.env.BLOB_READ_WRITE_TOKEN) return json(res, 503, { error: "storage_not_configured" });
 
   try {
@@ -33,6 +36,7 @@ module.exports = async function publishRelease(req, res) {
         cacheControlMaxAge: 60
       });
       await recordRelease(winner);
+      await appendAdminAudit([{ actor: process.env.ADMIN_USERNAME || "admin", action: "release_sync", outcome: "ok", detail: `feed synced to ${winner.versionName} (${winner.versionCode})` }]);
       return json(res, 200, {
         ok: true,
         changed: true,
@@ -48,6 +52,10 @@ module.exports = async function publishRelease(req, res) {
     const storeUrl = String(body.storeUrl || "").trim();
     const apkUrl = String(body.apkUrl || "").trim();
     const description = String(body.description || "نظّم مهامك وموادك وجلسات تركيزك وخطتك الدراسية في مساحة واحدة.").trim().slice(0, 500);
+    // B9: SHA-256 of the APK when the publisher knows it (the admin panel
+    // computes it from the uploaded file; CI sends it from the built APK).
+    const sha256 = normalizeSha256(body.sha256);
+    if (body.sha256 && !sha256) return json(res, 400, { error: "invalid_sha256" });
     if (!Number.isInteger(versionCode) || versionCode < 1 || !/^\d+\.\d+\.\d+$/.test(versionName) || !releaseNotes || !storeUrl || !apkUrl) {
       return json(res, 400, { error: "release_fields_required" });
     }
@@ -66,7 +74,13 @@ module.exports = async function publishRelease(req, res) {
     try { parsedApkUrl = new URL(apkUrl); } catch { return json(res, 400, { error: "invalid_apk_url" }); }
     if (parsedApkUrl.protocol !== "https:" || !parsedApkUrl.hostname || parsedApkUrl.username || parsedApkUrl.password || !parsedApkUrl.pathname.toLowerCase().endsWith(".apk")) return json(res, 400, { error: "invalid_apk_url" });
 
-    const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+    // B10: the APK at the published URL must at least be a ZIP (PK\x03\x04).
+    const magic = await verifyApkMagic(apkUrl);
+    if (!magic.ok) return json(res, magic.error === "apk_not_a_zip" ? 400 : 503, { error: magic.error });
+
+    // B10: releasePageUrl is pinned to the configured host (FOCUS_SITE_HOST)
+    // when one is set, instead of trusting the request host header.
+    const host = releasePageHost(req);
     if (!host) return json(res, 400, { error: "release_host_missing" });
     const release = {
       packageName: "com.focusstudy.poc",
@@ -77,6 +91,7 @@ module.exports = async function publishRelease(req, res) {
       description,
       releasePageUrl: `https://${host}/#download`,
       releaseNotes,
+      ...(sha256 ? { sha256 } : {}),
       ...(preservedWindows ? { windows: preservedWindows } : {}),
       publishedAt: new Date().toISOString()
     };
@@ -89,6 +104,7 @@ module.exports = async function publishRelease(req, res) {
       cacheControlMaxAge: 60
     });
     await recordRelease(release);
+    await appendAdminAudit([{ actor: process.env.ADMIN_USERNAME || "admin", action: "release_publish", outcome: "ok", detail: `${versionName} (${versionCode})${sha256 ? " sha256 set" : " no sha256"}` }]);
     return json(res, 200, { ok: true, release });
   } catch (error) {
     console.error("Release publish failed", error?.message || "unknown error");

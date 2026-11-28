@@ -45,10 +45,20 @@ async function main() {
   const auth = {
     isAdmin: () => true,
     originIsSame: () => originOk,
+    parseBody: (body) => body || {},
+    requireAdmin: async () => ({ ok: true, mustChange: false, version: 0 }),
+    createSession: () => "session.token",
+    setSessionCookie: () => {},
+    verifyMfaToken: () => null,
     clearSessionCookie: () => { cleared += 1; },
     json: (res, status, data) => res.status(status).json(data),
   };
-  const credentials = { mustChangePassword: async () => false };
+  const credentials = {
+    mustChangePassword: async () => false,
+    readCredential: async () => null,
+    writeCredential: async () => {},
+    sessionVersionOf: () => 0,
+  };
   const handler = loadHandler(auth, credentials);
 
   await test("GET reports the session", async () => {

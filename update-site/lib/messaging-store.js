@@ -115,6 +115,38 @@ async function writeJson(blobPath, value, access = MESSAGES_ACCESS) {
   fs.writeFileSync(path.join(LOCAL_DIR, path.basename(blobPath)), JSON.stringify(value), "utf8");
 }
 
+/**
+ * B1: team-message expiry. `expiresAt` is an ISO timestamp or "" (never
+ * expires). Expired messages stay stored so the admin can see and delete
+ * them, but they are filtered out of the client feed (GET /api/messages).
+ * Max 366 days out; anything malformed, past, or further out is dropped.
+ */
+function normalizeExpiresAt(value, now = Date.now()) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const time = Date.parse(text);
+  if (!Number.isFinite(time)) return "";
+  if (time <= now) return "";
+  if (time > now + 366 * 24 * 60 * 60 * 1000) return "";
+  return new Date(time).toISOString();
+}
+
+function isMessageExpired(item, now = Date.now()) {
+  const time = Date.parse(String(item?.expiresAt || ""));
+  return Number.isFinite(time) && time <= now;
+}
+
+function visibleMessages(messages, now = Date.now()) {
+  return (Array.isArray(messages) ? messages : []).filter((item) => !isMessageExpired(item, now));
+}
+
+/** Days-from-now shorthand for the admin publish form ("7" -> ISO in 7 days). */
+function expiresAtFromDays(days, now = Date.now()) {
+  const n = Number(days);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return normalizeExpiresAt(new Date(now + n * 24 * 60 * 60 * 1000).toISOString(), now);
+}
+
 async function readMessages() {
   const record = await readJson(MESSAGES_PATH, { messages: [] });
   return Array.isArray(record.messages) ? record.messages : [];
@@ -151,6 +183,28 @@ async function markSupport(id, status) {
   const next = items.map((item) => (item.id === id ? { ...item, status } : item));
   await writeJson(INBOX_PATH, { items: next }, INBOX_ACCESS);
   return next;
+}
+
+/**
+ * B8: stores the server-confirmed image refs on a support inbox item.
+ * Images are validated (sniffed MIME, size, count) by the confirm handler
+ * before this runs; this only persists the refs. Returns the updated item
+ * or null when the support id is unknown.
+ */
+async function attachSupportImages(supportId, images) {
+  const items = await readInbox();
+  const existing = items.find((item) => item.id === supportId);
+  if (!existing) return null;
+  const refs = (Array.isArray(images) ? images : []).slice(0, 4).map((image) => ({
+    path: String(image.path || ""),
+    contentType: String(image.contentType || ""),
+    sizeBytes: Number(image.sizeBytes || 0),
+  })).filter((image) => image.path && image.contentType);
+  const next = items.map((item) => (item.id === supportId
+    ? { ...item, images: [...(Array.isArray(item.images) ? item.images : []), ...refs].slice(0, 4) }
+    : item));
+  await writeJson(INBOX_PATH, { items: next }, INBOX_ACCESS);
+  return next.find((item) => item.id === supportId) || null;
 }
 
 async function readUsers() {
@@ -195,14 +249,47 @@ async function deleteUser(id) {
   const users = await readUsers();
   const existing = users.find((item) => item.id === id);
   if (!existing) return false;
+  const profileId = normalizeProfileId(existing.profileId || existing.userId);
   await writeJson(USERS_PATH, {
     users: users.filter((item) => item.id !== id),
   }, USERS_ACCESS);
   const items = await readInbox();
+  const removed = items.filter((item) => String(item.uid || "") === id);
   const remaining = items.filter((item) => String(item.uid || "") !== id);
   if (remaining.length !== items.length) {
     await writeJson(INBOX_PATH, { items: remaining }, INBOX_ACCESS);
   }
+  // B8: deleting a user must not orphan their support images in the Blob.
+  // Best-effort per message: a failed delete is logged, never blocks the
+  // user deletion itself.
+  for (const item of removed) {
+    for (const image of Array.isArray(item.images) ? item.images : []) {
+      try { await deleteSupportImage(String(image.path || "")); }
+      catch (error) { console.error("support image delete failed", error?.message || "unknown"); }
+    }
+  }
+  // Delivery receipts naming this install or profile go with the user.
+  try {
+    const events = await readDeliveryEvents();
+    const kept = events.filter((event) => String(event.recipient || "") !== id
+      && (!profileId || String(event.recipient || "") !== profileId));
+    if (kept.length !== events.length) {
+      await writeJson(DELIVERIES_PATH, { events: kept }, DELIVERIES_ACCESS);
+    }
+  } catch (error) {
+    console.error("delivery ledger cleanup failed", error?.message || "unknown");
+  }
+  return true;
+}
+
+/** Deletes one private support-image blob (no-op locally / on a bad path). */
+async function deleteSupportImage(pathname) {
+  const clean = String(pathname || "").trim();
+  if (!clean.startsWith("focus-study/support-images/")) return false;
+  const token = storageToken(INBOX_ACCESS);
+  if (!token) return false;
+  const { del } = await import("@vercel/blob");
+  await del(clean, { access: INBOX_ACCESS, token });
   return true;
 }
 
@@ -289,6 +376,8 @@ async function upsertUser(entry) {
 
 module.exports = {
   readMessages, appendMessage, removeMessage, readInbox, appendSupport, markSupport,
+  attachSupportImages, deleteSupportImage, normalizeExpiresAt, isMessageExpired,
+  visibleMessages, expiresAtFromDays,
   readUsers, upsertUser, readNotificationSounds, writeNotificationSounds,
   readDeliveryEvents, appendDeliveryEvents,
   readRegistrationEvents, appendRegistrationEvents, deleteUser,

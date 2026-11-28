@@ -20,6 +20,9 @@ const RELEASE_PAYLOAD_FIELDS = [
   // `windows` is an object, not a string (see normalizeReleasePayload); it carries the
   // Windows MSI download for the same release (windows-sync contract §8–§9).
   "windows",
+  // B9: SHA-256 of the published APK, hex lowercase. Absent on older records;
+  // the client verifies it when present and skips verification when absent.
+  "sha256",
 ];
 
 /**
@@ -37,6 +40,12 @@ function normalizeWindows(value) {
   return { downloadUrl, version, sizeBytes };
 }
 
+/** B9: a SHA-256 is 64 lowercase hex chars; anything else is "no hash". */
+function normalizeSha256(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(clean) ? clean : "";
+}
+
 function normalizeReleasePayload(release) {
   if (!release || typeof release !== "object" || Array.isArray(release)) return null;
   const normalized = {};
@@ -44,6 +53,8 @@ function normalizeReleasePayload(release) {
     const value = release[field];
     if (field === "windows") {
       normalized[field] = normalizeWindows(value);
+    } else if (field === "sha256") {
+      normalized[field] = normalizeSha256(value);
     } else {
       normalized[field] = field === "versionCode"
         ? Number(value || 0)
@@ -51,6 +62,62 @@ function normalizeReleasePayload(release) {
     }
   }
   return normalized;
+}
+
+/**
+ * B10 (SA-P3-12): the release page URL is pinned to a configured host when
+ * one is set (env FOCUS_SITE_HOST, e.g. update-site-sigma.vercel.app). Without
+ * it, the request host is used as before — a host header from the request
+ * must never be the only thing deciding a URL in the public feed.
+ */
+function releasePageHost(req) {
+  const configured = String(process.env.FOCUS_SITE_HOST || "").trim();
+  if (configured) return configured;
+  return String(req?.headers?.["x-forwarded-host"] || req?.headers?.host || "").split(",")[0].trim();
+}
+
+/**
+ * B10 (SA-P3-5): minimum APK sanity check — the first four bytes must be the
+ * ZIP local-file header PK\x03\x04. Fetches only the first bytes (Range
+ * request, aborted after 4 bytes) so a 60 MB APK is never downloaded.
+ * Returns {ok:true} on a match, {ok:false, error} otherwise:
+ *   "apk_not_a_zip" — reachable, but the magic bytes do not match;
+ *   "apk_unreachable" — the URL could not be fetched at all.
+ * `fetchImpl` exists so tests can stub the network; handlers use global fetch.
+ */
+async function verifyApkMagic(url, fetchImpl = globalThis.fetch) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetchImpl(url, {
+      method: "GET",
+      headers: { Range: "bytes=0-3" },
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    if (!response || !response.ok) return { ok: false, error: "apk_unreachable" };
+    // Read only the first chunk, then cancel: a server ignoring Range
+    // must not make us buffer the whole APK.
+    let buffer = new Uint8Array(0);
+    try {
+      const reader = response.body?.getReader?.();
+      if (reader) {
+        const { value } = await reader.read();
+        buffer = new Uint8Array(value || []).slice(0, 4);
+        await reader.cancel().catch(() => {});
+      } else {
+        buffer = new Uint8Array(await response.arrayBuffer()).slice(0, 4);
+      }
+    } catch {
+      buffer = new Uint8Array(0);
+    }
+    const magic = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04;
+    return magic ? { ok: true } : { ok: false, error: "apk_not_a_zip" };
+  } catch {
+    return { ok: false, error: "apk_unreachable" };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** True only when all published fields match; the generated timestamp is ignored. */
@@ -132,9 +199,12 @@ module.exports = {
   FALLBACK_PATH,
   RELEASE_PAYLOAD_FIELDS,
   normalizeWindows,
+  normalizeSha256,
   normalizeReleasePayload,
   releasePayloadEquals,
   decideCiPublish,
   readLatestRelease,
   readFallbackRelease,
+  releasePageHost,
+  verifyApkMagic,
 };

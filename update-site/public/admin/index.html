@@ -27,6 +27,15 @@
         <div id="login-status" class="status" role="status" aria-live="polite"></div>
       </section>
 
+      <section id="mfa-panel" class="panel hidden">
+        <div class="panel-head"><div><h2>خطوة التحقق الثانية</h2><p class="hint">أدخل رمز تطبيق المصادقة (6 أرقام) أو أحد رموز النسخ الاحتياطي.</p></div></div>
+        <form id="mfa-form" autocomplete="off">
+          <div class="field"><label for="mfa-code">رمز التحقق</label><input id="mfa-code" name="mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" required></div>
+          <button class="button" type="submit">تأكيد الدخول</button>
+        </form>
+        <div id="mfa-status" class="status" role="status" aria-live="polite"></div>
+      </section>
+
       <section id="password-panel" class="panel hidden">
         <div class="panel-head"><div><h2>غيّر كلمة المرور المؤقتة</h2><p class="hint">هذه أول مرة تدخل فيها بكلمة المرور المؤقتة. اختر كلمة مرور خاصة بك (١٠ أحرف على الأقل) قبل استخدام اللوحة.</p></div></div>
         <form id="password-form" autocomplete="off">
@@ -61,6 +70,25 @@
           <div id="sync-status" class="status" role="status" aria-live="polite"></div>
         </form>
         <div id="publish-status" class="status" role="status" aria-live="polite"></div>
+        <hr style="border:0;border-top:1px solid #ffffff14;margin:24px 0">
+        <div>
+          <h2 style="margin:0 0 5px;font-size:18px">أمان الحساب</h2>
+          <p class="hint" id="mfa-state">جارٍ قراءة حالة التحقق بخطوتين…</p>
+          <div class="row-actions" style="margin-top:10px">
+            <button id="mfa-enroll" class="button secondary" type="button">تفعيل التحقق بخطوتين</button>
+            <button id="mfa-disable" class="button secondary hidden" type="button">إيقاف التحقق بخطوتين</button>
+            <button id="logout-all" class="button secondary" type="button">تسجيل الخروج من كل الأجهزة</button>
+          </div>
+          <div id="mfa-setup" class="hidden" style="margin-top:14px">
+            <p class="hint">امسح الرمز أو أدخل السر يدويًا في تطبيق المصادقة، ثم أدخل الرمز الحالي للتأكيد. احفظ رموز النسخ الاحتياطي — تُعرض مرة واحدة فقط.</p>
+            <p><a id="mfa-otpauth" href="#" target="_blank" rel="noopener">فتح في تطبيق المصادقة</a></p>
+            <p class="hint" style="word-break:break-all">السر: <code id="mfa-secret"></code></p>
+            <p class="hint" style="word-break:break-all">رموز احتياطية: <code id="mfa-backup"></code></p>
+            <div class="field"><label for="mfa-enroll-code">رمز التأكيد (6 أرقام)</label><input id="mfa-enroll-code" inputmode="numeric" maxlength="6"></div>
+            <button id="mfa-confirm" class="button secondary" type="button">تأكيد التفعيل</button>
+          </div>
+          <div id="mfa-status-admin" class="status" role="status" aria-live="polite"></div>
+        </div>
         <div class="security"><span>🔒</span><span>هذا السجل يحدّث API التطبيق وبطاقة QUBIXStore معًا. ملف APK يستضاف في GitHub Release، وزر إشعار التطبيق يظل يفتح صفحة المتجر.</span></div>
       </section>
       <p class="footer">مُنظِّم · تحديثاتك بأمان وبخطوات واضحة</p>
